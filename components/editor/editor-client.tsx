@@ -6,6 +6,8 @@ import CodeMirror from "@uiw/react-codemirror";
 import clsx from "clsx";
 import { formatDistanceToNow } from "date-fns";
 import Link from "next/link";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ShareModal } from "@/components/editor/share-modal";
@@ -53,6 +55,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const [shareEnabled, setShareEnabled] = useState(initialDocument.share_enabled);
   const [shareToken, setShareToken] = useState(initialDocument.share_token);
   const [focusMode, setFocusMode] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"Saved" | "Saving…" | "Error">(
     "Saved",
@@ -174,6 +177,19 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                onClick={() => setPreviewMode((value) => !value)}
+                className={clsx(
+                  "rounded-lg border px-3 py-1.5 text-xs transition",
+                  previewMode
+                    ? "border-[var(--accent)] bg-[rgba(47,89,102,0.09)] text-[var(--accent)]"
+                    : "border-[var(--line)] bg-white text-[var(--muted)]",
+                )}
+              >
+                {previewMode ? "Write" : "Preview"}
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setFocusMode((value) => !value)}
                 className={clsx(
                   "rounded-lg border px-3 py-1.5 text-xs transition",
@@ -229,32 +245,47 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           ) : null}
         </div>
 
-        <div className="pb-24">
-          <CodeMirror
-            value={content}
-            onChange={(value) => {
-              setContent(value);
-              updateSaveStatusForDraft(title, value);
-            }}
-            extensions={editorExtensions}
-            basicSetup={{
-              lineNumbers: false,
-              foldGutter: false,
-              dropCursor: false,
-              allowMultipleSelections: false,
-              indentOnInput: true,
-              bracketMatching: true,
-              closeBrackets: true,
-              autocompletion: false,
-              highlightActiveLine: false,
-              highlightActiveLineGutter: false,
-            }}
-          />
-        </div>
+        {previewMode ? (
+          <article className="markdown-body pb-24">
+            <Markdown remarkPlugins={[remarkGfm]}>
+              {content || "_Nothing yet. Switch to Write to start._"}
+            </Markdown>
+          </article>
+        ) : (
+          <div className="pb-24">
+            <CodeMirror
+              value={content}
+              onChange={(value) => {
+                setContent(value);
+                updateSaveStatusForDraft(title, value);
+              }}
+              extensions={editorExtensions}
+              basicSetup={{
+                lineNumbers: false,
+                foldGutter: false,
+                dropCursor: false,
+                allowMultipleSelections: false,
+                indentOnInput: true,
+                bracketMatching: true,
+                closeBrackets: true,
+                autocompletion: false,
+                highlightActiveLine: false,
+                highlightActiveLineGutter: false,
+              }}
+            />
+          </div>
+        )}
       </main>
 
       {focusMode ? (
         <div className="fixed right-4 top-4 z-30 flex items-center gap-2 rounded-lg border border-[var(--line)] bg-white p-2">
+          <button
+            type="button"
+            onClick={() => setPreviewMode((value) => !value)}
+            className="rounded-md px-2 py-1 text-xs text-[var(--muted)] transition hover:bg-[rgba(47,89,102,0.09)]"
+          >
+            {previewMode ? "Write" : "Preview"}
+          </button>
           <button
             type="button"
             onClick={() => setFocusMode(false)}
