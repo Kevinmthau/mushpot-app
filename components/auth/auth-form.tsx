@@ -22,7 +22,11 @@ export function AuthForm({ nextPath }: AuthFormProps) {
     setMessage(null);
     setError(null);
 
-    const emailRedirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`;
+    const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
+    const isLocalhost =
+      window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    const redirectOrigin = isLocalhost && configuredAppUrl ? configuredAppUrl : window.location.origin;
+    const emailRedirectTo = `${redirectOrigin}/auth/callback?next=${encodeURIComponent(nextPath)}`;
 
     const { error: signInError } = await supabase.auth.signInWithOtp({
       email,
