@@ -1,74 +1,50 @@
-# AGENTS.md
+# Repository Guidelines
 
-## Purpose
-This repo is a minimalist writing app with an infinite-scroll Markdown editor, Supabase auth/data, and Netlify hosting.
+## Project Structure & Module Organization
+This is a Next.js App Router project (`app/`) with TypeScript and Tailwind.
+- `app/`: route handlers and pages (`/`, `/auth`, `/doc/[id]`, `/s/[id]/[token]`)
+- `components/`: UI and feature components (editor + auth)
+- `lib/supabase/`: browser/server Supabase clients and generated types
+- `supabase/`: SQL migrations and Edge Function source
+- `public/`: static assets
+- `proxy.ts`: auth protection for private routes
 
-## Tech Stack
-- Next.js App Router + TypeScript + Tailwind
-- CodeMirror 6 for Markdown editing
-- `react-markdown` + `remark-gfm` for read rendering
-- Supabase (Postgres, Auth, Edge Functions)
-- Netlify deployment with `@netlify/plugin-nextjs`
+## Build, Test, and Development Commands
+- `npm install`: install dependencies
+- `npm run dev`: start local dev server at `http://localhost:3000`
+- `npm run lint`: run ESLint checks
+- `npm run build`: create production build (required before merge)
+- `npm run start`: run built app locally
 
-## Core Product Constraints
-- Keep documents as continuous vertical canvases (no page breaks/pagination UI).
-- Keep UI distraction-free: centered writing column, minimal chrome, calm styling.
-- `/` and `/doc/*` must require login.
-- `/s/[id]/[token]` must stay public and read-only.
+Use `npm run lint && npm run build` before opening a PR.
 
-## Important Paths
-- App routes:
-  - `app/page.tsx` (documents list)
-  - `app/doc/[id]/page.tsx` (editor)
-  - `app/s/[id]/[token]/page.tsx` (shared view)
-  - `app/auth/*` (magic link auth)
-- Editor/UI:
-  - `components/editor/editor-client.tsx`
-  - `components/editor/share-modal.tsx`
-- Supabase clients:
-  - `lib/supabase/client.ts`
-  - `lib/supabase/server.ts`
-- Middleware/protection:
-  - `proxy.ts`
-- Database migration:
-  - `supabase/migrations/20260303164000_create_documents.sql`
-- Edge function:
-  - `supabase/functions/get-shared-doc/index.ts`
+## Coding Style & Naming Conventions
+- Language: TypeScript (`.ts`/`.tsx`), 2-space indentation, semicolons enabled.
+- Follow ESLint config in `eslint.config.mjs`; do not disable rules without rationale.
+- Components: PascalCase exports (`AuthForm`, `EditorClient`).
+- Route files and utility modules: lowercase file names where practical.
+- Keep changes focused and preserve writing-first UX behavior.
 
-## Local Dev
-- Install: `npm install`
-- Dev server: `npm run dev`
-- Lint: `npm run lint`
-- Build: `npm run build`
+## Testing Guidelines
+There is no dedicated test framework configured yet. Current quality gate is:
+- lint (`npm run lint`)
+- production build (`npm run build`)
 
-Always run lint + build before finishing changes.
+When adding tests, colocate them near feature code and use clear names like `feature-name.test.ts`.
 
-## Environment Variables
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` (publishable key is acceptable)
-- `SUPABASE_SERVICE_ROLE_KEY` (do not expose client-side)
+## Commit & Pull Request Guidelines
+Recent history favors short, imperative commit messages (e.g., `Prefer app URL for magic-link redirect on localhost`).
+- Keep commit scope small and coherent.
+- Reference affected areas in the commit body when useful.
 
-Never commit `.env*` files or secrets.
+PRs should include:
+- concise problem/solution summary
+- screenshots for UI changes
+- notes on env/config or migration impacts
+- manual verification steps (routes, auth, sharing flow)
 
-## Data/Auth Rules
-- `documents.owner` must map to `auth.users.id`.
-- RLS must enforce owner-only CRUD in `public.documents`.
-- Keep `updated_at` behavior intact (trigger-based update).
-
-## Sharing Rules
-- Share links must require both `docId` and `share_token`.
-- Token should remain high entropy (current implementation uses 64-char NanoID).
-- Shared fetch path goes through `get-shared-doc` edge function.
-- Do not bypass token validation by querying document content directly from public clients.
-
-## Deployment Notes
-- Netlify runtime via `netlify.toml`.
-- Supabase edge function deploy command:
-  - `supabase functions deploy get-shared-doc --no-verify-jwt`
-- Ensure Supabase Auth redirect URL includes:
-  - `/auth/callback` for local and production domains.
-
-## Change Guidance
-- Prefer small, focused edits.
-- If schema changes, add a new migration file (do not rewrite existing applied migrations).
-- Preserve existing writing-focused UX (focus mode, typewriter mode, autosave status, word count, reading time).
+## Security & Configuration Tips
+- Required env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+- Optional hardening var: `NEXT_PUBLIC_APP_URL` for redirect overrides.
+- Never commit `.env*` or service-role secrets.
+- Keep shared-document token validation in the Supabase Edge Function path.
