@@ -85,7 +85,7 @@ export default async function DocumentsPage() {
           <form action={signOutAction}>
             <button
               type="submit"
-              className="rounded-xl border border-[var(--line)] bg-[var(--paper)] px-4 py-2.5 text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+              className="rounded-xl bg-[var(--paper)] px-4 py-2.5 text-sm text-[var(--muted)] transition hover:text-[var(--accent)]"
             >
               Sign out
             </button>
@@ -99,7 +99,7 @@ export default async function DocumentsPage() {
             <Link
               key={doc.id}
               href={`/doc/${doc.id}`}
-              className="group flex items-center justify-between rounded-2xl border border-[var(--line)] bg-[var(--paper)] px-5 py-4 transition hover:border-[var(--accent)] hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
+              className="group flex items-center justify-between rounded-2xl bg-[var(--paper)] px-5 py-4 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
             >
               <p className="line-clamp-1 pr-4 font-[var(--font-writing)] text-xl text-[var(--ink)]">
                 {doc.title || "Untitled"}
@@ -112,7 +112,7 @@ export default async function DocumentsPage() {
             </Link>
           ))
         ) : (
-          <div className="rounded-2xl border border-dashed border-[var(--line)] px-6 py-12 text-center text-[var(--muted)]">
+          <div className="rounded-2xl px-6 py-12 text-center text-[var(--muted)]">
             No documents yet. Start with “New Document”.
           </div>
         )}
