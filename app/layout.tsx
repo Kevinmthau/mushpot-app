@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Instrument_Sans, Roboto_Mono } from "next/font/google";
 
 import "./globals.css";
@@ -16,6 +16,12 @@ const writingFont = Roboto_Mono({
 export const metadata: Metadata = {
   title: "Mushpot",
   description: "A focused, distraction-free writing canvas.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

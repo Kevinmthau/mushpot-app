@@ -63,8 +63,8 @@ export default async function DocumentsPage() {
   }
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-[880px] px-6 py-12">
-      <header className="mb-10 flex items-center justify-end">
+    <main className="mx-auto min-h-dvh w-full max-w-[880px] px-4 py-8 sm:px-6 sm:py-12">
+      <header className="mb-6 flex items-center justify-end sm:mb-10">
         <form action={signOutAction}>
           <button
             type="submit"
@@ -83,8 +83,8 @@ export default async function DocumentsPage() {
             title="New document"
             className="group block w-full appearance-none rounded-2xl border-0 bg-transparent p-0 text-left transition hover:bg-[var(--paper)] hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
           >
-            <div className="px-5 py-4">
-              <p className="line-clamp-1 [font-family:var(--font-writing)] text-xl text-[var(--muted)]">
+            <div className="px-4 py-3 sm:px-5 sm:py-4">
+              <p className="line-clamp-1 [font-family:var(--font-writing)] text-lg text-[var(--muted)] sm:text-xl">
                 New document...
               </p>
             </div>
@@ -95,9 +95,9 @@ export default async function DocumentsPage() {
           <Link
             key={doc.id}
             href={`/doc/${doc.id}`}
-            className="group block rounded-2xl bg-[var(--paper)] px-5 py-4 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
+            className="group block rounded-2xl bg-[var(--paper)] px-4 py-3 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)] sm:px-5 sm:py-4"
           >
-            <p className="line-clamp-1 [font-family:var(--font-writing)] text-xl text-[var(--ink)]">
+            <p className="line-clamp-1 [font-family:var(--font-writing)] text-lg text-[var(--ink)] sm:text-xl">
               {doc.title || "Untitled"}
             </p>
             <p className="mt-1 text-xs text-[var(--muted)]">

@@ -41,6 +41,12 @@ textarea {
   font: inherit;
 }
 
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
 .markdown-body {
   color: var(--ink);
   line-height: 1.85;
@@ -83,6 +89,12 @@ textarea {
   margin: 1em 0;
 }
 
+.markdown-body p,
+.markdown-body li,
+.markdown-body blockquote {
+  overflow-wrap: anywhere;
+}
+
 .markdown-body ul,
 .markdown-body ol {
   padding-left: 1.5rem;
@@ -122,6 +134,9 @@ textarea {
 
 .markdown-body table {
   border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   width: 100%;
 }
 
@@ -186,4 +201,29 @@ textarea {
 
 .cm-cursor {
   border-left-color: #2c4f58 !important;
+}
+
+@media (max-width: 640px) {
+  .markdown-body {
+    font-size: 1rem;
+    line-height: 1.75;
+  }
+
+  .markdown-body h1 {
+    font-size: 1.7rem;
+  }
+
+  .markdown-body h2 {
+    font-size: 1.3rem;
+  }
+
+  .cm-content,
+  .editor-title-input {
+    font-size: 1rem !important;
+    line-height: 1.75 !important;
+  }
+
+  .cm-content {
+    min-height: 48vh;
+  }
 }

@@ -48,16 +48,16 @@ export function AuthForm({ nextPath }: AuthFormProps) {
   return (
     <form
       onSubmit={onSubmit}
-      className="w-full rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-8 shadow-[0_12px_32px_rgba(40,52,55,0.08)]"
+      className="w-full rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-6 shadow-[0_12px_32px_rgba(40,52,55,0.08)] sm:p-8"
     >
-      <h1 className="font-[var(--font-writing)] text-3xl font-semibold tracking-tight text-[var(--ink)]">
+      <h1 className="font-[var(--font-writing)] text-2xl font-semibold tracking-tight text-[var(--ink)] sm:text-3xl">
         Enter your email
       </h1>
       <p className="mt-2 text-sm text-[var(--muted)]">
         We&apos;ll send a magic link so you can start writing.
       </p>
 
-      <label className="mt-6 block text-sm text-[var(--muted)]" htmlFor="email">
+      <label className="mt-5 block text-sm text-[var(--muted)] sm:mt-6" htmlFor="email">
         Email address
       </label>
       <input
@@ -67,7 +67,7 @@ export function AuthForm({ nextPath }: AuthFormProps) {
         autoComplete="email"
         value={email}
         onChange={(event) => setEmail(event.target.value)}
-        className="mt-2 w-full rounded-xl border border-[var(--line)] bg-white px-4 py-3 text-[var(--ink)] outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[rgba(47,89,102,0.2)]"
+        className="mt-2 w-full rounded-xl border border-[var(--line)] bg-white px-4 py-3 text-base text-[var(--ink)] outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[rgba(47,89,102,0.2)]"
         placeholder="you@example.com"
       />
 

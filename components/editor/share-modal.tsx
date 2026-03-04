@@ -121,11 +121,11 @@ export function ShareModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(12,17,18,0.4)] px-4">
-      <div className="w-full max-w-lg rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-6 shadow-[0_16px_32px_rgba(17,23,26,0.24)]">
-        <div className="mb-6 flex items-start justify-between gap-4">
+    <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-[rgba(12,17,18,0.4)] px-4 py-4 sm:items-center sm:py-6">
+      <div className="my-auto w-full max-w-lg rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-4 shadow-[0_16px_32px_rgba(17,23,26,0.24)] sm:p-6">
+        <div className="mb-5 flex items-start justify-between gap-4 sm:mb-6">
           <div>
-            <h2 className="font-[var(--font-writing)] text-2xl font-semibold text-[var(--ink)]">
+            <h2 className="font-[var(--font-writing)] text-xl font-semibold text-[var(--ink)] sm:text-2xl">
               Share document
             </h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
@@ -142,7 +142,7 @@ export function ShareModal({
           </button>
         </div>
 
-        <div className="rounded-xl border border-[var(--line)] bg-white px-4 py-3 text-sm text-[var(--muted)]">
+        <div className="break-all rounded-xl border border-[var(--line)] bg-white px-4 py-3 text-sm text-[var(--muted)]">
           {shareEnabled && shareToken ? shareUrl : "Sharing is currently disabled."}
         </div>
 
@@ -163,12 +163,12 @@ export function ShareModal({
           />
         </label>
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
           <button
             type="button"
             onClick={handleCopy}
             disabled={busyAction !== null || !shareEnabled || !shareToken}
-            className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-55"
+            className="w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-55 sm:w-auto"
           >
             {copied ? "Copied" : "Copy link"}
           </button>
@@ -177,7 +177,7 @@ export function ShareModal({
             type="button"
             onClick={handleRotate}
             disabled={busyAction !== null || !shareEnabled}
-            className="rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-55"
+            className="w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-55 sm:w-auto"
           >
             Rotate link
           </button>
@@ -186,7 +186,7 @@ export function ShareModal({
             type="button"
             onClick={handleDisable}
             disabled={busyAction !== null || !shareEnabled}
-            className="rounded-lg bg-[#6a2d35] px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-55"
+            className="w-full rounded-lg bg-[#6a2d35] px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-55 sm:w-auto"
           >
             Disable sharing
           </button>

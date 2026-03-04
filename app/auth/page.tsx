@@ -24,7 +24,7 @@ export default async function AuthPage({ searchParams }: AuthPageProps) {
     next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-[460px] items-center px-6 py-20">
+    <main className="mx-auto flex min-h-dvh w-full max-w-[460px] items-center px-4 py-10 sm:px-6 sm:py-20">
       <AuthForm nextPath={nextPath} />
     </main>
   );

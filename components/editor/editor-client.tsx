@@ -165,8 +165,8 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   });
 
   return (
-    <div className="min-h-screen pb-20">
-      <main className="mx-auto w-full max-w-[800px] px-5 pt-10 md:px-0">
+    <div className="min-h-dvh pb-14 sm:pb-20">
+      <main className="mx-auto w-full max-w-[800px] px-4 pt-6 sm:px-5 sm:pt-10 md:px-0">
         <input
           value={title}
           onChange={(event) => {
@@ -186,7 +186,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           aria-label="Document title"
         />
 
-        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
+        <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
           <span>{words} words</span>
           <span>•</span>
           <span>{readingTime} min read</span>
