@@ -92,12 +92,12 @@ export default async function DocumentsPage() {
             <Link
               key={doc.id}
               href={`/doc/${doc.id}`}
-              className="group flex items-center justify-between rounded-2xl bg-[var(--paper)] px-5 py-4 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
+              className="group block rounded-2xl bg-[var(--paper)] px-5 py-4 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
             >
-              <p className="line-clamp-1 pr-4 font-[var(--font-writing)] text-xl text-[var(--ink)]">
+              <p className="line-clamp-1 font-[var(--font-writing)] text-xl text-[var(--ink)]">
                 {doc.title || "Untitled"}
               </p>
-              <p className="shrink-0 text-xs text-[var(--muted)]">
+              <p className="mt-1 text-xs text-[var(--muted)]">
                 {formatDistanceToNow(new Date(doc.updated_at), {
                   addSuffix: true,
                 })}
