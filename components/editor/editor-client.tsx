@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 
+import { ShareModal } from "@/components/editor/share-modal";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type EditorDocument = {
@@ -19,6 +20,8 @@ type EditorDocument = {
   title: string;
   content: string;
   updated_at: string;
+  share_enabled: boolean;
+  share_token: string | null;
 };
 
 type EditorClientProps = {
@@ -51,6 +54,9 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const [title, setTitle] = useState(initialDocument.title);
   const [content, setContent] = useState(initialDocument.content);
   const [updatedAt, setUpdatedAt] = useState(initialDocument.updated_at);
+  const [shareEnabled, setShareEnabled] = useState(initialDocument.share_enabled);
+  const [shareToken, setShareToken] = useState(initialDocument.share_token);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"Saved" | "Saving…" | "Error">(
     "Saved",
   );
@@ -190,6 +196,14 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           </span>
           <span>•</span>
           <span>Updated {formattedUpdated}</span>
+          <span>•</span>
+          <button
+            type="button"
+            onClick={() => setIsShareModalOpen(true)}
+            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)]"
+          >
+            Share
+          </button>
         </div>
 
         <div className="pb-24">
@@ -215,6 +229,19 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           />
         </div>
       </main>
+
+      <ShareModal
+        documentId={initialDocument.id}
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        shareEnabled={shareEnabled}
+        shareToken={shareToken}
+        onShareUpdated={(enabled, token) => {
+          setShareEnabled(enabled);
+          setShareToken(token);
+          setUpdatedAt(new Date().toISOString());
+        }}
+      />
     </div>
   );
 }
