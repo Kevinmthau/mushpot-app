@@ -1,7 +1,17 @@
 "use client";
 
+import { syntaxTree } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
-import { EditorView, placeholder } from "@codemirror/view";
+import { type Range } from "@codemirror/state";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  placeholder,
+  ViewPlugin,
+  type ViewUpdate,
+  WidgetType,
+} from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -35,10 +45,82 @@ const editorTheme = EditorView.theme({
   ".cm-content": {
     caretColor: "#2f5966",
   },
+  ".cm-md-strong": {
+    fontWeight: "700",
+  },
+  ".cm-md-emphasis": {
+    fontStyle: "italic",
+  },
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
     backgroundColor: "#d3e2e0 !important",
   },
 });
+
+class HiddenMarkdownMarkWidget extends WidgetType {
+  toDOM() {
+    const element = document.createElement("span");
+    element.setAttribute("aria-hidden", "true");
+    return element;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
+const strongDecoration = Decoration.mark({ class: "cm-md-strong" });
+const emphasisDecoration = Decoration.mark({ class: "cm-md-emphasis" });
+const hiddenMarkdownMarkDecoration = Decoration.replace({
+  widget: new HiddenMarkdownMarkWidget(),
+});
+
+function buildMarkdownDecorations(view: EditorView): DecorationSet {
+  const decorations: Range<Decoration>[] = [];
+  const tree = syntaxTree(view.state);
+
+  for (const { from, to } of view.visibleRanges) {
+    tree.iterate({
+      from,
+      to,
+      enter: (node) => {
+        if (node.name === "StrongEmphasis") {
+          decorations.push(strongDecoration.range(node.from, node.to));
+          return;
+        }
+
+        if (node.name === "Emphasis") {
+          decorations.push(emphasisDecoration.range(node.from, node.to));
+          return;
+        }
+
+        if (node.name === "EmphasisMark") {
+          decorations.push(hiddenMarkdownMarkDecoration.range(node.from, node.to));
+        }
+      },
+    });
+  }
+
+  return Decoration.set(decorations, true);
+}
+
+const markdownLiveFormatting = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+
+    constructor(view: EditorView) {
+      this.decorations = buildMarkdownDecorations(view);
+    }
+
+    update(update: ViewUpdate) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = buildMarkdownDecorations(update.view);
+      }
+    }
+  },
+  {
+    decorations: (instance) => instance.decorations,
+  },
+);
 
 function estimateReadingTime(wordCount: number) {
   if (wordCount === 0) {
@@ -79,6 +161,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const editorExtensions = useMemo(
     () => [
       markdown(),
+      markdownLiveFormatting,
       placeholder("Start writing on the infinite canvas..."),
       EditorView.lineWrapping,
       editorTheme,
