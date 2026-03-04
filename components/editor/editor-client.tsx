@@ -166,7 +166,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
 
   return (
     <div className="min-h-dvh pb-14 sm:pb-20">
-      <main className="mx-auto w-full max-w-[800px] px-4 pt-6 sm:px-5 sm:pt-10 md:px-0">
+      <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
         <input
           value={title}
           onChange={(event) => {
