@@ -57,9 +57,6 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const [shareEnabled, setShareEnabled] = useState(initialDocument.share_enabled);
   const [shareToken, setShareToken] = useState(initialDocument.share_token);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"Saved" | "Saving…" | "Error">(
-    "Saved",
-  );
 
   const saveVersionRef = useRef(0);
   const saveTimeoutRef = useRef<number | null>(null);
@@ -89,19 +86,10 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     [],
   );
 
-  const updateSaveStatusForDraft = (nextTitle: string, nextContent: string) => {
-    const isDirty =
-      nextTitle !== lastSavedRef.current.title ||
-      nextContent !== lastSavedRef.current.content;
-    setSaveStatus(isDirty ? "Saving…" : "Saved");
-  };
-
   const saveDraft = useCallback(
     async (nextTitle: string, nextContent: string) => {
       const saveVersion = ++saveVersionRef.current;
       const persistedTitle = nextTitle.trim() ? nextTitle : "Untitled";
-
-      setSaveStatus("Saving…");
 
       const savePromise = (async () => {
         const { error } = await supabase
@@ -118,7 +106,6 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         }
 
         if (error) {
-          setSaveStatus("Error");
           return false;
         }
 
@@ -128,7 +115,6 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         };
         const now = new Date().toISOString();
         setUpdatedAt(now);
-        setSaveStatus("Saved");
         return true;
       })();
 
@@ -172,13 +158,11 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           onChange={(event) => {
             const nextTitle = event.target.value;
             setTitle(nextTitle);
-            updateSaveStatusForDraft(nextTitle, content);
           }}
           onBlur={() => {
             if (!title.trim()) {
               const nextTitle = "Untitled";
               setTitle(nextTitle);
-              updateSaveStatusForDraft(nextTitle, content);
             }
           }}
           placeholder="Untitled"
@@ -187,13 +171,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         />
 
         <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
-          <span>{words} words</span>
-          <span>•</span>
           <span>{readingTime} min read</span>
-          <span>•</span>
-          <span className={saveStatus === "Error" ? "text-[#9b2d34]" : ""}>
-            {saveStatus}
-          </span>
           <span>•</span>
           <span>Updated {formattedUpdated}</span>
           <span>•</span>
@@ -211,7 +189,6 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
             value={content}
             onChange={(value) => {
               setContent(value);
-              updateSaveStatusForDraft(title, value);
             }}
             extensions={editorExtensions}
             basicSetup={{
