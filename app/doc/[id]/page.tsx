@@ -23,7 +23,7 @@ export default async function DocumentEditorPage({ params }: DocPageProps) {
 
   const { data: document, error } = await supabase
     .from("documents")
-    .select("id, title, content, updated_at, share_enabled, share_token")
+    .select("id, title, content, updated_at")
     .eq("id", id)
     .maybeSingle();
 

@@ -45,7 +45,7 @@ textarea {
   color: var(--ink);
   line-height: 1.85;
   font-size: 1.05rem;
-  font-family: var(--font-writing), Georgia, serif;
+  font-family: var(--font-writing), "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
 }
 
 .markdown-body > *:first-child {
@@ -154,10 +154,17 @@ textarea {
   background: transparent !important;
 }
 
+.cm-content,
+.editor-title-input {
+  font-family: var(--font-writing), "SFMono-Regular", Menlo, Monaco, Consolas, monospace !important;
+  font-size: 1.1rem !important;
+  line-height: 1.9 !important;
+  font-weight: 400 !important;
+  letter-spacing: normal !important;
+}
+
 .cm-scroller {
   overflow: visible !important;
-  font-family: var(--font-writing), Georgia, serif;
-  line-height: 1.9;
 }
 
 .cm-content {

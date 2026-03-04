@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Instrument_Sans, Literata } from "next/font/google";
+import { Instrument_Sans, Roboto_Mono } from "next/font/google";
 
 import "./globals.css";
 
@@ -8,7 +8,7 @@ const uiFont = Instrument_Sans({
   variable: "--font-ui",
 });
 
-const writingFont = Literata({
+const writingFont = Roboto_Mono({
   subsets: ["latin"],
   variable: "--font-writing",
 });
