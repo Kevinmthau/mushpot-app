@@ -64,51 +64,49 @@ export default async function DocumentsPage() {
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-[880px] px-6 py-12">
-      <header className="mb-10 flex items-center justify-end gap-3">
-        <div className="flex items-center gap-2">
-          <form action={createDocumentAction}>
-            <button
-              type="submit"
-              className="rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-95"
-            >
-              New Document
-            </button>
-          </form>
-
-          <form action={signOutAction}>
-            <button
-              type="submit"
-              className="rounded-xl bg-[var(--paper)] px-4 py-2.5 text-sm text-[var(--muted)] transition hover:text-[var(--accent)]"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
+      <header className="mb-10 flex items-center justify-end">
+        <form action={signOutAction}>
+          <button
+            type="submit"
+            className="rounded-xl bg-[var(--paper)] px-4 py-2.5 text-sm text-[var(--muted)] transition hover:text-[var(--accent)]"
+          >
+            Sign out
+          </button>
+        </form>
       </header>
 
       <section className="space-y-2">
-        {documents && documents.length > 0 ? (
-          documents.map((doc) => (
-            <Link
-              key={doc.id}
-              href={`/doc/${doc.id}`}
-              className="group block rounded-2xl bg-[var(--paper)] px-5 py-4 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
-            >
-              <p className="line-clamp-1 font-[var(--font-writing)] text-xl text-[var(--ink)]">
-                {doc.title || "Untitled"}
+        <form action={createDocumentAction}>
+          <button
+            type="submit"
+            aria-label="New document"
+            title="New document"
+            className="group block w-full appearance-none rounded-2xl border-0 bg-transparent p-0 text-left transition hover:bg-[var(--paper)] hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
+          >
+            <div className="px-5 py-4">
+              <p className="line-clamp-1 [font-family:var(--font-writing)] text-xl text-[var(--muted)]">
+                New document...
               </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                {formatDistanceToNow(new Date(doc.updated_at), {
-                  addSuffix: true,
-                })}
-              </p>
-            </Link>
-          ))
-        ) : (
-          <div className="rounded-2xl px-6 py-12 text-center text-[var(--muted)]">
-            No documents yet. Start with “New Document”.
-          </div>
-        )}
+            </div>
+          </button>
+        </form>
+
+        {documents?.map((doc) => (
+          <Link
+            key={doc.id}
+            href={`/doc/${doc.id}`}
+            className="group block rounded-2xl bg-[var(--paper)] px-5 py-4 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
+          >
+            <p className="line-clamp-1 [font-family:var(--font-writing)] text-xl text-[var(--ink)]">
+              {doc.title || "Untitled"}
+            </p>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              {formatDistanceToNow(new Date(doc.updated_at), {
+                addSuffix: true,
+              })}
+            </p>
+          </Link>
+        ))}
       </section>
     </main>
   );
