@@ -64,14 +64,7 @@ export default async function DocumentsPage() {
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-[880px] px-6 py-12">
-      <header className="mb-10 flex items-center justify-between gap-3">
-        <div>
-          <h1 className="font-[var(--font-writing)] text-4xl font-semibold tracking-tight text-[var(--ink)]">
-            Documents
-          </h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">{user.email}</p>
-        </div>
-
+      <header className="mb-10 flex items-center justify-end gap-3">
         <div className="flex items-center gap-2">
           <form action={createDocumentAction}>
             <button
