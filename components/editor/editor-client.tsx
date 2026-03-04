@@ -8,7 +8,14 @@ import { formatDistanceToNow } from "date-fns";
 import Link from "next/link";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { ShareModal } from "@/components/editor/share-modal";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -60,8 +67,11 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const [saveStatus, setSaveStatus] = useState<"Saved" | "Saving…" | "Error">(
     "Saved",
   );
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const saveVersionRef = useRef(0);
+  const saveTimeoutRef = useRef<number | null>(null);
+  const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const lastSavedRef = useRef({
     title: initialDocument.title,
     content: initialDocument.content,
@@ -95,6 +105,54 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     setSaveStatus(isDirty ? "Saving…" : "Saved");
   };
 
+  const saveDraft = useCallback(
+    async (nextTitle: string, nextContent: string) => {
+      const saveVersion = ++saveVersionRef.current;
+      const persistedTitle = nextTitle.trim() ? nextTitle : "Untitled";
+
+      setSaveStatus("Saving…");
+
+      const savePromise = (async () => {
+        const { error } = await supabase
+          .from("documents")
+          .update({
+            title: persistedTitle,
+            content: nextContent,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", initialDocument.id);
+
+        if (saveVersion !== saveVersionRef.current) {
+          return true;
+        }
+
+        if (error) {
+          setSaveStatus("Error");
+          return false;
+        }
+
+        lastSavedRef.current = {
+          title: nextTitle,
+          content: nextContent,
+        };
+        const now = new Date().toISOString();
+        setUpdatedAt(now);
+        setSaveStatus("Saved");
+        return true;
+      })();
+
+      savePromiseRef.current = savePromise;
+      const didSave = await savePromise;
+
+      if (savePromiseRef.current === savePromise) {
+        savePromiseRef.current = null;
+      }
+
+      return didSave;
+    },
+    [initialDocument.id, supabase],
+  );
+
   useEffect(() => {
     const isDirty =
       title !== lastSavedRef.current.title || content !== lastSavedRef.current.content;
@@ -103,41 +161,72 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
       return;
     }
 
-    const timeoutId = window.setTimeout(async () => {
-      const saveVersion = ++saveVersionRef.current;
-      const nextTitle = title.trim() ? title : "Untitled";
-
-      const { error } = await supabase
-        .from("documents")
-        .update({
-          title: nextTitle,
-          content,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", initialDocument.id);
-
-      if (saveVersion !== saveVersionRef.current) {
-        return;
-      }
-
-      if (error) {
-        setSaveStatus("Error");
-        return;
-      }
-
-      lastSavedRef.current = {
-        title,
-        content,
-      };
-      const now = new Date().toISOString();
-      setUpdatedAt(now);
-      setSaveStatus("Saved");
+    const timeoutId = window.setTimeout(() => {
+      saveTimeoutRef.current = null;
+      void saveDraft(title, content);
     }, 500);
+    saveTimeoutRef.current = timeoutId;
 
     return () => {
       window.clearTimeout(timeoutId);
+      if (saveTimeoutRef.current === timeoutId) {
+        saveTimeoutRef.current = null;
+      }
     };
-  }, [content, initialDocument.id, supabase, title]);
+  }, [content, saveDraft, title]);
+
+  const flushPendingSave = useCallback(async () => {
+    const isDirty =
+      title !== lastSavedRef.current.title || content !== lastSavedRef.current.content;
+
+    if (!isDirty) {
+      if (savePromiseRef.current) {
+        return savePromiseRef.current;
+      }
+      return true;
+    }
+
+    if (saveTimeoutRef.current !== null) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
+    return saveDraft(title, content);
+  }, [content, saveDraft, title]);
+
+  const downloadHref = `/doc/${initialDocument.id}/download`;
+
+  const handleDownloadClick = useCallback(
+    async (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (isDownloading) {
+        return;
+      }
+
+      setIsDownloading(true);
+      const didSave = await flushPendingSave();
+
+      if (didSave) {
+        window.location.assign(downloadHref);
+        return;
+      }
+
+      setIsDownloading(false);
+    },
+    [downloadHref, flushPendingSave, isDownloading],
+  );
 
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
@@ -208,6 +297,18 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
               >
                 Share
               </button>
+
+              <a
+                href={downloadHref}
+                onClick={handleDownloadClick}
+                aria-disabled={isDownloading}
+                className={clsx(
+                  "rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-xs text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]",
+                  isDownloading && "pointer-events-none opacity-70",
+                )}
+              >
+                {isDownloading ? "Preparing PDF..." : "Download PDF"}
+              </a>
             </div>
           </div>
         </header>
@@ -286,6 +387,17 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           >
             {previewMode ? "Write" : "Preview"}
           </button>
+          <a
+            href={downloadHref}
+            onClick={handleDownloadClick}
+            aria-disabled={isDownloading}
+            className={clsx(
+              "rounded-md px-2 py-1 text-xs text-[var(--muted)] transition hover:bg-[rgba(47,89,102,0.09)]",
+              isDownloading && "pointer-events-none opacity-70",
+            )}
+          >
+            {isDownloading ? "Preparing PDF..." : "Download PDF"}
+          </a>
           <button
             type="button"
             onClick={() => setFocusMode(false)}

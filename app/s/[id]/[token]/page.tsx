@@ -56,15 +56,26 @@ export default async function SharedDocumentPage({ params }: SharedDocPageProps)
     <main className="mx-auto min-h-screen w-full max-w-[880px] px-6 py-10">
       <div className="rounded-2xl border border-[var(--line)] bg-[var(--paper)] px-6 py-8 md:px-10 md:py-10">
         <header className="mb-8 border-b border-[var(--line)] pb-5">
-          <h1 className="font-[var(--font-writing)] text-4xl font-semibold tracking-tight text-[var(--ink)]">
-            {document.title || "Untitled"}
-          </h1>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Updated{" "}
-            {formatDistanceToNow(new Date(document.updated_at), {
-              addSuffix: true,
-            })}
-          </p>
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+            <div>
+              <h1 className="font-[var(--font-writing)] text-4xl font-semibold tracking-tight text-[var(--ink)]">
+                {document.title || "Untitled"}
+              </h1>
+              <p className="mt-2 text-sm text-[var(--muted)]">
+                Updated{" "}
+                {formatDistanceToNow(new Date(document.updated_at), {
+                  addSuffix: true,
+                })}
+              </p>
+            </div>
+
+            <a
+              href={`/s/${id}/${token}/download`}
+              className="shrink-0 rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-xs text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            >
+              Download PDF
+            </a>
+          </div>
         </header>
 
         <article className="markdown-body">
