@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #efeee6;
-  --paper: #f8f7f1;
+  --bg: #ffffff;
+  --paper: #ffffff;
   --ink: #1f2a2f;
   --muted: #607279;
   --line: #d8d6ca;
@@ -16,15 +16,13 @@
 html,
 body {
   min-height: 100%;
+  background: #ffffff;
 }
 
 body {
   margin: 0;
   color: var(--ink);
-  background:
-    radial-gradient(circle at 20% 0%, #f8f7f1, transparent 42%),
-    radial-gradient(circle at 80% 100%, #e6e3d6, transparent 38%),
-    var(--bg);
+  background: #ffffff;
   font-family: var(--font-ui), "Helvetica Neue", Helvetica, sans-serif;
 }
 
@@ -134,13 +132,26 @@ textarea {
 }
 
 .cm-editor {
-  border: 0;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
   background: transparent;
   font-size: 1.1rem;
 }
 
-.cm-focused {
-  outline: none;
+.cm-editor.cm-focused {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.cm-theme,
+.cm-theme .cm-editor,
+.cm-theme .cm-scroller,
+.cm-theme .cm-content {
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
 }
 
 .cm-scroller {

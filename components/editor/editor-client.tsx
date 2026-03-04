@@ -1,6 +1,5 @@
 "use client";
 
-import { Extension } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorView, placeholder } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
@@ -37,30 +36,6 @@ const editorTheme = EditorView.theme({
   },
 });
 
-function createTypewriterModeExtension(enabled: boolean): Extension {
-  return EditorView.updateListener.of((update) => {
-    if (!enabled || !update.selectionSet || !update.view.hasFocus) {
-      return;
-    }
-
-    requestAnimationFrame(() => {
-      const cursor = update.view.coordsAtPos(update.state.selection.main.head);
-      if (!cursor) {
-        return;
-      }
-
-      const targetY = window.innerHeight * 0.45;
-      const delta = cursor.top - targetY;
-
-      if (Math.abs(delta) < 36) {
-        return;
-      }
-
-      window.scrollBy({ top: delta, behavior: "smooth" });
-    });
-  });
-}
-
 function estimateReadingTime(wordCount: number) {
   if (wordCount === 0) {
     return 0;
@@ -78,7 +53,6 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const [shareEnabled, setShareEnabled] = useState(initialDocument.share_enabled);
   const [shareToken, setShareToken] = useState(initialDocument.share_token);
   const [focusMode, setFocusMode] = useState(false);
-  const [typewriterMode, setTypewriterMode] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"Saved" | "Saving…" | "Error">(
     "Saved",
@@ -107,9 +81,8 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
       placeholder("Start writing on the infinite canvas..."),
       EditorView.lineWrapping,
       editorTheme,
-      createTypewriterModeExtension(typewriterMode),
     ],
-    [typewriterMode],
+    [],
   );
 
   const updateSaveStatusForDraft = (nextTitle: string, nextContent: string) => {
@@ -181,7 +154,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   return (
     <div className="min-h-screen pb-20">
       {!focusMode ? (
-        <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-[rgba(248,247,241,0.88)] backdrop-blur">
+        <header className="sticky top-0 z-20 border-b border-[var(--line)] bg-white">
           <div className="mx-auto flex w-full max-w-[980px] items-center justify-between gap-3 px-4 py-3 md:px-6">
             <Link
               href="/"
@@ -199,19 +172,6 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setTypewriterMode((value) => !value)}
-                className={clsx(
-                  "rounded-lg border px-3 py-1.5 text-xs transition",
-                  typewriterMode
-                    ? "border-[var(--accent)] bg-[rgba(47,89,102,0.09)] text-[var(--accent)]"
-                    : "border-[var(--line)] bg-white text-[var(--muted)]",
-                )}
-              >
-                Typewriter
-              </button>
-
               <button
                 type="button"
                 onClick={() => setFocusMode((value) => !value)}
@@ -294,14 +254,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
       </main>
 
       {focusMode ? (
-        <div className="fixed right-4 top-4 z-30 flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[rgba(248,247,241,0.92)] p-2 backdrop-blur">
-          <button
-            type="button"
-            onClick={() => setTypewriterMode((value) => !value)}
-            className="rounded-md px-2 py-1 text-xs text-[var(--muted)] transition hover:bg-[rgba(47,89,102,0.09)]"
-          >
-            {typewriterMode ? "Typewriter on" : "Typewriter off"}
-          </button>
+        <div className="fixed right-4 top-4 z-30 flex items-center gap-2 rounded-lg border border-[var(--line)] bg-white p-2">
           <button
             type="button"
             onClick={() => setFocusMode(false)}
