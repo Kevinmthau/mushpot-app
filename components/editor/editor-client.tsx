@@ -565,7 +565,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
       markdown(),
       markdownLiveFormatting,
       imageDropPasteHandlers,
-      placeholder("Start writing on the infinite canvas..."),
+      placeholder("|..."),
       EditorView.lineWrapping,
       editorTheme,
     ],
