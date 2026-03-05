@@ -17,13 +17,14 @@ import CodeMirror from "@uiw/react-codemirror";
 import { formatDistanceToNow } from "date-fns";
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import dynamic from "next/dynamic";
 
-import { ShareModal } from "@/components/editor/share-modal";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -43,6 +44,8 @@ type EditorClientProps = {
 
 const IMAGE_BUCKET = "document-images";
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
+const AUTOSAVE_DEBOUNCE_MS = 1200;
+const SELECTION_DECORATION_REBUILD_INTERVAL_MS = 120;
 const SUPPORTED_IMAGE_EXTENSIONS = new Set([
   "jpg",
   "jpeg",
@@ -82,6 +85,13 @@ const editorTheme = EditorView.theme({
     backgroundColor: "#d3e2e0 !important",
   },
 });
+
+const ShareModal = dynamic(
+  () => import("@/components/editor/share-modal").then((module) => module.ShareModal),
+  {
+    ssr: false,
+  },
+);
 
 class HiddenMarkdownMarkWidget extends WidgetType {
   toDOM() {
@@ -253,13 +263,28 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
 const markdownLiveFormatting = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
+    lastDecorationBuildAt: number;
 
     constructor(view: EditorView) {
       this.decorations = buildMarkdownDecorations(view);
+      this.lastDecorationBuildAt = 0;
     }
 
     update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged || update.selectionSet) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = buildMarkdownDecorations(update.view);
+        this.lastDecorationBuildAt =
+          typeof performance === "undefined" ? Date.now() : performance.now();
+        return;
+      }
+
+      if (update.selectionSet) {
+        const now = typeof performance === "undefined" ? Date.now() : performance.now();
+        if (now - this.lastDecorationBuildAt < SELECTION_DECORATION_REBUILD_INTERVAL_MS) {
+          return;
+        }
+
+        this.lastDecorationBuildAt = now;
         this.decorations = buildMarkdownDecorations(update.view);
       }
     }
@@ -362,21 +387,31 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [uploadingImagesCount, setUploadingImagesCount] = useState(0);
 
-  const saveVersionRef = useRef(0);
   const saveTimeoutRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef(false);
+  const queuedSaveRef = useRef<{ title: string; content: string } | null>(null);
   const lastSavedRef = useRef({
     title: initialDocument.title,
     content: initialDocument.content,
   });
+  const latestDraftRef = useRef({
+    title: initialDocument.title,
+    content: initialDocument.content,
+  });
+  const deferredContent = useDeferredValue(content);
+
+  useEffect(() => {
+    latestDraftRef.current = { title, content };
+  }, [content, title]);
 
   const words = useMemo(() => {
-    const trimmed = content.trim();
+    const trimmed = deferredContent.trim();
     if (!trimmed) {
       return 0;
     }
 
     return trimmed.split(/\s+/).length;
-  }, [content]);
+  }, [deferredContent]);
 
   const readingTime = useMemo(() => estimateReadingTime(words), [words]);
 
@@ -535,38 +570,66 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
 
   const saveDraft = useCallback(
     async (nextTitle: string, nextContent: string) => {
-      const saveVersion = ++saveVersionRef.current;
-      const persistedTitle = nextTitle.trim() ? nextTitle : "Untitled";
+      if (
+        nextTitle === lastSavedRef.current.title &&
+        nextContent === lastSavedRef.current.content
+      ) {
+        return true;
+      }
 
-      const savePromise = (async () => {
-        const { error } = await supabase
-          .from("documents")
-          .update({
-            title: persistedTitle,
-            content: nextContent,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", initialDocument.id);
-
-        if (saveVersion !== saveVersionRef.current) {
-          return true;
-        }
-
-        if (error) {
-          return false;
-        }
-
-        lastSavedRef.current = {
+      if (saveInFlightRef.current) {
+        queuedSaveRef.current = {
           title: nextTitle,
           content: nextContent,
         };
-        const now = new Date().toISOString();
-        setUpdatedAt(now);
         return true;
-      })();
+      }
 
-      const didSave = await savePromise;
-      return didSave;
+      saveInFlightRef.current = true;
+      let titleToSave = nextTitle;
+      let contentToSave = nextContent;
+
+      try {
+        // Save current state and collapse overlapping save requests into one follow-up write.
+        while (true) {
+          const persistedTitle = titleToSave.trim() ? titleToSave : "Untitled";
+          const { error } = await supabase
+            .from("documents")
+            .update({
+              title: persistedTitle,
+              content: contentToSave,
+            })
+            .eq("id", initialDocument.id);
+
+          if (error) {
+            return false;
+          }
+
+          lastSavedRef.current = {
+            title: titleToSave,
+            content: contentToSave,
+          };
+          setUpdatedAt(new Date().toISOString());
+
+          const queuedSave = queuedSaveRef.current;
+          if (!queuedSave) {
+            return true;
+          }
+
+          queuedSaveRef.current = null;
+          if (
+            queuedSave.title === lastSavedRef.current.title &&
+            queuedSave.content === lastSavedRef.current.content
+          ) {
+            return true;
+          }
+
+          titleToSave = queuedSave.title;
+          contentToSave = queuedSave.content;
+        }
+      } finally {
+        saveInFlightRef.current = false;
+      }
     },
     [initialDocument.id, supabase],
   );
@@ -582,7 +645,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     const timeoutId = window.setTimeout(() => {
       saveTimeoutRef.current = null;
       void saveDraft(title, content);
-    }, 500);
+    }, AUTOSAVE_DEBOUNCE_MS);
     saveTimeoutRef.current = timeoutId;
 
     return () => {
@@ -592,6 +655,35 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
       }
     };
   }, [content, saveDraft, title]);
+
+  useEffect(() => {
+    const flushPendingDraft = () => {
+      if (document.visibilityState !== "hidden") {
+        return;
+      }
+
+      const latestDraft = latestDraftRef.current;
+      const isDirty =
+        latestDraft.title !== lastSavedRef.current.title ||
+        latestDraft.content !== lastSavedRef.current.content;
+
+      if (!isDirty) {
+        return;
+      }
+
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+
+      void saveDraft(latestDraft.title, latestDraft.content);
+    };
+
+    document.addEventListener("visibilitychange", flushPendingDraft);
+    return () => {
+      document.removeEventListener("visibilitychange", flushPendingDraft);
+    };
+  }, [saveDraft]);
 
   const formattedUpdated = formatDistanceToNow(new Date(updatedAt), {
     addSuffix: true,
@@ -663,18 +755,20 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         </div>
       </main>
 
-      <ShareModal
-        documentId={initialDocument.id}
-        isOpen={isShareModalOpen}
-        onClose={() => setIsShareModalOpen(false)}
-        shareEnabled={shareEnabled}
-        shareToken={shareToken}
-        onShareUpdated={(enabled, token) => {
-          setShareEnabled(enabled);
-          setShareToken(token);
-          setUpdatedAt(new Date().toISOString());
-        }}
-      />
+      {isShareModalOpen ? (
+        <ShareModal
+          documentId={initialDocument.id}
+          isOpen={isShareModalOpen}
+          onClose={() => setIsShareModalOpen(false)}
+          shareEnabled={shareEnabled}
+          shareToken={shareToken}
+          onShareUpdated={(enabled, token) => {
+            setShareEnabled(enabled);
+            setShareToken(token);
+            setUpdatedAt(new Date().toISOString());
+          }}
+        />
+      ) : null}
     </div>
   );
 }

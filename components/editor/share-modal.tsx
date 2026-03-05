@@ -49,7 +49,6 @@ export function ShareModal({
       .update({
         share_enabled: enabled,
         share_token: token,
-        updated_at: new Date().toISOString(),
       })
       .eq("id", documentId);
 
