@@ -25,6 +25,7 @@ export default async function DocumentEditorPage({ params }: DocPageProps) {
     .from("documents")
     .select("id, owner, title, content, updated_at, share_enabled, share_token")
     .eq("id", id)
+    .eq("owner", user.id)
     .maybeSingle();
 
   if (error || !document) {

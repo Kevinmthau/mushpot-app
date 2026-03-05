@@ -11,8 +11,6 @@ type DocumentRow = {
   title: string;
   content: string;
   updated_at: string;
-  share_enabled: boolean;
-  share_token: string | null;
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -62,15 +60,13 @@ Deno.serve(async (request) => {
 
   const { data, error } = await adminClient
     .from("documents")
-    .select("title, content, updated_at, share_enabled, share_token")
+    .select("title, content, updated_at")
     .eq("id", docId)
+    .eq("share_enabled", true)
+    .eq("share_token", token)
     .maybeSingle<DocumentRow>();
 
   if (error || !data) {
-    return jsonResponse({ error: "Document not found." }, 404);
-  }
-
-  if (!data.share_enabled || !data.share_token || data.share_token !== token) {
     return jsonResponse({ error: "Invalid or expired share link." }, 404);
   }
 

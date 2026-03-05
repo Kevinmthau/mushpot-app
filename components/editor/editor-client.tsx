@@ -14,7 +14,6 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
-import { formatDistanceToNow } from "date-fns";
 import {
   useCallback,
   useDeferredValue,
@@ -46,7 +45,7 @@ type EditorClientProps = {
 const IMAGE_BUCKET = "document-images";
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
 const AUTOSAVE_DEBOUNCE_MS = 1200;
-const SELECTION_DECORATION_REBUILD_INTERVAL_MS = 120;
+const DECORATION_REBUILD_INTERVAL_MS = 120;
 const SUPPORTED_IMAGE_EXTENSIONS = new Set([
   "jpg",
   "jpeg",
@@ -68,6 +67,10 @@ const SUPPORTED_IMAGE_MIME_TYPE_SET = new Set([
   ...SUPPORTED_IMAGE_MIME_TYPES,
   "image/jpg",
 ]);
+const SUPPORTED_IMAGE_FORMATS_LABEL = SUPPORTED_IMAGE_MIME_TYPES.join(", ");
+const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat("en", {
+  numeric: "auto",
+});
 
 const editorTheme = EditorView.theme({
   "&": {
@@ -148,6 +151,10 @@ const emphasisDecoration = Decoration.mark({ class: "cm-md-emphasis" });
 const hiddenMarkdownMarkDecoration = Decoration.replace({
   widget: new HiddenMarkdownMarkWidget(),
 });
+
+function getCurrentTimeMs() {
+  return typeof performance === "undefined" ? Date.now() : performance.now();
+}
 
 function parseMarkdownImage(
   view: EditorView,
@@ -268,26 +275,27 @@ const markdownLiveFormatting = ViewPlugin.fromClass(
 
     constructor(view: EditorView) {
       this.decorations = buildMarkdownDecorations(view);
-      this.lastDecorationBuildAt = 0;
+      this.lastDecorationBuildAt = getCurrentTimeMs();
     }
 
     update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged) {
+      if (update.docChanged) {
         this.decorations = buildMarkdownDecorations(update.view);
-        this.lastDecorationBuildAt =
-          typeof performance === "undefined" ? Date.now() : performance.now();
+        this.lastDecorationBuildAt = getCurrentTimeMs();
         return;
       }
 
-      if (update.selectionSet) {
-        const now = typeof performance === "undefined" ? Date.now() : performance.now();
-        if (now - this.lastDecorationBuildAt < SELECTION_DECORATION_REBUILD_INTERVAL_MS) {
-          return;
-        }
-
-        this.lastDecorationBuildAt = now;
-        this.decorations = buildMarkdownDecorations(update.view);
+      if (!update.viewportChanged && !update.selectionSet) {
+        return;
       }
+
+      const now = getCurrentTimeMs();
+      if (now - this.lastDecorationBuildAt < DECORATION_REBUILD_INTERVAL_MS) {
+        return;
+      }
+
+      this.lastDecorationBuildAt = now;
+      this.decorations = buildMarkdownDecorations(update.view);
     }
   },
   {
@@ -301,6 +309,49 @@ function estimateReadingTime(wordCount: number) {
   }
 
   return Math.max(1, Math.ceil(wordCount / 225));
+}
+
+function formatRelativeTimestamp(value: string) {
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) {
+    return "just now";
+  }
+
+  const diffMs = timestamp - Date.now();
+  const absDiffMs = Math.abs(diffMs);
+
+  if (absDiffMs < 45_000) {
+    return "just now";
+  }
+
+  const minuteMs = 60_000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+  const weekMs = 7 * dayMs;
+  const monthMs = 30 * dayMs;
+  const yearMs = 365 * dayMs;
+
+  if (absDiffMs < hourMs) {
+    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / minuteMs), "minute");
+  }
+
+  if (absDiffMs < dayMs) {
+    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / hourMs), "hour");
+  }
+
+  if (absDiffMs < weekMs) {
+    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / dayMs), "day");
+  }
+
+  if (absDiffMs < monthMs) {
+    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / weekMs), "week");
+  }
+
+  if (absDiffMs < yearMs) {
+    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / monthMs), "month");
+  }
+
+  return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / yearMs), "year");
 }
 
 function sanitizeImageAltText(fileName: string) {
@@ -433,7 +484,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         for (const file of files) {
           if (!isSupportedImageFile(file)) {
             failures.push(
-              `${file.name || "File"} is not a supported image. Allowed formats: ${SUPPORTED_IMAGE_MIME_TYPES.join(", ")}.`,
+              `${file.name || "File"} is not a supported image. Allowed formats: ${SUPPORTED_IMAGE_FORMATS_LABEL}.`,
             );
             continue;
           }
@@ -526,7 +577,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           const files = droppedFiles.filter(isSupportedImageFile);
           if (files.length === 0) {
             window.alert(
-              `Only image files are supported. Allowed formats: ${SUPPORTED_IMAGE_MIME_TYPES.join(", ")}.`,
+              `Only image files are supported. Allowed formats: ${SUPPORTED_IMAGE_FORMATS_LABEL}.`,
             );
             return true;
           }
@@ -548,7 +599,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           const files = pastedFiles.filter(isSupportedImageFile);
           if (files.length === 0) {
             window.alert(
-              `Only image files are supported. Allowed formats: ${SUPPORTED_IMAGE_MIME_TYPES.join(", ")}.`,
+              `Only image files are supported. Allowed formats: ${SUPPORTED_IMAGE_FORMATS_LABEL}.`,
             );
             return true;
           }
@@ -735,9 +786,9 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     router.refresh();
   }, [initialDocument.id, initialDocument.owner, isDeleting, router, supabase]);
 
-  const formattedUpdated = formatDistanceToNow(new Date(updatedAt), {
-    addSuffix: true,
-  });
+  const formattedUpdated = useMemo(() => {
+    return formatRelativeTimestamp(updatedAt);
+  }, [updatedAt]);
 
   return (
     <div className="min-h-dvh pb-14 sm:pb-20">
