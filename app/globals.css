@@ -203,6 +203,22 @@ video {
   border-left-color: #2c4f58 !important;
 }
 
+.cm-md-image-preview {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+  margin: 0.8rem 0;
+}
+
+.cm-md-image-preview img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+  background: #f5f3ec;
+}
+
 @media (max-width: 639px) {
   .markdown-body {
     font-size: 1rem;
