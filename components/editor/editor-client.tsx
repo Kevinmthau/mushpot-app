@@ -24,6 +24,7 @@ import {
   useState,
 } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -378,6 +379,7 @@ function buildImageMarkdown(
 
 export function EditorClient({ initialDocument }: EditorClientProps) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const router = useRouter();
 
   const [title, setTitle] = useState(initialDocument.title);
   const [content, setContent] = useState(initialDocument.content);
@@ -386,10 +388,12 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const [shareToken, setShareToken] = useState(initialDocument.share_token);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [uploadingImagesCount, setUploadingImagesCount] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const saveTimeoutRef = useRef<number | null>(null);
   const saveInFlightRef = useRef(false);
   const queuedSaveRef = useRef<{ title: string; content: string } | null>(null);
+  const isDeletingRef = useRef(false);
   const lastSavedRef = useRef({
     title: initialDocument.title,
     content: initialDocument.content,
@@ -570,6 +574,10 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
 
   const saveDraft = useCallback(
     async (nextTitle: string, nextContent: string) => {
+      if (isDeletingRef.current) {
+        return true;
+      }
+
       if (
         nextTitle === lastSavedRef.current.title &&
         nextContent === lastSavedRef.current.content
@@ -592,6 +600,10 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
       try {
         // Save current state and collapse overlapping save requests into one follow-up write.
         while (true) {
+          if (isDeletingRef.current) {
+            return true;
+          }
+
           const persistedTitle = titleToSave.trim() ? titleToSave : "Untitled";
           const { error } = await supabase
             .from("documents")
@@ -685,6 +697,44 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     };
   }, [saveDraft]);
 
+  const handleDeleteDocument = useCallback(async () => {
+    if (isDeleting) {
+      return;
+    }
+
+    const isConfirmed = window.confirm(
+      "Delete this document? This action cannot be undone.",
+    );
+    if (!isConfirmed) {
+      return;
+    }
+
+    isDeletingRef.current = true;
+    setIsDeleting(true);
+    setIsShareModalOpen(false);
+    queuedSaveRef.current = null;
+    if (saveTimeoutRef.current !== null) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
+    const { error } = await supabase
+      .from("documents")
+      .delete()
+      .eq("id", initialDocument.id)
+      .eq("owner", initialDocument.owner);
+
+    if (error) {
+      isDeletingRef.current = false;
+      setIsDeleting(false);
+      window.alert(error.message || "Unable to delete document. Please try again.");
+      return;
+    }
+
+    router.replace("/");
+    router.refresh();
+  }, [initialDocument.id, initialDocument.owner, isDeleting, router, supabase]);
+
   const formattedUpdated = formatDistanceToNow(new Date(updatedAt), {
     addSuffix: true,
   });
@@ -726,9 +776,21 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           <button
             type="button"
             onClick={() => setIsShareModalOpen(true)}
-            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)]"
+            disabled={isDeleting}
+            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             Share
+          </button>
+          <span>•</span>
+          <button
+            type="button"
+            onClick={() => {
+              void handleDeleteDocument();
+            }}
+            disabled={isDeleting}
+            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isDeleting ? "Deleting..." : "DELETE"}
           </button>
         </div>
 
