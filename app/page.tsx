@@ -84,7 +84,7 @@ export default async function DocumentsPage() {
             className="group block w-full appearance-none rounded-2xl border-0 bg-transparent p-0 text-left transition hover:bg-[var(--paper)] hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
           >
             <div className="px-4 py-3 sm:px-5 sm:py-4">
-              <p className="line-clamp-1 [font-family:var(--font-writing)] text-lg text-[var(--muted)] sm:text-xl">
+              <p className="document-title-text line-clamp-1 text-[var(--muted)]">
                 New document...
               </p>
             </div>
@@ -97,7 +97,7 @@ export default async function DocumentsPage() {
             href={`/doc/${doc.id}`}
             className="group block rounded-2xl bg-[var(--paper)] px-4 py-3 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)] sm:px-5 sm:py-4"
           >
-            <p className="line-clamp-1 [font-family:var(--font-writing)] text-lg text-[var(--ink)] sm:text-xl">
+            <p className="document-title-text line-clamp-1 text-[var(--ink)]">
               {doc.title || "Untitled"}
             </p>
             <p className="mt-1 text-xs text-[var(--muted)]">
