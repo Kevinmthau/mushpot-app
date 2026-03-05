@@ -151,7 +151,7 @@ video {
   outline: none !important;
   box-shadow: none !important;
   background: transparent;
-  font-size: 1.1rem;
+  font-size: 1.125rem;
 }
 
 .cm-editor.cm-focused {
@@ -172,7 +172,7 @@ video {
 .cm-content,
 .editor-title-input {
   font-family: var(--font-writing), "SFMono-Regular", Menlo, Monaco, Consolas, monospace !important;
-  font-size: 1.1rem !important;
+  font-size: 1.125rem !important;
   line-height: 1.9 !important;
   font-weight: 400 !important;
   letter-spacing: normal !important;
@@ -203,7 +203,7 @@ video {
   border-left-color: #2c4f58 !important;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639px) {
   .markdown-body {
     font-size: 1rem;
     line-height: 1.75;
@@ -219,11 +219,22 @@ video {
 
   .cm-content,
   .editor-title-input {
-    font-size: 1rem !important;
+    font-size: 1.125rem !important;
     line-height: 1.75 !important;
   }
 
   .cm-content {
     min-height: 48vh;
+  }
+}
+
+@media (min-width: 640px) {
+  .cm-editor {
+    font-size: 1.25rem;
+  }
+
+  .cm-content,
+  .editor-title-input {
+    font-size: 1.25rem !important;
   }
 }
