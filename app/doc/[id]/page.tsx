@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 
-import { EditorClient } from "@/components/editor/editor-client";
+import { EditorClient } from "@/components/editor/editor-lazy";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { formatDistanceToNow } from "date-fns";
 
+import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import PullToRefresh from "@/components/pull-to-refresh";
 
@@ -103,9 +103,7 @@ export default async function DocumentsPage() {
                 {doc.title || "Untitled"}
               </p>
               <p className="mt-1 text-xs text-[var(--muted)]">
-                {formatDistanceToNow(new Date(doc.updated_at), {
-                  addSuffix: true,
-                })}
+                {formatRelativeTimestamp(doc.updated_at)}
               </p>
             </Link>
           ))}
