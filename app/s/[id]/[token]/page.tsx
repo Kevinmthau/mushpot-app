@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
-import { formatDistanceToNow } from "date-fns";
 import type { CSSProperties, ImgHTMLAttributes } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
 
 export const dynamic = "force-dynamic";
@@ -153,10 +153,7 @@ export default async function SharedDocumentPage({ params }: SharedDocPageProps)
             {document.title || "Untitled"}
           </h1>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Updated{" "}
-            {formatDistanceToNow(new Date(document.updated_at), {
-              addSuffix: true,
-            })}
+            Updated {formatRelativeTimestamp(document.updated_at)}
           </p>
         </header>
 

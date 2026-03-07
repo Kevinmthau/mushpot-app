@@ -1,9 +1,7 @@
-const STATIC_CACHE_NAME = "mushpot-static-v1";
+const STATIC_CACHE_NAME = "mushpot-static-v2";
 const STATIC_FILES = [
   "/manifest.webmanifest",
   "/icons/icon-192.png",
-  "/icons/icon-512.png",
-  "/icons/apple-touch-icon.png",
   "/offline.html",
 ];
 
