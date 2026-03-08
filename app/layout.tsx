@@ -71,8 +71,20 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseHost = supabaseUrl ? new URL(supabaseUrl).hostname : null;
+
   return (
     <html lang="en">
+      <head>
+        {/* DNS prefetch + preconnect to Supabase for faster API calls */}
+        {supabaseHost ? (
+          <>
+            <link rel="dns-prefetch" href={`//${supabaseHost}`} />
+            <link rel="preconnect" href={supabaseUrl!} crossOrigin="anonymous" />
+          </>
+        ) : null}
+      </head>
       <body className={`${uiFont.variable} ${writingFont.variable} antialiased`}>
         {children}
         <ServiceWorkerRegister />
