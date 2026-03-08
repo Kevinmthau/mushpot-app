@@ -25,6 +25,7 @@ import {
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
+import { putCachedDocument, deleteCachedDocument, type CachedDocument } from "@/lib/doc-cache";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -413,6 +414,35 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     latestDraftRef.current = { title, content };
   }, [content, title]);
 
+  // Persist to IndexedDB on every change (instant, no network needed).
+  // This makes the next page load instant — the editor reads from cache.
+  const localCacheTimeoutRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (localCacheTimeoutRef.current !== null) {
+      window.clearTimeout(localCacheTimeoutRef.current);
+    }
+    // Microtask debounce — 150ms is imperceptible but avoids hammering IDB
+    localCacheTimeoutRef.current = window.setTimeout(() => {
+      localCacheTimeoutRef.current = null;
+      const doc: CachedDocument = {
+        id: initialDocument.id,
+        owner: initialDocument.owner,
+        title,
+        content,
+        updated_at: new Date().toISOString(),
+        share_enabled: shareEnabled,
+        share_token: shareToken,
+        _localUpdatedAt: Date.now(),
+      };
+      putCachedDocument(doc);
+    }, 150);
+    return () => {
+      if (localCacheTimeoutRef.current !== null) {
+        window.clearTimeout(localCacheTimeoutRef.current);
+      }
+    };
+  }, [title, content, initialDocument.id, initialDocument.owner, shareEnabled, shareToken]);
+
   const words = useMemo(() => {
     const trimmed = deferredContent.trim();
     if (!trimmed) {
@@ -735,6 +765,9 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
       window.alert(error.message || "Unable to delete document. Please try again.");
       return;
     }
+
+    // Remove from local cache
+    deleteCachedDocument(initialDocument.id);
 
     router.replace("/");
     router.refresh();

@@ -1,40 +1,10 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { DocumentListClient } from "@/components/documents/document-list-client";
 import PullToRefresh from "@/components/pull-to-refresh";
 
 export const dynamic = "force-dynamic";
-
-async function createDocumentAction() {
-  "use server";
-
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/auth");
-  }
-
-  const { data, error } = await supabase
-    .from("documents")
-    .insert({
-      owner: user.id,
-      title: "Untitled",
-      content: "",
-    })
-    .select("id")
-    .single();
-
-  if (error || !data) {
-    throw new Error(error?.message ?? "Unable to create document.");
-  }
-
-  redirect(`/doc/${data.id}`);
-}
 
 async function signOutAction() {
   "use server";
@@ -77,37 +47,10 @@ export default async function DocumentsPage() {
           </form>
         </header>
 
-        <section className="space-y-2">
-          <form action={createDocumentAction}>
-            <button
-              type="submit"
-              aria-label="New document"
-              title="New document"
-              className="group block w-full appearance-none rounded-2xl border-0 bg-transparent p-0 text-left transition hover:bg-[var(--paper)] hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)]"
-            >
-              <div className="px-4 py-3 sm:px-5 sm:py-4">
-                <p className="document-title-text line-clamp-1 text-[var(--muted)]">
-                  New document...
-                </p>
-              </div>
-            </button>
-          </form>
-
-          {documents?.map((doc) => (
-            <Link
-              key={doc.id}
-              href={`/doc/${doc.id}`}
-              className="group block rounded-2xl bg-[var(--paper)] px-4 py-3 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)] sm:px-5 sm:py-4"
-            >
-              <p className="document-title-text line-clamp-1 text-[var(--ink)]">
-                {doc.title || "Untitled"}
-              </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                {formatRelativeTimestamp(doc.updated_at)}
-              </p>
-            </Link>
-          ))}
-        </section>
+        <DocumentListClient
+          serverDocuments={documents ?? []}
+          userId={user.id}
+        />
       </main>
     </PullToRefresh>
   );
