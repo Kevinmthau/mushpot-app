@@ -46,7 +46,7 @@ type EditorClientProps = {
 
 const IMAGE_BUCKET = "document-images";
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
-const AUTOSAVE_DEBOUNCE_MS = 1200;
+const AUTOSAVE_DEBOUNCE_MS = 300;
 const DECORATION_REBUILD_INTERVAL_MS = 120;
 const SUPPORTED_IMAGE_EXTENSIONS = new Set([
   "jpg",
