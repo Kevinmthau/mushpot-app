@@ -2,21 +2,20 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
+  type CachedDocument,
   type CachedDocumentListItem,
-  getAllCachedDocuments,
   putCachedDocument,
-  syncDocumentList,
 } from "@/lib/doc-cache";
 
 type DocumentListClientProps = {
-  /** Server-fetched documents, used as initial data + to seed cache */
-  serverDocuments: CachedDocumentListItem[];
-  userId: string;
+  documents: CachedDocumentListItem[];
+  isLoading?: boolean;
+  userId: string | null;
 };
 
 /**
@@ -39,39 +38,31 @@ function preloadEditorChunk() {
 }
 
 export function DocumentListClient({
-  serverDocuments,
+  documents,
+  isLoading = false,
   userId,
 }: DocumentListClientProps) {
   const router = useRouter();
-  const [documents, setDocuments] = useState(serverDocuments);
+  const [displayDocuments, setDisplayDocuments] = useState(documents);
   const [isCreating, setIsCreating] = useState(false);
   const [, startTransition] = useTransition();
-  const hasSynced = useRef(false);
 
-  // Seed the cache with server data and preload editor
   useEffect(() => {
-    if (hasSynced.current) return;
-    hasSynced.current = true;
-    syncDocumentList(serverDocuments);
     preloadEditorChunk();
-  }, [serverDocuments]);
+  }, []);
 
-  // Also load from cache to show any locally-created docs instantly
   useEffect(() => {
-    getAllCachedDocuments().then((cached) => {
-      if (cached.length > 0) {
-        // Merge: prefer server data but include cache-only docs
-        const serverIds = new Set(serverDocuments.map((d) => d.id));
-        const cacheOnly = cached.filter((d) => !serverIds.has(d.id));
-        if (cacheOnly.length > 0) {
-          setDocuments((prev) => [...cacheOnly, ...prev]);
-        }
-      }
+    setDisplayDocuments((currentDocuments) => {
+      const nextDocumentIds = new Set(documents.map((doc) => doc.id));
+      const optimisticDocuments = currentDocuments.filter(
+        (doc) => !nextDocumentIds.has(doc.id),
+      );
+      return [...optimisticDocuments, ...documents];
     });
-  }, [serverDocuments]);
+  }, [documents]);
 
   const handleCreateDocument = useCallback(async () => {
-    if (isCreating) return;
+    if (isCreating || !userId) return;
     setIsCreating(true);
 
     try {
@@ -86,8 +77,7 @@ export function DocumentListClient({
         throw new Error(error?.message ?? "Unable to create document.");
       }
 
-      // Cache immediately for instant loading
-      await putCachedDocument({
+      const cachedDocument: CachedDocument = {
         id: data.id,
         owner: data.owner,
         title: data.title,
@@ -95,10 +85,11 @@ export function DocumentListClient({
         updated_at: data.updated_at,
         share_enabled: data.share_enabled,
         share_token: data.share_token,
-      });
+        _dirty: false,
+      };
+      await putCachedDocument(cachedDocument);
 
-      // Optimistic navigation – add to list and navigate
-      setDocuments((prev) => [
+      setDisplayDocuments((prev) => [
         { id: data.id, title: data.title, updated_at: data.updated_at },
         ...prev,
       ]);
@@ -117,7 +108,7 @@ export function DocumentListClient({
       <button
         type="button"
         onClick={handleCreateDocument}
-        disabled={isCreating}
+        disabled={isCreating || !userId}
         aria-label="New document"
         title="New document"
         className="group block w-full appearance-none rounded-2xl border-0 bg-transparent p-0 text-left transition hover:bg-[var(--paper)] hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)] disabled:opacity-60"
@@ -129,7 +120,22 @@ export function DocumentListClient({
         </div>
       </button>
 
-      {documents?.map((doc) => (
+      {isLoading && displayDocuments.length === 0
+        ? Array.from({ length: 6 }, (_, index) => (
+            <div
+              key={index}
+              className="rounded-2xl bg-[var(--paper)] px-4 py-3 sm:px-5 sm:py-4"
+            >
+              <div
+                className="h-5 animate-pulse rounded bg-[var(--line)]"
+                style={{ width: `${65 - index * 8}%` }}
+              />
+              <div className="mt-2 h-3 w-16 animate-pulse rounded bg-[var(--line)]" />
+            </div>
+          ))
+        : null}
+
+      {displayDocuments.map((doc) => (
         <Link
           key={doc.id}
           href={`/doc/${doc.id}`}

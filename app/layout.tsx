@@ -1,15 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Instrument_Sans } from "next/font/google";
 import localFont from "next/font/local";
 
 import { ServiceWorkerRegister } from "@/components/pwa/service-worker-register";
 
 import "./globals.css";
-
-const uiFont = Instrument_Sans({
-  subsets: ["latin"],
-  variable: "--font-ui",
-});
 
 const writingFont = localFont({
   src: [
@@ -85,7 +79,7 @@ export default function RootLayout({
           </>
         ) : null}
       </head>
-      <body className={`${uiFont.variable} ${writingFont.variable} antialiased`}>
+      <body className={`${writingFont.variable} antialiased`}>
         {children}
         <ServiceWorkerRegister />
       </body>

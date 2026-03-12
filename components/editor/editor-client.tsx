@@ -46,7 +46,7 @@ type EditorClientProps = {
 
 const IMAGE_BUCKET = "document-images";
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
-const AUTOSAVE_DEBOUNCE_MS = 300;
+const AUTOSAVE_DEBOUNCE_MS = 800;
 const DECORATION_REBUILD_INTERVAL_MS = 120;
 const SUPPORTED_IMAGE_EXTENSIONS = new Set([
   "jpg",
@@ -400,6 +400,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const saveInFlightRef = useRef(false);
   const queuedSaveRef = useRef<{ title: string; content: string } | null>(null);
   const isDeletingRef = useRef(false);
+  const didEditSinceHydrationRef = useRef(false);
   const lastSavedRef = useRef({
     title: initialDocument.title,
     content: initialDocument.content,
@@ -409,6 +410,26 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     content: initialDocument.content,
   });
   const deferredContent = useDeferredValue(content);
+
+  useEffect(() => {
+    if (didEditSinceHydrationRef.current) {
+      return;
+    }
+
+    setTitle(initialDocument.title);
+    setContent(initialDocument.content);
+    setUpdatedAt(initialDocument.updated_at);
+    setShareEnabled(initialDocument.share_enabled);
+    setShareToken(initialDocument.share_token);
+    lastSavedRef.current = {
+      title: initialDocument.title,
+      content: initialDocument.content,
+    };
+    latestDraftRef.current = {
+      title: initialDocument.title,
+      content: initialDocument.content,
+    };
+  }, [initialDocument]);
 
   useEffect(() => {
     latestDraftRef.current = { title, content };
@@ -424,6 +445,8 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     // Microtask debounce — 150ms is imperceptible but avoids hammering IDB
     localCacheTimeoutRef.current = window.setTimeout(() => {
       localCacheTimeoutRef.current = null;
+      const isDirty =
+        title !== lastSavedRef.current.title || content !== lastSavedRef.current.content;
       const doc: CachedDocument = {
         id: initialDocument.id,
         owner: initialDocument.owner,
@@ -433,6 +456,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         share_enabled: shareEnabled,
         share_token: shareToken,
         _localUpdatedAt: Date.now(),
+        _dirty: isDirty,
       };
       putCachedDocument(doc);
     }, 150);
@@ -652,11 +676,23 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
             return false;
           }
 
+          const nextUpdatedAt = new Date().toISOString();
           lastSavedRef.current = {
             title: titleToSave,
             content: contentToSave,
           };
-          setUpdatedAt(new Date().toISOString());
+          setUpdatedAt(nextUpdatedAt);
+          void putCachedDocument({
+            id: initialDocument.id,
+            owner: initialDocument.owner,
+            title: persistedTitle,
+            content: contentToSave,
+            updated_at: nextUpdatedAt,
+            share_enabled: shareEnabled,
+            share_token: shareToken,
+            _dirty: false,
+            _localUpdatedAt: Date.now(),
+          });
 
           const queuedSave = queuedSaveRef.current;
           if (!queuedSave) {
@@ -678,7 +714,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         saveInFlightRef.current = false;
       }
     },
-    [initialDocument.id, supabase],
+    [initialDocument.id, initialDocument.owner, shareEnabled, shareToken, supabase],
   );
 
   useEffect(() => {
@@ -783,6 +819,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         <input
           value={title}
           onChange={(event) => {
+            didEditSinceHydrationRef.current = true;
             const nextTitle = event.target.value;
             setTitle(nextTitle);
           }}
@@ -836,6 +873,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           <CodeMirror
             value={content}
             onChange={(value) => {
+              didEditSinceHydrationRef.current = true;
               setContent(value);
             }}
             extensions={editorExtensions}

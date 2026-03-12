@@ -1,9 +1,4 @@
-import { notFound, redirect } from "next/navigation";
-
-import { EditorClient } from "@/components/editor/editor-lazy";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-
-export const dynamic = "force-dynamic";
+import { DocumentPageClient } from "@/components/editor/document-page-client";
 
 type DocPageProps = {
   params: Promise<{ id: string }>;
@@ -11,26 +6,5 @@ type DocPageProps = {
 
 export default async function DocumentEditorPage({ params }: DocPageProps) {
   const { id } = await params;
-
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/auth");
-  }
-
-  const { data: document, error } = await supabase
-    .from("documents")
-    .select("id, owner, title, content, updated_at, share_enabled, share_token")
-    .eq("id", id)
-    .eq("owner", user.id)
-    .maybeSingle();
-
-  if (error || !document) {
-    notFound();
-  }
-
-  return <EditorClient initialDocument={document} />;
+  return <DocumentPageClient documentId={id} />;
 }

@@ -98,6 +98,7 @@ function SharedMarkdownImage({
     : style;
 
   return (
+    // eslint-disable-next-line @next/next/no-img-element -- remote markdown images have unknown intrinsic sizes at render time.
     <img
       {...imgProps}
       alt={imgProps.alt ?? ""}

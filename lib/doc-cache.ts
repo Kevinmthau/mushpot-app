@@ -79,6 +79,14 @@ export async function getCachedDocument(id: string): Promise<CachedDocument | nu
   }
 }
 
+export async function getCachedDocumentForOwner(
+  id: string,
+  owner: string,
+): Promise<CachedDocument | null> {
+  const cached = await getCachedDocument(id);
+  return cached?.owner === owner ? cached : null;
+}
+
 export async function putCachedDocument(doc: CachedDocument): Promise<void> {
   try {
     const db = await openDB();
@@ -147,6 +155,31 @@ export async function getAllCachedDocuments(): Promise<CachedDocumentListItem[]>
   }
 }
 
+export async function getAllCachedDocumentsForOwner(
+  owner: string,
+): Promise<CachedDocumentListItem[]> {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DOCS_STORE, "readonly");
+      const index = tx.objectStore(DOCS_STORE).index("owner");
+      const request = index.getAll(owner);
+      request.onsuccess = () => {
+        const docs = (request.result as CachedDocument[])
+          .map((doc) => ({ id: doc.id, title: doc.title, updated_at: doc.updated_at }))
+          .sort(
+            (a, b) =>
+              new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+          );
+        resolve(docs);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Meta helpers (e.g. last sync timestamp)
 // ---------------------------------------------------------------------------
@@ -189,6 +222,7 @@ export async function setMeta(key: string, value: string): Promise<void> {
  */
 export async function syncDocumentList(
   serverDocs: CachedDocumentListItem[],
+  owner: string,
 ): Promise<void> {
   try {
     const db = await openDB();
@@ -202,11 +236,12 @@ export async function syncDocumentList(
       req.onerror = () => reject(req.error);
     });
 
-    const dirtyIds = new Set(existing.filter((d) => d._dirty).map((d) => d.id));
+    const existingForOwner = existing.filter((doc) => doc.owner === owner);
+    const dirtyIds = new Set(existingForOwner.filter((d) => d._dirty).map((d) => d.id));
     const serverIds = new Set(serverDocs.map((d) => d.id));
 
     // Remove docs that no longer exist on server (unless dirty)
-    for (const doc of existing) {
+    for (const doc of existingForOwner) {
       if (!serverIds.has(doc.id) && !doc._dirty) {
         store.delete(doc.id);
       }
@@ -215,7 +250,7 @@ export async function syncDocumentList(
     // Update non-dirty docs with server metadata
     for (const serverDoc of serverDocs) {
       if (!dirtyIds.has(serverDoc.id)) {
-        const existingDoc = existing.find((d) => d.id === serverDoc.id);
+        const existingDoc = existingForOwner.find((d) => d.id === serverDoc.id);
         if (existingDoc) {
           // Update metadata but keep full content if present
           store.put({
@@ -227,7 +262,7 @@ export async function syncDocumentList(
           // New doc from server – store list metadata (content loaded on demand)
           store.put({
             id: serverDoc.id,
-            owner: "",
+            owner,
             title: serverDoc.title,
             content: "",
             updated_at: serverDoc.updated_at,
