@@ -4,6 +4,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import {
   EditorState,
   type Extension,
+  type Text,
 } from "@codemirror/state";
 import {
   EditorView,
@@ -15,7 +16,7 @@ import { useEffect, useRef } from "react";
 
 type CodeMirrorEditorProps = {
   value: string;
-  onChange: (value: string) => void;
+  onChange: (doc: Text) => void;
   extensions: Extension[];
   placeholder?: string;
 };
@@ -30,6 +31,7 @@ export function CodeMirrorEditor({
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const extensionsRef = useRef(extensions);
+  const isApplyingExternalValueRef = useRef(false);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -55,7 +57,12 @@ export function CodeMirrorEditor({
           return;
         }
 
-        onChangeRef.current(update.state.doc.toString());
+        if (isApplyingExternalValueRef.current) {
+          isApplyingExternalValueRef.current = false;
+          return;
+        }
+
+        onChangeRef.current(update.state.doc);
       }),
       ...extensionsRef.current,
     ];
@@ -91,6 +98,7 @@ export function CodeMirrorEditor({
       return;
     }
 
+    isApplyingExternalValueRef.current = true;
     view.dispatch({
       changes: {
         from: 0,

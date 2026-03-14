@@ -2,7 +2,7 @@
 
 import { syntaxTree } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
-import { type Range } from "@codemirror/state";
+import { type Range, type Text } from "@codemirror/state";
 import { type SyntaxNode } from "@lezer/common";
 import {
   Decoration,
@@ -13,6 +13,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import {
+  startTransition,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -46,6 +47,8 @@ export type EditorClientProps = {
 const IMAGE_BUCKET = "document-images";
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
 const AUTOSAVE_DEBOUNCE_MS = 800;
+const LOCAL_CACHE_DEBOUNCE_MS = 400;
+const STATS_SYNC_DEBOUNCE_MS = 250;
 const DECORATION_REBUILD_INTERVAL_MS = 120;
 const SUPPORTED_IMAGE_EXTENSIONS = new Set([
   "jpg",
@@ -163,6 +166,10 @@ const hiddenMarkdownMarkDecoration = Decoration.replace({
 
 function getCurrentTimeMs() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
+}
+
+function readDocumentText(doc: Text | string) {
+  return typeof doc === "string" ? doc : doc.toString();
 }
 
 function parseMarkdownImage(
@@ -398,7 +405,8 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const router = useRouter();
 
   const [title, setTitle] = useState(initialDocument.title);
-  const [content, setContent] = useState(initialDocument.content);
+  const [editorValue, setEditorValue] = useState(initialDocument.content);
+  const [contentForStats, setContentForStats] = useState(initialDocument.content);
   const [updatedAt, setUpdatedAt] = useState(initialDocument.updated_at);
   const [shareEnabled, setShareEnabled] = useState(initialDocument.share_enabled);
   const [shareToken, setShareToken] = useState(initialDocument.share_token);
@@ -407,19 +415,21 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const saveTimeoutRef = useRef<number | null>(null);
+  const localCacheTimeoutRef = useRef<number | null>(null);
+  const statsSyncTimeoutRef = useRef<number | null>(null);
   const saveInFlightRef = useRef(false);
   const queuedSaveRef = useRef<{ title: string; content: string } | null>(null);
   const isDeletingRef = useRef(false);
   const didEditSinceHydrationRef = useRef(false);
+  const latestTitleRef = useRef(initialDocument.title);
+  const latestContentRef = useRef<Text | string>(initialDocument.content);
+  const shareEnabledRef = useRef(initialDocument.share_enabled);
+  const shareTokenRef = useRef(initialDocument.share_token);
   const lastSavedRef = useRef({
     title: initialDocument.title,
     content: initialDocument.content,
   });
-  const latestDraftRef = useRef({
-    title: initialDocument.title,
-    content: initialDocument.content,
-  });
-  const deferredContent = useDeferredValue(content);
+  const deferredContent = useDeferredValue(contentForStats);
 
   useEffect(() => {
     if (didEditSinceHydrationRef.current) {
@@ -427,55 +437,81 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     }
 
     setTitle(initialDocument.title);
-    setContent(initialDocument.content);
+    setEditorValue(initialDocument.content);
+    setContentForStats(initialDocument.content);
     setUpdatedAt(initialDocument.updated_at);
     setShareEnabled(initialDocument.share_enabled);
     setShareToken(initialDocument.share_token);
+    latestTitleRef.current = initialDocument.title;
+    latestContentRef.current = initialDocument.content;
+    shareEnabledRef.current = initialDocument.share_enabled;
+    shareTokenRef.current = initialDocument.share_token;
     lastSavedRef.current = {
-      title: initialDocument.title,
-      content: initialDocument.content,
-    };
-    latestDraftRef.current = {
       title: initialDocument.title,
       content: initialDocument.content,
     };
   }, [initialDocument]);
 
   useEffect(() => {
-    latestDraftRef.current = { title, content };
-  }, [content, title]);
+    latestTitleRef.current = title;
+  }, [title]);
 
-  // Persist to IndexedDB on every change (instant, no network needed).
-  // This makes the next page load instant — the editor reads from cache.
-  const localCacheTimeoutRef = useRef<number | null>(null);
   useEffect(() => {
+    shareEnabledRef.current = shareEnabled;
+    shareTokenRef.current = shareToken;
+  }, [shareEnabled, shareToken]);
+
+  const getLatestContent = useCallback(() => {
+    return readDocumentText(latestContentRef.current);
+  }, []);
+
+  const scheduleStatsSync = useCallback(() => {
+    if (statsSyncTimeoutRef.current !== null) {
+      window.clearTimeout(statsSyncTimeoutRef.current);
+    }
+
+    statsSyncTimeoutRef.current = window.setTimeout(() => {
+      statsSyncTimeoutRef.current = null;
+      const nextContent = getLatestContent();
+      startTransition(() => {
+        setContentForStats((currentContent) =>
+          currentContent === nextContent ? currentContent : nextContent,
+        );
+      });
+    }, STATS_SYNC_DEBOUNCE_MS);
+  }, [getLatestContent]);
+
+  const scheduleLocalCacheWrite = useCallback(() => {
     if (localCacheTimeoutRef.current !== null) {
       window.clearTimeout(localCacheTimeoutRef.current);
     }
-    // Microtask debounce — 150ms is imperceptible but avoids hammering IDB
+
     localCacheTimeoutRef.current = window.setTimeout(() => {
       localCacheTimeoutRef.current = null;
+
+      if (isDeletingRef.current) {
+        return;
+      }
+
+      const latestContent = getLatestContent();
+      const latestTitle = latestTitleRef.current;
       const isDirty =
-        title !== lastSavedRef.current.title || content !== lastSavedRef.current.content;
+        latestTitle !== lastSavedRef.current.title ||
+        latestContent !== lastSavedRef.current.content;
       const doc: CachedDocument = {
         id: initialDocument.id,
         owner: initialDocument.owner,
-        title,
-        content,
+        title: latestTitle,
+        content: latestContent,
         updated_at: new Date().toISOString(),
-        share_enabled: shareEnabled,
-        share_token: shareToken,
+        share_enabled: shareEnabledRef.current,
+        share_token: shareTokenRef.current,
         _localUpdatedAt: Date.now(),
         _dirty: isDirty,
       };
-      putCachedDocument(doc);
-    }, 150);
-    return () => {
-      if (localCacheTimeoutRef.current !== null) {
-        window.clearTimeout(localCacheTimeoutRef.current);
-      }
-    };
-  }, [title, content, initialDocument.id, initialDocument.owner, shareEnabled, shareToken]);
+      void putCachedDocument(doc);
+    }, LOCAL_CACHE_DEBOUNCE_MS);
+  }, [getLatestContent, initialDocument.id, initialDocument.owner]);
 
   const words = useMemo(() => {
     const trimmed = deferredContent.trim();
@@ -699,8 +735,8 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
             title: persistedTitle,
             content: contentToSave,
             updated_at: nextUpdatedAt,
-            share_enabled: shareEnabled,
-            share_token: shareToken,
+            share_enabled: shareEnabledRef.current,
+            share_token: shareTokenRef.current,
             _dirty: false,
             _localUpdatedAt: Date.now(),
           });
@@ -725,30 +761,23 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         saveInFlightRef.current = false;
       }
     },
-    [initialDocument.id, initialDocument.owner, shareEnabled, shareToken],
+    [initialDocument.id, initialDocument.owner],
   );
 
   useEffect(() => {
-    const isDirty =
-      title !== lastSavedRef.current.title || content !== lastSavedRef.current.content;
-
-    if (!isDirty) {
-      return;
+    if (saveTimeoutRef.current !== null) {
+      window.clearTimeout(saveTimeoutRef.current);
     }
 
-    const timeoutId = window.setTimeout(() => {
+    saveTimeoutRef.current = window.setTimeout(() => {
       saveTimeoutRef.current = null;
-      void saveDraft(title, content);
+      void saveDraft(latestTitleRef.current, getLatestContent());
     }, AUTOSAVE_DEBOUNCE_MS);
-    saveTimeoutRef.current = timeoutId;
+  }, [getLatestContent, saveDraft, title]);
 
-    return () => {
-      window.clearTimeout(timeoutId);
-      if (saveTimeoutRef.current === timeoutId) {
-        saveTimeoutRef.current = null;
-      }
-    };
-  }, [content, saveDraft, title]);
+  useEffect(() => {
+    scheduleLocalCacheWrite();
+  }, [scheduleLocalCacheWrite, title, shareEnabled, shareToken]);
 
   useEffect(() => {
     const flushPendingDraft = () => {
@@ -756,10 +785,11 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         return;
       }
 
-      const latestDraft = latestDraftRef.current;
+      const latestTitle = latestTitleRef.current;
+      const latestContent = getLatestContent();
       const isDirty =
-        latestDraft.title !== lastSavedRef.current.title ||
-        latestDraft.content !== lastSavedRef.current.content;
+        latestTitle !== lastSavedRef.current.title ||
+        latestContent !== lastSavedRef.current.content;
 
       if (!isDirty) {
         return;
@@ -770,14 +800,28 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         saveTimeoutRef.current = null;
       }
 
-      void saveDraft(latestDraft.title, latestDraft.content);
+      void saveDraft(latestTitle, latestContent);
     };
 
     document.addEventListener("visibilitychange", flushPendingDraft);
     return () => {
       document.removeEventListener("visibilitychange", flushPendingDraft);
     };
-  }, [saveDraft]);
+  }, [getLatestContent, saveDraft]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
+      if (localCacheTimeoutRef.current !== null) {
+        window.clearTimeout(localCacheTimeoutRef.current);
+      }
+      if (statsSyncTimeoutRef.current !== null) {
+        window.clearTimeout(statsSyncTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleDeleteDocument = useCallback(async () => {
     if (isDeleting) {
@@ -798,6 +842,14 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
+    }
+    if (localCacheTimeoutRef.current !== null) {
+      window.clearTimeout(localCacheTimeoutRef.current);
+      localCacheTimeoutRef.current = null;
+    }
+    if (statsSyncTimeoutRef.current !== null) {
+      window.clearTimeout(statsSyncTimeoutRef.current);
+      statsSyncTimeoutRef.current = null;
     }
 
     const supabase = await getSupabaseBrowserClient();
@@ -883,10 +935,19 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
 
         <div className="pb-24">
           <CodeMirrorEditor
-            value={content}
-            onChange={(value) => {
+            value={editorValue}
+            onChange={(doc) => {
               didEditSinceHydrationRef.current = true;
-              setContent(value);
+              latestContentRef.current = doc;
+              scheduleStatsSync();
+              scheduleLocalCacheWrite();
+              if (saveTimeoutRef.current !== null) {
+                window.clearTimeout(saveTimeoutRef.current);
+              }
+              saveTimeoutRef.current = window.setTimeout(() => {
+                saveTimeoutRef.current = null;
+                void saveDraft(latestTitleRef.current, getLatestContent());
+              }, AUTOSAVE_DEBOUNCE_MS);
             }}
             extensions={editorExtensions}
             placeholder="|..."
