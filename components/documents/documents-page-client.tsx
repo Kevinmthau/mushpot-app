@@ -13,13 +13,38 @@ import {
   syncDocumentList,
   type CachedDocumentListItem,
 } from "@/lib/doc-cache";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type DocumentsPageClientProps = {
   initialDocuments: CachedDocumentListItem[];
   initialError: string | null;
   initialUserId: string | null;
 };
+
+function scheduleDeferredTask(task: () => void) {
+  if (typeof window === "undefined") {
+    return () => undefined;
+  }
+
+  const idleWindow = window as Window & {
+    requestIdleCallback?: (
+      callback: IdleRequestCallback,
+      options?: IdleRequestOptions,
+    ) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  if (typeof idleWindow.requestIdleCallback === "function") {
+    const handle = idleWindow.requestIdleCallback(() => task(), { timeout: 1200 });
+    return () => {
+      idleWindow.cancelIdleCallback?.(handle);
+    };
+  }
+
+  const timeoutId = window.setTimeout(task, 400);
+  return () => {
+    window.clearTimeout(timeoutId);
+  };
+}
 
 export function DocumentsPageClient({
   initialDocuments,
@@ -76,40 +101,52 @@ export function DocumentsPageClient({
         }
       }
 
-      const supabase = createSupabaseBrowserClient();
-      const { data: serverDocs, error: documentsError } = await supabase
-        .from("documents")
-        .select("id, title, updated_at")
-        .eq("owner", ownerId)
-        .order("updated_at", { ascending: false });
+      const cancelDeferredRefresh = scheduleDeferredTask(() => {
+        void (async () => {
+          const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
+          const supabase = createSupabaseBrowserClient();
+          const { data: serverDocs, error: documentsError } = await supabase
+            .from("documents")
+            .select("id, title, updated_at")
+            .eq("owner", ownerId)
+            .order("updated_at", { ascending: false });
 
-      if (!isActive) {
-        return;
-      }
+          if (!isActive) {
+            return;
+          }
 
-      if (documentsError) {
-        if (!hasVisibleDocuments) {
-          setError(documentsError.message);
+          if (documentsError) {
+            if (!hasVisibleDocuments) {
+              setError(documentsError.message);
+              setIsLoading(false);
+            }
+            return;
+          }
+
+          const nextDocuments = serverDocs ?? [];
+          setDocuments(nextDocuments);
+          setError(null);
           setIsLoading(false);
-        }
-        return;
-      }
+          void syncDocumentList(nextDocuments, ownerId);
+        })();
+      });
 
-      const nextDocuments = serverDocs ?? [];
-      setDocuments(nextDocuments);
-      setError(null);
-      setIsLoading(false);
-      void syncDocumentList(nextDocuments, ownerId);
+      return cancelDeferredRefresh;
     }
 
-    void loadDocuments();
+    let cancelDeferredRefresh: (() => void) | undefined;
+    void loadDocuments().then((cancelRefresh) => {
+      cancelDeferredRefresh = cancelRefresh;
+    });
 
     return () => {
       isActive = false;
+      cancelDeferredRefresh?.();
     };
   }, [initialDocuments, initialError, initialUserId, router]);
 
   const handleSignOut = useCallback(async () => {
+    const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
     const supabase = createSupabaseBrowserClient();
     await supabase.auth.signOut();
     void clearLastActiveOwner();

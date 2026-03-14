@@ -4,9 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 
-import { preloadEditorClient } from "@/components/editor/editor-lazy";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   type CachedDocument,
   type CachedDocumentListItem,
@@ -28,7 +26,7 @@ function preloadEditorChunk() {
   }
 
   editorChunkPreloaded = true;
-  void preloadEditorClient().catch(() => {
+  void import("@/components/editor/editor-client").catch(() => {
     editorChunkPreloaded = false;
   });
 }
@@ -62,6 +60,7 @@ export function DocumentListClient({
     setIsCreating(true);
 
     try {
+      const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
       const supabase = createSupabaseBrowserClient();
       const { data, error } = await supabase
         .from("documents")

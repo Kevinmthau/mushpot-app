@@ -8,12 +8,10 @@ import {
   Decoration,
   type DecorationSet,
   EditorView,
-  placeholder,
   ViewPlugin,
   type ViewUpdate,
   WidgetType,
 } from "@codemirror/view";
-import CodeMirror from "@uiw/react-codemirror";
 import {
   useCallback,
   useDeferredValue,
@@ -25,10 +23,11 @@ import {
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
+import { CodeMirrorEditor } from "@/components/editor/code-mirror-editor";
 import { putCachedDocument, deleteCachedDocument, type CachedDocument } from "@/lib/doc-cache";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export type EditorDocument = {
   id: string;
@@ -70,6 +69,18 @@ const SUPPORTED_IMAGE_MIME_TYPE_SET = new Set([
   "image/jpg",
 ]);
 const SUPPORTED_IMAGE_FORMATS_LABEL = SUPPORTED_IMAGE_MIME_TYPES.join(", ");
+let supabaseClientPromise: Promise<ReturnType<typeof createSupabaseBrowserClient>> | null = null;
+
+async function getSupabaseBrowserClient() {
+  if (!supabaseClientPromise) {
+    supabaseClientPromise = import("@/lib/supabase/client").then((module) =>
+      module.createSupabaseBrowserClient(),
+    );
+  }
+
+  return supabaseClientPromise;
+}
+
 const editorTheme = EditorView.theme({
   "&": {
     backgroundColor: "transparent",
@@ -384,7 +395,6 @@ function buildImageMarkdown(
 }
 
 export function EditorClient({ initialDocument }: EditorClientProps) {
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const router = useRouter();
 
   const [title, setTitle] = useState(initialDocument.title);
@@ -503,6 +513,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           }
 
           try {
+            const supabase = await getSupabaseBrowserClient();
             const safeName = sanitizeStorageFileName(file.name);
             const randomId =
               typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -556,7 +567,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         window.alert(failures.join("\n"));
       }
     },
-    [initialDocument.id, initialDocument.owner, supabase],
+    [initialDocument.id, initialDocument.owner],
   );
 
   const imageDropPasteHandlers = useMemo(
@@ -624,7 +635,6 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
       markdown(),
       markdownLiveFormatting,
       imageDropPasteHandlers,
-      placeholder("|..."),
       EditorView.lineWrapping,
       editorTheme,
     ],
@@ -664,6 +674,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
           }
 
           const persistedTitle = titleToSave.trim() ? titleToSave : "Untitled";
+          const supabase = await getSupabaseBrowserClient();
           const { error } = await supabase
             .from("documents")
             .update({
@@ -714,7 +725,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         saveInFlightRef.current = false;
       }
     },
-    [initialDocument.id, initialDocument.owner, shareEnabled, shareToken, supabase],
+    [initialDocument.id, initialDocument.owner, shareEnabled, shareToken],
   );
 
   useEffect(() => {
@@ -789,6 +800,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
       saveTimeoutRef.current = null;
     }
 
+    const supabase = await getSupabaseBrowserClient();
     const { error } = await supabase
       .from("documents")
       .delete()
@@ -807,7 +819,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
 
     router.replace("/");
     router.refresh();
-  }, [initialDocument.id, initialDocument.owner, isDeleting, router, supabase]);
+  }, [initialDocument.id, initialDocument.owner, isDeleting, router]);
 
   const formattedUpdated = useMemo(() => {
     return formatRelativeTimestamp(updatedAt);
@@ -870,25 +882,14 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
         </div>
 
         <div className="pb-24">
-          <CodeMirror
+          <CodeMirrorEditor
             value={content}
             onChange={(value) => {
               didEditSinceHydrationRef.current = true;
               setContent(value);
             }}
             extensions={editorExtensions}
-            basicSetup={{
-              lineNumbers: false,
-              foldGutter: false,
-              dropCursor: false,
-              allowMultipleSelections: false,
-              indentOnInput: true,
-              bracketMatching: true,
-              closeBrackets: true,
-              autocompletion: false,
-              highlightActiveLine: false,
-              highlightActiveLineGutter: false,
-            }}
+            placeholder="|..."
           />
         </div>
       </main>
