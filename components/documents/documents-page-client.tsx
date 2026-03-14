@@ -6,30 +6,46 @@ import { useRouter } from "next/navigation";
 import { DocumentListClient } from "@/components/documents/document-list-client";
 import PullToRefresh from "@/components/pull-to-refresh";
 import {
+  clearLastActiveOwner,
   getAllCachedDocumentsForOwner,
+  getLastActiveOwner,
+  setLastActiveOwner,
   syncDocumentList,
   type CachedDocumentListItem,
 } from "@/lib/doc-cache";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
-export function DocumentsPageClient() {
+type DocumentsPageClientProps = {
+  initialDocuments: CachedDocumentListItem[];
+  initialError: string | null;
+  initialUserId: string | null;
+};
+
+export function DocumentsPageClient({
+  initialDocuments,
+  initialError,
+  initialUserId,
+}: DocumentsPageClientProps) {
   const router = useRouter();
-  const [documents, setDocuments] = useState<CachedDocumentListItem[]>([]);
-  const [userId, setUserId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [documents, setDocuments] = useState<CachedDocumentListItem[]>(initialDocuments);
+  const [userId, setUserId] = useState<string | null>(initialUserId);
+  const [error, setError] = useState<string | null>(initialError);
+  const [isLoading, setIsLoading] = useState(
+    initialDocuments.length === 0 && initialError === null,
+  );
 
   useEffect(() => {
     let isActive = true;
 
     async function loadDocuments() {
-      const supabase = createSupabaseBrowserClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const sessionUserId = session?.user.id ?? null;
+      let ownerId = initialUserId;
+      let hasVisibleDocuments = initialDocuments.length > 0;
 
-      if (!sessionUserId) {
+      if (!ownerId) {
+        ownerId = await getLastActiveOwner();
+      }
+
+      if (!ownerId) {
         router.replace("/auth?next=/");
         return;
       }
@@ -38,31 +54,41 @@ export function DocumentsPageClient() {
         return;
       }
 
-      setUserId(sessionUserId);
+      setUserId(ownerId);
+      void setLastActiveOwner(ownerId);
 
-      const cachedDocsPromise = getAllCachedDocumentsForOwner(sessionUserId);
-      const serverDocsPromise = supabase
+      if (initialDocuments.length > 0) {
+        setDocuments(initialDocuments);
+        setError(initialError);
+        setIsLoading(false);
+        void syncDocumentList(initialDocuments, ownerId);
+      } else {
+        const cachedDocs = await getAllCachedDocumentsForOwner(ownerId);
+        if (!isActive) {
+          return;
+        }
+
+        if (cachedDocs.length > 0) {
+          setDocuments(cachedDocs);
+          setError(null);
+          setIsLoading(false);
+          hasVisibleDocuments = true;
+        }
+      }
+
+      const supabase = createSupabaseBrowserClient();
+      const { data: serverDocs, error: documentsError } = await supabase
         .from("documents")
         .select("id, title, updated_at")
+        .eq("owner", ownerId)
         .order("updated_at", { ascending: false });
 
-      const cachedDocs = await cachedDocsPromise;
-      if (!isActive) {
-        return;
-      }
-
-      if (cachedDocs.length > 0) {
-        setDocuments(cachedDocs);
-        setIsLoading(false);
-      }
-
-      const { data: serverDocs, error: documentsError } = await serverDocsPromise;
       if (!isActive) {
         return;
       }
 
       if (documentsError) {
-        if (cachedDocs.length === 0) {
+        if (!hasVisibleDocuments) {
           setError(documentsError.message);
           setIsLoading(false);
         }
@@ -73,7 +99,7 @@ export function DocumentsPageClient() {
       setDocuments(nextDocuments);
       setError(null);
       setIsLoading(false);
-      void syncDocumentList(nextDocuments, sessionUserId);
+      void syncDocumentList(nextDocuments, ownerId);
     }
 
     void loadDocuments();
@@ -81,11 +107,12 @@ export function DocumentsPageClient() {
     return () => {
       isActive = false;
     };
-  }, [router]);
+  }, [initialDocuments, initialError, initialUserId, router]);
 
   const handleSignOut = useCallback(async () => {
     const supabase = createSupabaseBrowserClient();
     await supabase.auth.signOut();
+    void clearLastActiveOwner();
     router.replace("/auth");
     router.refresh();
   }, [router]);

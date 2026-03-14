@@ -4,12 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 
+import { preloadEditorClient } from "@/components/editor/editor-lazy";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   type CachedDocument,
   type CachedDocumentListItem,
   putCachedDocument,
+  setLastActiveOwner,
 } from "@/lib/doc-cache";
 
 type DocumentListClientProps = {
@@ -18,23 +20,17 @@ type DocumentListClientProps = {
   userId: string | null;
 };
 
-/**
- * Preload the editor chunk when idle so opening a document is instant.
- */
+let editorChunkPreloaded = false;
+
 function preloadEditorChunk() {
-  if (typeof window === "undefined") return;
-
-  const preload = () => {
-    import("@/components/editor/editor-client").catch(() => {
-      // Preload is best-effort
-    });
-  };
-
-  if ("requestIdleCallback" in window) {
-    (window as Window).requestIdleCallback(preload, { timeout: 3000 });
-  } else {
-    setTimeout(preload, 1500);
+  if (editorChunkPreloaded) {
+    return;
   }
+
+  editorChunkPreloaded = true;
+  void preloadEditorClient().catch(() => {
+    editorChunkPreloaded = false;
+  });
 }
 
 export function DocumentListClient({
@@ -48,10 +44,6 @@ export function DocumentListClient({
   const [, startTransition] = useTransition();
 
   useEffect(() => {
-    preloadEditorChunk();
-  }, []);
-
-  useEffect(() => {
     setDisplayDocuments((currentDocuments) => {
       const nextDocumentIds = new Set(documents.map((doc) => doc.id));
       const optimisticDocuments = currentDocuments.filter(
@@ -60,6 +52,10 @@ export function DocumentListClient({
       return [...optimisticDocuments, ...documents];
     });
   }, [documents]);
+
+  const handleWarmEditor = useCallback(() => {
+    preloadEditorChunk();
+  }, []);
 
   const handleCreateDocument = useCallback(async () => {
     if (isCreating || !userId) return;
@@ -88,6 +84,7 @@ export function DocumentListClient({
         _dirty: false,
       };
       await putCachedDocument(cachedDocument);
+      void setLastActiveOwner(data.owner);
 
       setDisplayDocuments((prev) => [
         { id: data.id, title: data.title, updated_at: data.updated_at },
@@ -108,6 +105,9 @@ export function DocumentListClient({
       <button
         type="button"
         onClick={handleCreateDocument}
+        onFocus={handleWarmEditor}
+        onPointerEnter={handleWarmEditor}
+        onTouchStart={handleWarmEditor}
         disabled={isCreating || !userId}
         aria-label="New document"
         title="New document"
@@ -139,7 +139,10 @@ export function DocumentListClient({
         <Link
           key={doc.id}
           href={`/doc/${doc.id}`}
-          prefetch={true}
+          prefetch={false}
+          onFocus={handleWarmEditor}
+          onPointerEnter={handleWarmEditor}
+          onTouchStart={handleWarmEditor}
           className="group block rounded-2xl bg-[var(--paper)] px-4 py-3 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)] sm:px-5 sm:py-4"
         >
           <p className="document-title-text line-clamp-1 text-[var(--ink)]">

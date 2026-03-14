@@ -30,6 +30,7 @@ const DB_NAME = "mushpot";
 const DB_VERSION = 1;
 const DOCS_STORE = "documents";
 const META_STORE = "meta";
+const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -204,6 +205,28 @@ export async function setMeta(key: string, value: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(META_STORE, "readwrite");
       tx.objectStore(META_STORE).put({ key, value });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // Silently ignore
+  }
+}
+
+export function getLastActiveOwner(): Promise<string | null> {
+  return getMeta(LAST_ACTIVE_OWNER_KEY);
+}
+
+export function setLastActiveOwner(owner: string): Promise<void> {
+  return setMeta(LAST_ACTIVE_OWNER_KEY, owner);
+}
+
+export async function clearLastActiveOwner(): Promise<void> {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(META_STORE, "readwrite");
+      tx.objectStore(META_STORE).delete(LAST_ACTIVE_OWNER_KEY);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });

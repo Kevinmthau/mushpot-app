@@ -30,7 +30,7 @@ import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
-type EditorDocument = {
+export type EditorDocument = {
   id: string;
   owner: string;
   title: string;
@@ -40,7 +40,7 @@ type EditorDocument = {
   share_token: string | null;
 };
 
-type EditorClientProps = {
+export type EditorClientProps = {
   initialDocument: EditorDocument;
 };
 

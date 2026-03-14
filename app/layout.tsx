@@ -30,6 +30,7 @@ const writingFont = localFont({
   ],
   variable: "--font-writing",
   display: "swap",
+  preload: false,
 });
 
 export const metadata: Metadata = {
