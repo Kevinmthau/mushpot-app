@@ -236,6 +236,30 @@ export async function clearLastActiveOwner(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Dirty document helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns all documents that have unsaved local changes.
+ */
+export async function getDirtyDocuments(): Promise<CachedDocument[]> {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DOCS_STORE, "readonly");
+      const request = tx.objectStore(DOCS_STORE).getAll();
+      request.onsuccess = () => {
+        const docs = (request.result as CachedDocument[]).filter((d) => d._dirty);
+        resolve(docs);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Sync helpers
 // ---------------------------------------------------------------------------
 

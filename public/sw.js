@@ -1,6 +1,6 @@
 const STATIC_CACHE_NAME = "mushpot-static-v3";
 const RUNTIME_CACHE_NAME = "mushpot-runtime-v1";
-const NAV_CACHE_NAME = "mushpot-nav-v1";
+const NAV_CACHE_NAME = "mushpot-nav-v2";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
@@ -64,27 +64,37 @@ async function staleWhileRevalidate(request, cacheName) {
 }
 
 /**
- * Network-first with cache fallback: try network, fall back to cache.
- * Used for navigation requests so content is fresh but works offline.
+ * Stale-while-revalidate for navigation: return cached page immediately for
+ * instant loads, then fetch a fresh copy in the background for next time.
+ * Falls back to offline page if both cache and network fail.
  */
-async function networkFirstWithCache(request) {
+async function navigationStaleWhileRevalidate(request) {
   const cache = await caches.open(NAV_CACHE_NAME);
+  const cachedResponse = await cache.match(request);
 
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      cache.put(request, response.clone());
-    }
-    return response;
-  } catch {
-    const cached = await cache.match(request);
-    if (cached) {
-      return cached;
-    }
-    // Last resort: offline fallback page
-    const fallback = await caches.match("/offline.html");
-    return fallback || Response.error();
+  const networkResponsePromise = fetch(request)
+    .then((response) => {
+      if (response.ok) {
+        cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => undefined);
+
+  if (cachedResponse) {
+    // Serve cached immediately; network fetch updates cache in background
+    return cachedResponse;
   }
+
+  // No cache — wait for network
+  const networkResponse = await networkResponsePromise;
+  if (networkResponse) {
+    return networkResponse;
+  }
+
+  // Last resort: offline fallback page
+  const fallback = await caches.match("/offline.html");
+  return fallback || Response.error();
 }
 
 // ---------------------------------------------------------------------------
@@ -102,9 +112,9 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation requests: network-first so pages work offline after first visit
+  // Navigation requests: stale-while-revalidate for instant loads
   if (request.mode === "navigate") {
-    event.respondWith(networkFirstWithCache(request));
+    event.respondWith(navigationStaleWhileRevalidate(request));
     return;
   }
 

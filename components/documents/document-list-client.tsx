@@ -90,6 +90,7 @@ export function DocumentListClient({
         ...prev,
       ]);
 
+      preloadEditorChunk();
       startTransition(() => {
         router.push(`/doc/${data.id}`);
       });
@@ -138,7 +139,7 @@ export function DocumentListClient({
         <Link
           key={doc.id}
           href={`/doc/${doc.id}`}
-          prefetch={false}
+          prefetch={true}
           onFocus={handleWarmEditor}
           onPointerEnter={handleWarmEditor}
           onTouchStart={handleWarmEditor}

@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 
+import { AuthPersistence } from "@/components/pwa/auth-persistence";
 import { ServiceWorkerRegister } from "@/components/pwa/service-worker-register";
+import { SyncManager } from "@/components/pwa/sync-manager";
 
 import "./globals.css";
 
@@ -82,6 +84,8 @@ export default function RootLayout({
       </head>
       <body className={`${writingFont.variable} antialiased`}>
         {children}
+        <AuthPersistence />
+        <SyncManager />
         <ServiceWorkerRegister />
       </body>
     </html>
