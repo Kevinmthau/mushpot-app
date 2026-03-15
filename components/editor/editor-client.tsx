@@ -711,15 +711,35 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
 
           const persistedTitle = titleToSave.trim() ? titleToSave : "Untitled";
           const supabase = await getSupabaseBrowserClient();
-          const { error } = await supabase
-            .from("documents")
-            .update({
-              title: persistedTitle,
-              content: contentToSave,
-            })
-            .eq("id", initialDocument.id);
 
-          if (error) {
+          // Retry up to 3 times with exponential backoff on failure
+          let lastError: unknown = null;
+          let saved = false;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            if (isDeletingRef.current) {
+              return true;
+            }
+
+            const { error } = await supabase
+              .from("documents")
+              .update({
+                title: persistedTitle,
+                content: contentToSave,
+              })
+              .eq("id", initialDocument.id);
+
+            if (!error) {
+              saved = true;
+              break;
+            }
+
+            lastError = error;
+            // Exponential backoff: 1s, 2s, 4s
+            await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+          }
+
+          if (!saved) {
+            console.error("saveDraft failed after retries", lastError);
             return false;
           }
 
