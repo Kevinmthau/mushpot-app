@@ -1,4 +1,5 @@
 import { requestMagicLinkAction } from "@/app/auth/actions";
+import { AuthSubmitButton } from "@/components/auth/auth-submit-button";
 
 type AuthFormProps = {
   nextPath: string;
@@ -34,12 +35,7 @@ export function AuthForm({ nextPath, message, error }: AuthFormProps) {
         placeholder="you@example.com"
       />
 
-      <button
-        type="submit"
-        className="mt-6 w-full rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        Send magic link
-      </button>
+      <AuthSubmitButton />
 
       {message ? <p className="mt-4 text-sm text-[#2e6558]">{message}</p> : null}
       {error ? <p className="mt-4 text-sm text-[#9b2d34]">{error}</p> : null}

@@ -11,17 +11,17 @@ type AuthPageProps = {
 
 export default async function AuthPage({ searchParams }: AuthPageProps) {
   const { next, sent, error } = await searchParams;
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (user) {
-    redirect("/");
-  }
-
   const nextPath =
     next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (session?.user) {
+    redirect(nextPath);
+  }
+
   const message = sent === "1" ? "Check your email for a secure sign-in link." : null;
   const errorMessage = typeof error === "string" && error.length > 0 ? error : null;
 
