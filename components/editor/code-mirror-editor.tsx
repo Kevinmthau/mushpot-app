@@ -17,8 +17,10 @@ import { useEffect, useRef } from "react";
 type CodeMirrorEditorProps = {
   documentId: string;
   initialValue: string;
-  onChange: (doc: Text) => void;
+  onChange?: (doc: Text) => void;
   extensions: Extension[];
+  editable?: boolean;
+  readOnly?: boolean;
   placeholder?: string;
 };
 
@@ -27,6 +29,8 @@ export function CodeMirrorEditor({
   initialValue,
   onChange,
   extensions,
+  editable = true,
+  readOnly = false,
   placeholder,
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -48,15 +52,22 @@ export function CodeMirrorEditor({
       indentOnInput(),
       bracketMatching(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
-      EditorView.updateListener.of((update) => {
-        if (!update.docChanged) {
-          return;
-        }
-
-        onChangeRef.current(update.state.doc);
-      }),
+      EditorView.editable.of(editable),
+      EditorState.readOnly.of(readOnly),
       ...extensions,
     ];
+
+    if (onChangeRef.current) {
+      editorExtensions.push(
+        EditorView.updateListener.of((update) => {
+          if (!update.docChanged || !onChangeRef.current) {
+            return;
+          }
+
+          onChangeRef.current(update.state.doc);
+        }),
+      );
+    }
 
     if (placeholder) {
       editorExtensions.unshift(placeholderExtension(placeholder));
@@ -78,7 +89,7 @@ export function CodeMirrorEditor({
         viewRef.current = null;
       }
     };
-  }, [documentId, extensions, initialValue, placeholder]);
+  }, [documentId, editable, extensions, initialValue, placeholder, readOnly]);
 
   return <div ref={containerRef} className="cm-theme" />;
 }
