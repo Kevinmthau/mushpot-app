@@ -15,14 +15,16 @@ import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { useEffect, useRef } from "react";
 
 type CodeMirrorEditorProps = {
-  value: string;
+  documentId: string;
+  initialValue: string;
   onChange: (doc: Text) => void;
   extensions: Extension[];
   placeholder?: string;
 };
 
 export function CodeMirrorEditor({
-  value,
+  documentId,
+  initialValue,
   onChange,
   extensions,
   placeholder,
@@ -30,20 +32,14 @@ export function CodeMirrorEditor({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
-  const extensionsRef = useRef(extensions);
-  const isApplyingExternalValueRef = useRef(false);
 
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
 
   useEffect(() => {
-    extensionsRef.current = extensions;
-  }, [extensions]);
-
-  useEffect(() => {
     const container = containerRef.current;
-    if (!container || viewRef.current) {
+    if (!container) {
       return;
     }
 
@@ -57,14 +53,9 @@ export function CodeMirrorEditor({
           return;
         }
 
-        if (isApplyingExternalValueRef.current) {
-          isApplyingExternalValueRef.current = false;
-          return;
-        }
-
         onChangeRef.current(update.state.doc);
       }),
-      ...extensionsRef.current,
+      ...extensions,
     ];
 
     if (placeholder) {
@@ -74,7 +65,7 @@ export function CodeMirrorEditor({
     const view = new EditorView({
       parent: container,
       state: EditorState.create({
-        doc: value,
+        doc: initialValue,
         extensions: editorExtensions,
       }),
     });
@@ -83,30 +74,11 @@ export function CodeMirrorEditor({
 
     return () => {
       view.destroy();
-      viewRef.current = null;
+      if (viewRef.current === view) {
+        viewRef.current = null;
+      }
     };
-  }, [placeholder, value]);
-
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) {
-      return;
-    }
-
-    const currentValue = view.state.doc.toString();
-    if (value === currentValue) {
-      return;
-    }
-
-    isApplyingExternalValueRef.current = true;
-    view.dispatch({
-      changes: {
-        from: 0,
-        to: currentValue.length,
-        insert: value,
-      },
-    });
-  }, [value]);
+  }, [documentId, extensions, initialValue, placeholder]);
 
   return <div ref={containerRef} className="cm-theme" />;
 }

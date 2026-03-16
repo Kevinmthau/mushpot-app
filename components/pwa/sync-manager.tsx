@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-import { getDirtyDocuments, putCachedDocument } from "@/lib/doc-cache";
+import { flushDirtyDocuments } from "@/lib/document-sync";
 
 /**
  * Flushes dirty (unsaved) documents to Supabase on startup,
@@ -19,47 +19,7 @@ export function SyncManager() {
       flushInProgress = true;
 
       try {
-        const dirtyDocs = await getDirtyDocuments();
-        if (dirtyDocs.length === 0) return;
-
-        const { createSupabaseBrowserClient } = await import(
-          "@/lib/supabase/client"
-        );
-        const supabase = createSupabaseBrowserClient();
-
-        for (const doc of dirtyDocs) {
-          if (!isMounted) break;
-
-          const title = doc.title.trim() || "Untitled";
-          let saved = false;
-
-          for (let attempt = 0; attempt < 3; attempt++) {
-            const { error } = await supabase
-              .from("documents")
-              .update({ title, content: doc.content })
-              .eq("id", doc.id)
-              .eq("owner", doc.owner);
-
-            if (!error) {
-              saved = true;
-              break;
-            }
-
-            await new Promise((r) =>
-              setTimeout(r, 1000 * Math.pow(2, attempt)),
-            );
-          }
-
-          if (saved) {
-            void putCachedDocument({
-              ...doc,
-              title,
-              _dirty: false,
-              updated_at: new Date().toISOString(),
-              _localUpdatedAt: Date.now(),
-            });
-          }
-        }
+        await flushDirtyDocuments();
       } catch {
         // Best-effort — will retry on next trigger
       } finally {

@@ -11,7 +11,10 @@ export default function HomeLoading() {
             key={i}
             className="rounded-2xl bg-[var(--paper)] px-4 py-3 sm:px-5 sm:py-4"
           >
-            <div className="h-5 animate-pulse rounded bg-[var(--line)]" style={{ width: `${65 - i * 8}%` }} />
+            <div
+              className="h-5 animate-pulse rounded bg-[var(--line)]"
+              style={{ width: `${65 - i * 8}%` }}
+            />
             <div className="mt-2 h-3 w-16 animate-pulse rounded bg-[var(--line)]" />
           </div>
         ))}

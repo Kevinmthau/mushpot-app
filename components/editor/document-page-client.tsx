@@ -12,12 +12,12 @@ type DocumentPageClientProps = {
 
 export function DocumentPageClient({ initialDocument }: DocumentPageClientProps) {
   useEffect(() => {
-      void putCachedDocument({
-        ...initialDocument,
-        _dirty: false,
-      });
-      void setLastActiveOwner(initialDocument.owner);
-    }, [initialDocument]);
+    void putCachedDocument({
+      ...initialDocument,
+      _dirty: false,
+    });
+    void setLastActiveOwner(initialDocument.owner);
+  }, [initialDocument]);
 
   return <EditorClient initialDocument={initialDocument} />;
 }

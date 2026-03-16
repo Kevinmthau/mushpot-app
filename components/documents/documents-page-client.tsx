@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { DocumentListClient } from "@/components/documents/document-list-client";
 import PullToRefresh from "@/components/pull-to-refresh";
+import { getSupabaseBrowserClient } from "@/lib/document-sync";
 import {
   clearLastActiveOwner,
   getAllCachedDocumentsForOwner,
@@ -20,32 +21,6 @@ type DocumentsPageClientProps = {
   initialUserId: string | null;
 };
 
-function scheduleDeferredTask(task: () => void) {
-  if (typeof window === "undefined") {
-    return () => undefined;
-  }
-
-  const idleWindow = window as Window & {
-    requestIdleCallback?: (
-      callback: IdleRequestCallback,
-      options?: IdleRequestOptions,
-    ) => number;
-    cancelIdleCallback?: (handle: number) => void;
-  };
-
-  if (typeof idleWindow.requestIdleCallback === "function") {
-    const handle = idleWindow.requestIdleCallback(() => task(), { timeout: 1200 });
-    return () => {
-      idleWindow.cancelIdleCallback?.(handle);
-    };
-  }
-
-  const timeoutId = window.setTimeout(task, 400);
-  return () => {
-    window.clearTimeout(timeoutId);
-  };
-}
-
 export function DocumentsPageClient({
   initialDocuments,
   initialError,
@@ -55,16 +30,13 @@ export function DocumentsPageClient({
   const [documents, setDocuments] = useState<CachedDocumentListItem[]>(initialDocuments);
   const [userId, setUserId] = useState<string | null>(initialUserId);
   const [error, setError] = useState<string | null>(initialError);
-  const [isLoading, setIsLoading] = useState(
-    initialDocuments.length === 0 && initialError === null,
-  );
+  const [isLoading, setIsLoading] = useState(initialUserId === null);
 
   useEffect(() => {
     let isActive = true;
 
-    async function loadDocuments() {
+    async function initializeDocuments() {
       let ownerId = initialUserId;
-      let hasVisibleDocuments = initialDocuments.length > 0;
 
       if (!ownerId) {
         ownerId = await getLastActiveOwner();
@@ -82,72 +54,34 @@ export function DocumentsPageClient({
       setUserId(ownerId);
       void setLastActiveOwner(ownerId);
 
-      if (initialDocuments.length > 0) {
+      if (initialUserId) {
         setDocuments(initialDocuments);
         setError(initialError);
         setIsLoading(false);
         void syncDocumentList(initialDocuments, ownerId);
-      } else {
-        const cachedDocs = await getAllCachedDocumentsForOwner(ownerId);
-        if (!isActive) {
-          return;
-        }
-
-        if (cachedDocs.length > 0) {
-          setDocuments(cachedDocs);
-          setError(null);
-          setIsLoading(false);
-          hasVisibleDocuments = true;
-        }
+        return;
       }
 
-      const cancelDeferredRefresh = scheduleDeferredTask(() => {
-        void (async () => {
-          const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
-          const supabase = createSupabaseBrowserClient();
-          const { data: serverDocs, error: documentsError } = await supabase
-            .from("documents")
-            .select("id, title, updated_at")
-            .eq("owner", ownerId)
-            .order("updated_at", { ascending: false });
+      const cachedDocs = await getAllCachedDocumentsForOwner(ownerId);
 
-          if (!isActive) {
-            return;
-          }
+      if (!isActive) {
+        return;
+      }
 
-          if (documentsError) {
-            if (!hasVisibleDocuments) {
-              setError(documentsError.message);
-              setIsLoading(false);
-            }
-            return;
-          }
-
-          const nextDocuments = serverDocs ?? [];
-          setDocuments(nextDocuments);
-          setError(null);
-          setIsLoading(false);
-          void syncDocumentList(nextDocuments, ownerId);
-        })();
-      });
-
-      return cancelDeferredRefresh;
+      setDocuments(cachedDocs);
+      setError(initialError);
+      setIsLoading(false);
     }
 
-    let cancelDeferredRefresh: (() => void) | undefined;
-    void loadDocuments().then((cancelRefresh) => {
-      cancelDeferredRefresh = cancelRefresh;
-    });
+    void initializeDocuments();
 
     return () => {
       isActive = false;
-      cancelDeferredRefresh?.();
     };
   }, [initialDocuments, initialError, initialUserId, router]);
 
   const handleSignOut = useCallback(async () => {
-    const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
-    const supabase = createSupabaseBrowserClient();
+    const supabase = await getSupabaseBrowserClient();
     await supabase.auth.signOut();
     void clearLastActiveOwner();
     router.replace("/auth");

@@ -26,9 +26,12 @@ import { useRouter } from "next/navigation";
 
 import { CodeMirrorEditor } from "@/components/editor/code-mirror-editor";
 import { putCachedDocument, deleteCachedDocument, type CachedDocument } from "@/lib/doc-cache";
+import {
+  getSupabaseBrowserClient,
+  persistDocumentSnapshot,
+} from "@/lib/document-sync";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
-import type { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export type EditorDocument = {
   id: string;
@@ -72,17 +75,6 @@ const SUPPORTED_IMAGE_MIME_TYPE_SET = new Set([
   "image/jpg",
 ]);
 const SUPPORTED_IMAGE_FORMATS_LABEL = SUPPORTED_IMAGE_MIME_TYPES.join(", ");
-let supabaseClientPromise: Promise<ReturnType<typeof createSupabaseBrowserClient>> | null = null;
-
-async function getSupabaseBrowserClient() {
-  if (!supabaseClientPromise) {
-    supabaseClientPromise = import("@/lib/supabase/client").then((module) =>
-      module.createSupabaseBrowserClient(),
-    );
-  }
-
-  return supabaseClientPromise;
-}
 
 const editorTheme = EditorView.theme({
   "&": {
@@ -405,7 +397,6 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
   const router = useRouter();
 
   const [title, setTitle] = useState(initialDocument.title);
-  const [editorValue, setEditorValue] = useState(initialDocument.content);
   const [contentForStats, setContentForStats] = useState(initialDocument.content);
   const [updatedAt, setUpdatedAt] = useState(initialDocument.updated_at);
   const [shareEnabled, setShareEnabled] = useState(initialDocument.share_enabled);
@@ -437,7 +428,6 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     }
 
     setTitle(initialDocument.title);
-    setEditorValue(initialDocument.content);
     setContentForStats(initialDocument.content);
     setUpdatedAt(initialDocument.updated_at);
     setShareEnabled(initialDocument.share_enabled);
@@ -709,57 +699,24 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
             return true;
           }
 
-          const persistedTitle = titleToSave.trim() ? titleToSave : "Untitled";
-          const supabase = await getSupabaseBrowserClient();
+          const result = await persistDocumentSnapshot({
+            id: initialDocument.id,
+            owner: initialDocument.owner,
+            title: titleToSave,
+            content: contentToSave,
+            share_enabled: shareEnabledRef.current,
+            share_token: shareTokenRef.current,
+          });
 
-          // Retry up to 3 times with exponential backoff on failure
-          let lastError: unknown = null;
-          let saved = false;
-          for (let attempt = 0; attempt < 3; attempt++) {
-            if (isDeletingRef.current) {
-              return true;
-            }
-
-            const { error } = await supabase
-              .from("documents")
-              .update({
-                title: persistedTitle,
-                content: contentToSave,
-              })
-              .eq("id", initialDocument.id);
-
-            if (!error) {
-              saved = true;
-              break;
-            }
-
-            lastError = error;
-            // Exponential backoff: 1s, 2s, 4s
-            await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
-          }
-
-          if (!saved) {
-            console.error("saveDraft failed after retries", lastError);
+          if (!result.ok || !result.updatedAt) {
             return false;
           }
 
-          const nextUpdatedAt = new Date().toISOString();
           lastSavedRef.current = {
             title: titleToSave,
             content: contentToSave,
           };
-          setUpdatedAt(nextUpdatedAt);
-          void putCachedDocument({
-            id: initialDocument.id,
-            owner: initialDocument.owner,
-            title: persistedTitle,
-            content: contentToSave,
-            updated_at: nextUpdatedAt,
-            share_enabled: shareEnabledRef.current,
-            share_token: shareTokenRef.current,
-            _dirty: false,
-            _localUpdatedAt: Date.now(),
-          });
+          setUpdatedAt(result.updatedAt);
 
           const queuedSave = queuedSaveRef.current;
           if (!queuedSave) {
@@ -887,7 +844,7 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
     }
 
     // Remove from local cache
-    deleteCachedDocument(initialDocument.id);
+    void deleteCachedDocument(initialDocument.id);
 
     router.replace("/");
     router.refresh();
@@ -955,7 +912,8 @@ export function EditorClient({ initialDocument }: EditorClientProps) {
 
         <div className="pb-24">
           <CodeMirrorEditor
-            value={editorValue}
+            documentId={initialDocument.id}
+            initialValue={initialDocument.content}
             onChange={(doc) => {
               didEditSinceHydrationRef.current = true;
               latestContentRef.current = doc;
