@@ -1,6 +1,5 @@
-const STATIC_CACHE_NAME = "mushpot-static-v3";
-const RUNTIME_CACHE_NAME = "mushpot-runtime-v1";
-const NAV_CACHE_NAME = "mushpot-nav-v2";
+const STATIC_CACHE_NAME = "mushpot-static-v4";
+const NAV_CACHE_NAME = "mushpot-nav-v3";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
@@ -9,7 +8,7 @@ const STATIC_FILES = [
 ];
 
 // Known cache names – anything else gets cleaned up on activate
-const KNOWN_CACHES = new Set([STATIC_CACHE_NAME, RUNTIME_CACHE_NAME, NAV_CACHE_NAME]);
+const KNOWN_CACHES = new Set([STATIC_CACHE_NAME, NAV_CACHE_NAME]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -64,35 +63,24 @@ async function staleWhileRevalidate(request, cacheName) {
 }
 
 /**
- * Stale-while-revalidate for navigation: return cached page immediately for
- * instant loads, then fetch a fresh copy in the background for next time.
- * Falls back to offline page if both cache and network fail.
+ * Network-first for navigation. Serving stale App Router shells across deploys
+ * can mismatch the current JS bundle and trigger client-side crashes.
  */
-async function navigationStaleWhileRevalidate(request) {
+async function navigationNetworkFirst(request) {
   const cache = await caches.open(NAV_CACHE_NAME);
-  const cachedResponse = await cache.match(request);
-
-  const networkResponsePromise = fetch(request)
-    .then((response) => {
-      if (response.ok) {
-        cache.put(request, response.clone());
-      }
-      return response;
-    })
-    .catch(() => undefined);
-
-  if (cachedResponse) {
-    // Serve cached immediately; network fetch updates cache in background
-    return cachedResponse;
-  }
-
-  // No cache — wait for network
-  const networkResponse = await networkResponsePromise;
-  if (networkResponse) {
+  try {
+    const networkResponse = await fetch(request);
+    if (networkResponse.ok) {
+      cache.put(request, networkResponse.clone());
+    }
     return networkResponse;
+  } catch {
+    const cachedResponse = await cache.match(request);
+    if (cachedResponse) {
+      return cachedResponse;
+    }
   }
 
-  // Last resort: offline fallback page
   const fallback = await caches.match("/offline.html");
   return fallback || Response.error();
 }
@@ -112,9 +100,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation requests: stale-while-revalidate for instant loads
+  // Keep navigation network-first so route payloads stay in sync with the
+  // current deployment.
   if (request.mode === "navigate") {
-    event.respondWith(navigationStaleWhileRevalidate(request));
+    event.respondWith(navigationNetworkFirst(request));
     return;
   }
 
@@ -149,12 +138,6 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Next.js RSC/data fetches: stale-while-revalidate for instant page transitions
-  if (
-    url.pathname.startsWith("/_next/data/") ||
-    request.headers.get("RSC") === "1" ||
-    request.headers.get("Next-Router-State-Tree")
-  ) {
-    event.respondWith(staleWhileRevalidate(request, RUNTIME_CACHE_NAME));
-  }
+  // Do not cache App Router RSC/data responses in the service worker.
+  // Those payloads are deployment-coupled and unsafe to reuse after updates.
 });
