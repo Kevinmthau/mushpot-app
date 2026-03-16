@@ -7,6 +7,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type ShareModalProps = {
   documentId: string;
+  getDocumentText: () => string;
+  getDocumentTitle: () => string;
   isOpen: boolean;
   onClose: () => void;
   shareEnabled: boolean;
@@ -21,6 +23,8 @@ const tokenGenerator = customAlphabet(
 
 export function ShareModal({
   documentId,
+  getDocumentText,
+  getDocumentTitle,
   isOpen,
   onClose,
   shareEnabled,
@@ -29,10 +33,10 @@ export function ShareModal({
 }: ShareModalProps) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [busyAction, setBusyAction] = useState<
-    "enable" | "rotate" | "disable" | "copy" | null
+    "enable" | "rotate" | "disable" | "copyLink" | "copyText" | null
   >(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copiedAction, setCopiedAction] = useState<"link" | "text" | null>(null);
 
   if (!isOpen) {
     return null;
@@ -59,6 +63,22 @@ export function ShareModal({
     onShareUpdated(enabled, token);
   };
 
+  const buildDocumentClipboardText = () => {
+    const title = getDocumentTitle().trim();
+    const content = getDocumentText();
+    const trimmedContent = content.trim();
+
+    if (title && trimmedContent) {
+      return `${title}\n\n${content}`;
+    }
+
+    if (trimmedContent) {
+      return content;
+    }
+
+    return title;
+  };
+
   const handleEnable = async () => {
     setBusyAction("enable");
     setError(null);
@@ -66,6 +86,7 @@ export function ShareModal({
     try {
       const nextToken = shareToken ?? tokenGenerator();
       await updateShareState(true, nextToken);
+      setCopiedAction(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to enable sharing.");
     } finally {
@@ -79,7 +100,7 @@ export function ShareModal({
 
     try {
       await updateShareState(true, tokenGenerator());
-      setCopied(false);
+      setCopiedAction(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to rotate link.");
     } finally {
@@ -93,7 +114,7 @@ export function ShareModal({
 
     try {
       await updateShareState(false, null);
-      setCopied(false);
+      setCopiedAction(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to disable sharing.");
     } finally {
@@ -101,17 +122,38 @@ export function ShareModal({
     }
   };
 
-  const handleCopy = async () => {
+  const handleCopyLink = async () => {
     if (!shareUrl) {
       return;
     }
 
-    setBusyAction("copy");
+    setBusyAction("copyLink");
     setError(null);
 
     try {
       await navigator.clipboard.writeText(shareUrl);
-      setCopied(true);
+      setCopiedAction("link");
+    } catch {
+      setError("Clipboard access was blocked. Copy manually.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleCopyText = async () => {
+    const documentText = buildDocumentClipboardText();
+
+    if (!documentText) {
+      setError("Document is empty.");
+      return;
+    }
+
+    setBusyAction("copyText");
+    setError(null);
+
+    try {
+      await navigator.clipboard.writeText(documentText);
+      setCopiedAction("text");
     } catch {
       setError("Clipboard access was blocked. Copy manually.");
     } finally {
@@ -165,11 +207,20 @@ export function ShareModal({
         <div className="mt-4 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
           <button
             type="button"
-            onClick={handleCopy}
+            onClick={handleCopyLink}
             disabled={busyAction !== null || !shareEnabled || !shareToken}
             className="w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-55 sm:w-auto"
           >
-            {copied ? "Copied" : "Copy link"}
+            {copiedAction === "link" ? "Link copied" : "Copy link"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleCopyText}
+            disabled={busyAction !== null}
+            className="w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-55 sm:w-auto"
+          >
+            {copiedAction === "text" ? "Text copied" : "Copy text"}
           </button>
 
           <button

@@ -487,6 +487,10 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     return readDocumentText(latestContentRef.current);
   }, []);
 
+  const getLatestTitle = useCallback(() => {
+    return latestTitleRef.current;
+  }, []);
+
   const scheduleStatsSync = useCallback(() => {
     if (statsSyncTimeoutRef.current !== null) {
       window.clearTimeout(statsSyncTimeoutRef.current);
@@ -968,6 +972,8 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
       {isShareModalOpen ? (
         <ShareModal
           documentId={initialDocument.id}
+          getDocumentText={getLatestContent}
+          getDocumentTitle={getLatestTitle}
           isOpen={isShareModalOpen}
           onClose={() => setIsShareModalOpen(false)}
           shareEnabled={shareEnabled}
