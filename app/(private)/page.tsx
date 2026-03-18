@@ -25,9 +25,9 @@ export default async function DocumentsPage() {
 
   return (
     <DocumentsPageClient
-      initialDocuments={(data ?? []) as CachedDocumentListItem[]}
-      initialError={error?.message ?? null}
-      initialUserId={userId}
+      documents={(data ?? []) as CachedDocumentListItem[]}
+      error={error?.message ?? null}
+      userId={userId}
     />
   );
 }

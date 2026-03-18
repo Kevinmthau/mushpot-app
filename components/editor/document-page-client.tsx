@@ -1,36 +1,41 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { EditorClient } from "@/components/editor/editor-lazy";
-import { putCachedDocument, setLastActiveOwner } from "@/lib/doc-cache";
-import type { EditorDocument } from "@/components/editor/editor-client";
+import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
+import type { EditorDocument } from "@/components/editor/editor-types";
+import {
+  reconcileCachedDocumentWithServer,
+  setLastActiveOwner,
+  type CachedDocument,
+} from "@/lib/doc-cache";
 
 type DocumentPageClientProps = {
   initialDocument: EditorDocument;
 };
 
-function MissingDocumentFallback() {
+function toEditorDocument(document: CachedDocument): EditorDocument {
+  return {
+    id: document.id,
+    owner: document.owner,
+    title: document.title,
+    content: document.content,
+    updated_at: document.updated_at,
+    share_enabled: document.share_enabled,
+    share_token: document.share_token,
+  };
+}
+
+function areDocumentsEqual(left: EditorDocument, right: EditorDocument) {
   return (
-    <main className="mx-auto min-h-dvh w-full max-w-[800px] px-4 py-12 sm:px-5">
-      <div className="rounded-2xl border border-[var(--line)] bg-[var(--paper)] px-5 py-6">
-        <h1 className="font-[var(--font-writing)] text-2xl text-[var(--ink)]">
-          Unable to open document
-        </h1>
-        <p className="mt-2 text-sm text-[var(--muted)]">
-          This page data is out of date. Refresh to load the latest version.
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            window.location.reload();
-          }}
-          className="mt-4 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm text-white"
-        >
-          Refresh
-        </button>
-      </div>
-    </main>
+    left.id === right.id &&
+    left.owner === right.owner &&
+    left.title === right.title &&
+    left.content === right.content &&
+    left.updated_at === right.updated_at &&
+    left.share_enabled === right.share_enabled &&
+    left.share_token === right.share_token
   );
 }
 
@@ -41,17 +46,42 @@ export function DocumentPageClient(props: DocumentPageClientProps) {
     return <MissingDocumentFallback />;
   }
 
-  return <DocumentPageClientInner initialDocument={initialDocument} />;
+  return (
+    <DocumentPageClientInner
+      key={initialDocument.id}
+      initialDocument={initialDocument}
+    />
+  );
 }
 
 function DocumentPageClientInner({ initialDocument }: DocumentPageClientProps) {
+  const [document, setDocument] = useState(initialDocument);
+
   useEffect(() => {
-    void putCachedDocument({
-      ...initialDocument,
-      _dirty: false,
-    });
     void setLastActiveOwner(initialDocument.owner);
+
+    let isActive = true;
+
+    void (async () => {
+      const resolvedDocument = await reconcileCachedDocumentWithServer({
+        ...initialDocument,
+        _dirty: false,
+      });
+
+      if (!isActive) {
+        return;
+      }
+
+      const nextDocument = toEditorDocument(resolvedDocument);
+      setDocument((currentDocument) =>
+        areDocumentsEqual(currentDocument, nextDocument) ? currentDocument : nextDocument,
+      );
+    })();
+
+    return () => {
+      isActive = false;
+    };
   }, [initialDocument]);
 
-  return <EditorClient initialDocument={initialDocument} />;
+  return <EditorClient initialDocument={document} />;
 }

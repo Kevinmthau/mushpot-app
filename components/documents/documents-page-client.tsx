@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { DocumentListClient } from "@/components/documents/document-list-client";
@@ -8,77 +8,24 @@ import PullToRefresh from "@/components/pull-to-refresh";
 import { getSupabaseBrowserClient } from "@/lib/document-sync";
 import {
   clearLastActiveOwner,
-  getAllCachedDocumentsForOwner,
-  getLastActiveOwner,
   setLastActiveOwner,
   syncDocumentList,
   type CachedDocumentListItem,
 } from "@/lib/doc-cache";
 
 type DocumentsPageClientProps = {
-  initialDocuments: CachedDocumentListItem[];
-  initialError: string | null;
-  initialUserId: string | null;
+  documents: CachedDocumentListItem[];
+  error: string | null;
+  userId: string;
 };
 
-export function DocumentsPageClient({
-  initialDocuments,
-  initialError,
-  initialUserId,
-}: DocumentsPageClientProps) {
+export function DocumentsPageClient({ documents, error, userId }: DocumentsPageClientProps) {
   const router = useRouter();
-  const [documents, setDocuments] = useState<CachedDocumentListItem[]>(initialDocuments);
-  const [userId, setUserId] = useState<string | null>(initialUserId);
-  const [error, setError] = useState<string | null>(initialError);
-  const [isLoading, setIsLoading] = useState(initialUserId === null);
 
   useEffect(() => {
-    let isActive = true;
-
-    async function initializeDocuments() {
-      let ownerId = initialUserId;
-
-      if (!ownerId) {
-        ownerId = await getLastActiveOwner();
-      }
-
-      if (!ownerId) {
-        router.replace("/auth?next=/");
-        return;
-      }
-
-      if (!isActive) {
-        return;
-      }
-
-      setUserId(ownerId);
-      void setLastActiveOwner(ownerId);
-
-      if (initialUserId) {
-        setDocuments(initialDocuments);
-        setError(initialError);
-        setIsLoading(false);
-        void syncDocumentList(initialDocuments, ownerId);
-        return;
-      }
-
-      const cachedDocs = await getAllCachedDocumentsForOwner(ownerId);
-
-      if (!isActive) {
-        return;
-      }
-
-      setDocuments(cachedDocs);
-      setError(initialError);
-      setIsLoading(false);
-    }
-
-    void initializeDocuments();
-
-    return () => {
-      isActive = false;
-    };
-  }, [initialDocuments, initialError, initialUserId, router]);
+    void setLastActiveOwner(userId);
+    void syncDocumentList(documents, userId);
+  }, [documents, userId]);
 
   const handleSignOut = useCallback(async () => {
     const supabase = await getSupabaseBrowserClient();
@@ -110,7 +57,6 @@ export function DocumentsPageClient({
         ) : (
           <DocumentListClient
             documents={documents}
-            isLoading={isLoading}
             userId={userId}
           />
         )}

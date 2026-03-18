@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 
+import { preloadEditorClient } from "@/components/editor/editor-lazy";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import {
   type CachedDocument,
@@ -11,25 +12,13 @@ import {
   putCachedDocument,
   setLastActiveOwner,
 } from "@/lib/doc-cache";
+import { getSupabaseBrowserClient } from "@/lib/document-sync";
 
 type DocumentListClientProps = {
   documents: CachedDocumentListItem[];
   isLoading?: boolean;
   userId: string | null;
 };
-
-let editorChunkPreloaded = false;
-
-function preloadEditorChunk() {
-  if (editorChunkPreloaded) {
-    return;
-  }
-
-  editorChunkPreloaded = true;
-  void import("@/components/editor/editor-client").catch(() => {
-    editorChunkPreloaded = false;
-  });
-}
 
 export function DocumentListClient({
   documents,
@@ -38,21 +27,39 @@ export function DocumentListClient({
 }: DocumentListClientProps) {
   const router = useRouter();
   const [displayDocuments, setDisplayDocuments] = useState(documents);
+  const [optimisticDocumentIds, setOptimisticDocumentIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [isCreating, setIsCreating] = useState(false);
   const [, startTransition] = useTransition();
+
+  useEffect(() => {
+    setOptimisticDocumentIds((currentIds) => {
+      let changed = false;
+      const nextIds = new Set(currentIds);
+
+      for (const doc of documents) {
+        if (nextIds.delete(doc.id)) {
+          changed = true;
+        }
+      }
+
+      return changed ? nextIds : currentIds;
+    });
+  }, [documents]);
 
   useEffect(() => {
     setDisplayDocuments((currentDocuments) => {
       const nextDocumentIds = new Set(documents.map((doc) => doc.id));
       const optimisticDocuments = currentDocuments.filter(
-        (doc) => !nextDocumentIds.has(doc.id),
+        (doc) => optimisticDocumentIds.has(doc.id) && !nextDocumentIds.has(doc.id),
       );
       return [...optimisticDocuments, ...documents];
     });
-  }, [documents]);
+  }, [documents, optimisticDocumentIds]);
 
   const handleWarmEditor = useCallback(() => {
-    preloadEditorChunk();
+    void preloadEditorClient();
   }, []);
 
   const handleCreateDocument = useCallback(async () => {
@@ -60,8 +67,7 @@ export function DocumentListClient({
     setIsCreating(true);
 
     try {
-      const { createSupabaseBrowserClient } = await import("@/lib/supabase/client");
-      const supabase = createSupabaseBrowserClient();
+      const supabase = await getSupabaseBrowserClient();
       const { data, error } = await supabase
         .from("documents")
         .insert({ owner: userId, title: "Untitled", content: "" })
@@ -85,12 +91,17 @@ export function DocumentListClient({
       await putCachedDocument(cachedDocument);
       void setLastActiveOwner(data.owner);
 
+      setOptimisticDocumentIds((currentIds) => {
+        const nextIds = new Set(currentIds);
+        nextIds.add(data.id);
+        return nextIds;
+      });
       setDisplayDocuments((prev) => [
         { id: data.id, title: data.title, updated_at: data.updated_at },
         ...prev,
       ]);
 
-      preloadEditorChunk();
+      void preloadEditorClient();
       startTransition(() => {
         router.push(`/doc/${data.id}`);
       });

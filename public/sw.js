@@ -1,5 +1,5 @@
 const STATIC_CACHE_NAME = "mushpot-static-v4";
-const NAV_CACHE_NAME = "mushpot-nav-v3";
+const NAV_CACHE_NAME = "mushpot-nav-v4";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
@@ -67,17 +67,24 @@ async function staleWhileRevalidate(request, cacheName) {
  * can mismatch the current JS bundle and trigger client-side crashes.
  */
 async function navigationNetworkFirst(request) {
-  const cache = await caches.open(NAV_CACHE_NAME);
+  const pathname = new URL(request.url).pathname;
+  // Never reuse cached shells for authenticated routes.
+  const allowNavigationCache =
+    pathname === "/auth" || pathname.startsWith("/s/");
+  const cache = allowNavigationCache ? await caches.open(NAV_CACHE_NAME) : null;
+
   try {
     const networkResponse = await fetch(request);
-    if (networkResponse.ok) {
+    if (cache && networkResponse.ok) {
       cache.put(request, networkResponse.clone());
     }
     return networkResponse;
   } catch {
-    const cachedResponse = await cache.match(request);
-    if (cachedResponse) {
-      return cachedResponse;
+    if (cache) {
+      const cachedResponse = await cache.match(request);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
     }
   }
 

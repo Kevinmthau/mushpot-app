@@ -88,6 +88,26 @@ export async function getCachedDocumentForOwner(
   return cached?.owner === owner ? cached : null;
 }
 
+export async function reconcileCachedDocumentWithServer(
+  serverDocument: CachedDocument,
+): Promise<CachedDocument> {
+  const cachedDocument = await getCachedDocumentForOwner(
+    serverDocument.id,
+    serverDocument.owner,
+  );
+
+  if (cachedDocument?._dirty) {
+    return cachedDocument;
+  }
+
+  const nextDocument: CachedDocument = {
+    ...serverDocument,
+    _dirty: false,
+  };
+  await putCachedDocument(nextDocument);
+  return nextDocument;
+}
+
 export async function putCachedDocument(doc: CachedDocument): Promise<void> {
   try {
     const db = await openDB();
@@ -134,70 +154,9 @@ export async function deleteCachedDocument(id: string): Promise<void> {
   }
 }
 
-export async function getAllCachedDocuments(): Promise<CachedDocumentListItem[]> {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(DOCS_STORE, "readonly");
-      const request = tx.objectStore(DOCS_STORE).getAll();
-      request.onsuccess = () => {
-        const docs = (request.result as CachedDocument[])
-          .map((d) => ({ id: d.id, title: d.title, updated_at: d.updated_at }))
-          .sort(
-            (a, b) =>
-              new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-          );
-        resolve(docs);
-      };
-      request.onerror = () => reject(request.error);
-    });
-  } catch {
-    return [];
-  }
-}
-
-export async function getAllCachedDocumentsForOwner(
-  owner: string,
-): Promise<CachedDocumentListItem[]> {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(DOCS_STORE, "readonly");
-      const index = tx.objectStore(DOCS_STORE).index("owner");
-      const request = index.getAll(owner);
-      request.onsuccess = () => {
-        const docs = (request.result as CachedDocument[])
-          .map((doc) => ({ id: doc.id, title: doc.title, updated_at: doc.updated_at }))
-          .sort(
-            (a, b) =>
-              new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-          );
-        resolve(docs);
-      };
-      request.onerror = () => reject(request.error);
-    });
-  } catch {
-    return [];
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Meta helpers (e.g. last sync timestamp)
 // ---------------------------------------------------------------------------
-
-export async function getMeta(key: string): Promise<string | null> {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(META_STORE, "readonly");
-      const request = tx.objectStore(META_STORE).get(key);
-      request.onsuccess = () => resolve(request.result?.value ?? null);
-      request.onerror = () => reject(request.error);
-    });
-  } catch {
-    return null;
-  }
-}
 
 export async function setMeta(key: string, value: string): Promise<void> {
   try {
@@ -211,10 +170,6 @@ export async function setMeta(key: string, value: string): Promise<void> {
   } catch {
     // Silently ignore
   }
-}
-
-export function getLastActiveOwner(): Promise<string | null> {
-  return getMeta(LAST_ACTIVE_OWNER_KEY);
 }
 
 export function setLastActiveOwner(owner: string): Promise<void> {

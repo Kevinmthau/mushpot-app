@@ -9,6 +9,7 @@ import {
   markdownLiveFormatting,
 } from "@/components/editor/editor-appearance";
 import { CodeMirrorEditor } from "@/components/editor/code-mirror-editor";
+import { getReadingTimeFromText } from "@/lib/document-stats";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 
 type SharedDocumentPageClientProps = {
@@ -18,30 +19,16 @@ type SharedDocumentPageClientProps = {
   updatedAt: string;
 };
 
-function estimateReadingTime(wordCount: number) {
-  if (wordCount === 0) {
-    return 0;
-  }
-
-  return Math.max(1, Math.ceil(wordCount / 225));
-}
-
 export function SharedDocumentPageClient({
   content,
   documentId,
   title,
   updatedAt,
 }: SharedDocumentPageClientProps) {
-  const words = useMemo(() => {
-    const trimmed = content.trim();
-    if (!trimmed) {
-      return 0;
-    }
-
-    return trimmed.split(/\s+/).length;
+  const readingTime = useMemo(() => {
+    return getReadingTimeFromText(content);
   }, [content]);
 
-  const readingTime = useMemo(() => estimateReadingTime(words), [words]);
   const formattedUpdated = useMemo(() => formatRelativeTimestamp(updatedAt), [updatedAt]);
   const editorExtensions = useMemo(
     () => [markdown(), markdownLiveFormatting, EditorView.lineWrapping, editorTheme],
