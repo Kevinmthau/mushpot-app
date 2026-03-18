@@ -122,24 +122,6 @@ export async function putCachedDocument(doc: CachedDocument): Promise<void> {
   }
 }
 
-export async function putCachedDocuments(docs: CachedDocument[]): Promise<void> {
-  if (docs.length === 0) return;
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(DOCS_STORE, "readwrite");
-      const store = tx.objectStore(DOCS_STORE);
-      for (const doc of docs) {
-        store.put(doc);
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {
-    // Silently ignore
-  }
-}
-
 export async function deleteCachedDocument(id: string): Promise<void> {
   try {
     const db = await openDB();

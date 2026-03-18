@@ -3,20 +3,18 @@
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorView } from "@codemirror/view";
 import dynamic from "next/dynamic";
-import { useCallback, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 
 import {
   editorTheme,
   markdownLiveFormatting,
 } from "@/components/editor/editor-appearance";
 import { CodeMirrorEditor } from "@/components/editor/code-mirror-editor";
+import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
 import { useImageUploadInsertion } from "@/components/editor/use-image-upload";
-import { deleteCachedDocument } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/document-sync";
 
 const ShareModal = dynamic(
   () => import("@/components/editor/share-modal").then((module) => module.ShareModal),
@@ -34,7 +32,6 @@ export function EditorClient(props: EditorClientProps) {
 }
 
 function EditorClientInner({ initialDocument }: EditorClientProps) {
-  const router = useRouter();
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const {
     formattedUpdated,
@@ -67,47 +64,16 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     ],
     [imageDropPasteHandlers],
   );
-
-  const handleDeleteDocument = useCallback(async () => {
-    if (isDeleting) {
-      return;
-    }
-
-    const isConfirmed = window.confirm(
-      "Delete this document? This action cannot be undone.",
-    );
-    if (!isConfirmed) {
-      return;
-    }
-
-    markDeleting();
-    setIsShareModalOpen(false);
-
-    const supabase = await getSupabaseBrowserClient();
-    const { error } = await supabase
-      .from("documents")
-      .delete()
-      .eq("id", initialDocument.id)
-      .eq("owner", initialDocument.owner);
-
-    if (error) {
-      resetDeletingState();
-      window.alert(error.message || "Unable to delete document. Please try again.");
-      return;
-    }
-
-    void deleteCachedDocument(initialDocument.id);
-
-    router.replace("/");
-    router.refresh();
-  }, [
-    initialDocument.id,
-    initialDocument.owner,
+  const handleDeleteDocument = useDocumentDelete({
+    documentId: initialDocument.id,
+    owner: initialDocument.owner,
     isDeleting,
-    markDeleting,
-    resetDeletingState,
-    router,
-  ]);
+    onDeleteStart: () => {
+      markDeleting();
+      setIsShareModalOpen(false);
+    },
+    onDeleteError: resetDeletingState,
+  });
 
   return (
     <div className="min-h-dvh pb-14 sm:pb-20">

@@ -1,9 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { customAlphabet } from "nanoid";
-
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { useDocumentShare } from "@/components/editor/use-document-share";
 
 type ShareModalProps = {
   documentId: string;
@@ -16,11 +13,6 @@ type ShareModalProps = {
   onShareUpdated: (enabled: boolean, token: string | null) => void;
 };
 
-const tokenGenerator = customAlphabet(
-  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_",
-  64,
-);
-
 export function ShareModal({
   documentId,
   getDocumentText,
@@ -31,135 +23,28 @@ export function ShareModal({
   shareToken,
   onShareUpdated,
 }: ShareModalProps) {
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const [busyAction, setBusyAction] = useState<
-    "enable" | "rotate" | "disable" | "copyLink" | "copyText" | null
-  >(null);
-  const [error, setError] = useState<string | null>(null);
-  const [copiedAction, setCopiedAction] = useState<"link" | "text" | null>(null);
+  const {
+    busyAction,
+    copiedAction,
+    error,
+    handleCopyLink,
+    handleCopyText,
+    handleDisable,
+    handleEnable,
+    handleRotate,
+    shareUrl,
+  } = useDocumentShare({
+    documentId,
+    getDocumentText,
+    getDocumentTitle,
+    onShareUpdated,
+    shareEnabled,
+    shareToken,
+  });
 
   if (!isOpen) {
     return null;
   }
-
-  const shareUrl =
-    shareEnabled && shareToken
-      ? `${window.location.origin}/s/${documentId}/${shareToken}`
-      : "";
-
-  const updateShareState = async (enabled: boolean, token: string | null) => {
-    const { error: updateError } = await supabase
-      .from("documents")
-      .update({
-        share_enabled: enabled,
-        share_token: token,
-      })
-      .eq("id", documentId);
-
-    if (updateError) {
-      throw new Error(updateError.message);
-    }
-
-    onShareUpdated(enabled, token);
-  };
-
-  const buildDocumentClipboardText = () => {
-    const title = getDocumentTitle().trim();
-    const content = getDocumentText();
-    const trimmedContent = content.trim();
-
-    if (title && trimmedContent) {
-      return `${title}\n\n${content}`;
-    }
-
-    if (trimmedContent) {
-      return content;
-    }
-
-    return title;
-  };
-
-  const handleEnable = async () => {
-    setBusyAction("enable");
-    setError(null);
-
-    try {
-      const nextToken = shareToken ?? tokenGenerator();
-      await updateShareState(true, nextToken);
-      setCopiedAction(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to enable sharing.");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const handleRotate = async () => {
-    setBusyAction("rotate");
-    setError(null);
-
-    try {
-      await updateShareState(true, tokenGenerator());
-      setCopiedAction(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to rotate link.");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const handleDisable = async () => {
-    setBusyAction("disable");
-    setError(null);
-
-    try {
-      await updateShareState(false, null);
-      setCopiedAction(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to disable sharing.");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const handleCopyLink = async () => {
-    if (!shareUrl) {
-      return;
-    }
-
-    setBusyAction("copyLink");
-    setError(null);
-
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopiedAction("link");
-    } catch {
-      setError("Clipboard access was blocked. Copy manually.");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const handleCopyText = async () => {
-    const documentText = buildDocumentClipboardText();
-
-    if (!documentText) {
-      setError("Document is empty.");
-      return;
-    }
-
-    setBusyAction("copyText");
-    setError(null);
-
-    try {
-      await navigator.clipboard.writeText(documentText);
-      setCopiedAction("text");
-    } catch {
-      setError("Clipboard access was blocked. Copy manually.");
-    } finally {
-      setBusyAction(null);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-[rgba(12,17,18,0.4)] px-4 py-4 sm:items-center sm:py-6">

@@ -16,13 +16,11 @@ import { getSupabaseBrowserClient } from "@/lib/document-sync";
 
 type DocumentListClientProps = {
   documents: CachedDocumentListItem[];
-  isLoading?: boolean;
   userId: string | null;
 };
 
 export function DocumentListClient({
   documents,
-  isLoading = false,
   userId,
 }: DocumentListClientProps) {
   const router = useRouter();
@@ -130,21 +128,6 @@ export function DocumentListClient({
           </p>
         </div>
       </button>
-
-      {isLoading && displayDocuments.length === 0
-        ? Array.from({ length: 6 }, (_, index) => (
-            <div
-              key={index}
-              className="rounded-2xl bg-[var(--paper)] px-4 py-3 sm:px-5 sm:py-4"
-            >
-              <div
-                className="h-5 animate-pulse rounded bg-[var(--line)]"
-                style={{ width: `${65 - index * 8}%` }}
-              />
-              <div className="mt-2 h-3 w-16 animate-pulse rounded bg-[var(--line)]" />
-            </div>
-          ))
-        : null}
 
       {displayDocuments.map((doc) => (
         <Link
