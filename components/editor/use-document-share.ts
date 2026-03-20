@@ -21,6 +21,24 @@ const tokenGenerator = customAlphabet(
   "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_",
   64,
 );
+const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
+
+function stripTrailingSlashes(value: string) {
+  return value.replace(/\/+$/, "");
+}
+
+function resolveShareOrigin() {
+  const normalizedConfiguredAppUrl = stripTrailingSlashes(configuredAppUrl);
+  if (normalizedConfiguredAppUrl) {
+    return normalizedConfiguredAppUrl;
+  }
+
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.location.origin;
+}
 
 export function useDocumentShare({
   documentId,
@@ -35,15 +53,16 @@ export function useDocumentShare({
   const [copiedAction, setCopiedAction] = useState<CopiedAction>(null);
 
   const shareUrl = useMemo(() => {
-    if (
-      typeof window === "undefined" ||
-      !shareEnabled ||
-      !shareToken
-    ) {
+    if (!shareEnabled || !shareToken) {
       return "";
     }
 
-    return `${window.location.origin}/s/${documentId}/${shareToken}`;
+    const origin = resolveShareOrigin();
+    if (!origin) {
+      return "";
+    }
+
+    return `${origin}/s/${documentId}/${shareToken}`;
   }, [documentId, shareEnabled, shareToken]);
 
   const updateShareState = useCallback(

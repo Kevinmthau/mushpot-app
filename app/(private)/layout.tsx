@@ -1,7 +1,14 @@
+import { PrivateStartup } from "@/components/pwa/private-startup";
+
 export default function PrivateLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return children;
+  return (
+    <>
+      {children}
+      <PrivateStartup />
+    </>
+  );
 }
