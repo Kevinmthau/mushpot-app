@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { headers } from "next/headers";
+import { unstable_cache } from "next/cache";
 
 export type SharedDocument = {
   title: string;
@@ -9,6 +10,7 @@ export type SharedDocument = {
 
 const LOCALHOST_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
 const DEFAULT_SHARED_DOCUMENT_DESCRIPTION = "Open this shared document in Mushpot.";
+const SHARED_DOCUMENT_REVALIDATE_SECONDS = 60;
 
 function stripTrailingSlashes(value: string) {
   return value.replace(/\/+$/, "");
@@ -76,7 +78,7 @@ export function buildSharedDocumentPreview(content: string, maxLength = 180) {
   return truncateText(plainText, maxLength);
 }
 
-export const fetchSharedDocument = cache(
+const fetchSharedDocumentFromOrigin = unstable_cache(
   async (id: string, token: string): Promise<SharedDocument | null> => {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -95,7 +97,6 @@ export const fetchSharedDocument = cache(
         Authorization: `Bearer ${supabaseAnonKey}`,
       },
       body: JSON.stringify({ docId: id, token }),
-      cache: "no-store",
     });
 
     if (!response.ok) {
@@ -104,6 +105,14 @@ export const fetchSharedDocument = cache(
 
     return (await response.json()) as SharedDocument;
   },
+  ["shared-document"],
+  {
+    revalidate: SHARED_DOCUMENT_REVALIDATE_SECONDS,
+  },
+);
+
+export const fetchSharedDocument = cache(
+  async (id: string, token: string) => fetchSharedDocumentFromOrigin(id, token),
 );
 
 export async function resolveAppOrigin() {

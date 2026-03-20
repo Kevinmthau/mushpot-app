@@ -15,6 +15,8 @@ import {
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
 
 const DECORATION_REBUILD_INTERVAL_MS = 120;
+const MAX_LIVE_FORMATTING_DOC_LENGTH = 20_000;
+const MAX_LIVE_FORMATTING_LINE_COUNT = 400;
 
 export const editorTheme = EditorView.theme({
   "&": {
@@ -93,6 +95,13 @@ function getCurrentTimeMs() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }
 
+function shouldDisableLiveFormatting(view: EditorView) {
+  return (
+    view.state.doc.length > MAX_LIVE_FORMATTING_DOC_LENGTH ||
+    view.state.doc.lines > MAX_LIVE_FORMATTING_LINE_COUNT
+  );
+}
+
 export function readDocumentText(doc: Text | string) {
   return typeof doc === "string" ? doc : doc.toString();
 }
@@ -159,6 +168,10 @@ function selectionIntersectsRange(view: EditorView, from: number, to: number) {
 }
 
 function buildMarkdownDecorations(view: EditorView): DecorationSet {
+  if (shouldDisableLiveFormatting(view)) {
+    return Decoration.none;
+  }
+
   const decorations: Range<Decoration>[] = [];
   const tree = syntaxTree(view.state);
 
@@ -220,6 +233,14 @@ export const markdownLiveFormatting = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate) {
+      if (shouldDisableLiveFormatting(update.view)) {
+        if (this.decorations !== Decoration.none) {
+          this.decorations = Decoration.none;
+        }
+        this.lastDecorationBuildAt = getCurrentTimeMs();
+        return;
+      }
+
       if (update.docChanged) {
         this.decorations = buildMarkdownDecorations(update.view);
         this.lastDecorationBuildAt = getCurrentTimeMs();

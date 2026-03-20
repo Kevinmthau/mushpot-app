@@ -135,7 +135,7 @@ export function DocumentListClient({
         <Link
           key={doc.id}
           href={`/doc/${doc.id}`}
-          prefetch={true}
+          prefetch={false}
           onFocus={handleWarmEditor}
           onPointerEnter={handleWarmEditor}
           onTouchStart={handleWarmEditor}
