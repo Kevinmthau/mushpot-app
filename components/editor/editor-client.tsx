@@ -122,7 +122,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
         />
 
         <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
-          <span>{readingTime} min read</span>
+          <span>{readingTime} min</span>
           <span>•</span>
           <span>{formattedUpdated}</span>
           {uploadingImagesCount > 0 ? (

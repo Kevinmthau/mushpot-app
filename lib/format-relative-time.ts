@@ -1,7 +1,3 @@
-const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat("en", {
-  numeric: "auto",
-});
-
 export function formatRelativeTimestamp(value: string) {
   const timestamp = new Date(value).getTime();
   if (Number.isNaN(timestamp)) {
@@ -22,25 +18,33 @@ export function formatRelativeTimestamp(value: string) {
   const monthMs = 30 * dayMs;
   const yearMs = 365 * dayMs;
 
+  const suffix = diffMs < 0 ? " ago" : " from now";
+
   if (absDiffMs < hourMs) {
-    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / minuteMs), "minute");
+    const n = Math.round(absDiffMs / minuteMs);
+    return `${n}min${suffix}`;
   }
 
   if (absDiffMs < dayMs) {
-    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / hourMs), "hour");
+    const n = Math.round(absDiffMs / hourMs);
+    return `${n}hrs${suffix}`;
   }
 
   if (absDiffMs < weekMs) {
-    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / dayMs), "day");
+    const n = Math.round(absDiffMs / dayMs);
+    return `${n}d${suffix}`;
   }
 
   if (absDiffMs < monthMs) {
-    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / weekMs), "week");
+    const n = Math.round(absDiffMs / weekMs);
+    return `${n}w${suffix}`;
   }
 
   if (absDiffMs < yearMs) {
-    return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / monthMs), "month");
+    const n = Math.round(absDiffMs / monthMs);
+    return `${n}mo${suffix}`;
   }
 
-  return RELATIVE_TIME_FORMATTER.format(Math.round(diffMs / yearMs), "year");
+  const n = Math.round(absDiffMs / yearMs);
+  return `${n}y${suffix}`;
 }
