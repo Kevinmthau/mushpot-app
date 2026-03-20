@@ -279,11 +279,11 @@ video {
 }
 
 ::view-transition-old(root) {
-  animation: fade-out 120ms ease-out;
+  animation: fade-out 60ms ease-out;
 }
 
 ::view-transition-new(root) {
-  animation: fade-in 180ms ease-in;
+  animation: fade-in 90ms ease-in;
 }
 
 @keyframes fade-out {
