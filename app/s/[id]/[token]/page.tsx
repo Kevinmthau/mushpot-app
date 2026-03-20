@@ -1,6 +1,13 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { SharedDocumentPageClient } from "@/components/editor/shared-document-page-client";
+import {
+  buildSharedDocumentPreview,
+  fetchSharedDocument,
+  normalizeSharedDocumentTitle,
+  resolveAppOrigin,
+} from "@/lib/shared-document";
 
 export const dynamic = "force-dynamic";
 
@@ -8,38 +15,55 @@ type SharedDocPageProps = {
   params: Promise<{ id: string; token: string }>;
 };
 
-type SharedDoc = {
-  title: string;
-  content: string;
-  updated_at: string;
-};
+export async function generateMetadata({
+  params,
+}: SharedDocPageProps): Promise<Metadata> {
+  const { id, token } = await params;
+  const document = await fetchSharedDocument(id, token);
+  const origin = await resolveAppOrigin();
 
-async function fetchSharedDocument(id: string, token: string) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.",
-    );
+  if (!document) {
+    return {
+      title: "Shared document | Mushpot",
+      description: "Open this shared document in Mushpot.",
+      metadataBase: origin ? new URL(origin) : undefined,
+    };
   }
 
-  const response = await fetch(`${supabaseUrl}/functions/v1/get-shared-doc`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: supabaseAnonKey,
-      Authorization: `Bearer ${supabaseAnonKey}`,
+  const title = normalizeSharedDocumentTitle(document.title);
+  const description = buildSharedDocumentPreview(document.content);
+  const sharePath = `/s/${id}/${token}`;
+  const ogImagePath = `${sharePath}/opengraph-image`;
+
+  return {
+    metadataBase: origin ? new URL(origin) : undefined,
+    title: `${title} | Mushpot`,
+    description,
+    alternates: {
+      canonical: sharePath,
     },
-    body: JSON.stringify({ docId: id, token }),
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    return null;
-  }
-
-  return (await response.json()) as SharedDoc;
+    openGraph: {
+      type: "article",
+      siteName: "Mushpot",
+      title,
+      description,
+      url: sharePath,
+      images: [
+        {
+          url: ogImagePath,
+          width: 1200,
+          height: 630,
+          alt: `${title} preview`,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [ogImagePath],
+    },
+  };
 }
 
 export default async function SharedDocumentPage({ params }: SharedDocPageProps) {
