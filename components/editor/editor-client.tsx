@@ -3,7 +3,7 @@
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorView } from "@codemirror/view";
 import dynamic from "next/dynamic";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   editorTheme,
@@ -15,6 +15,7 @@ import { MissingDocumentFallback } from "@/components/editor/missing-document-fa
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
 import { useImageUploadInsertion } from "@/components/editor/use-image-upload";
+import { consumeNewDocumentTitleFocus } from "@/lib/new-document-focus";
 
 const ShareModal = dynamic(
   () => import("@/components/editor/share-modal").then((module) => module.ShareModal),
@@ -33,6 +34,7 @@ export function EditorClient(props: EditorClientProps) {
 
 function EditorClientInner({ initialDocument }: EditorClientProps) {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
   const {
     formattedUpdated,
     getLatestContent,
@@ -75,10 +77,33 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     onDeleteError: resetDeletingState,
   });
 
+  useEffect(() => {
+    if (!consumeNewDocumentTitleFocus(initialDocument.id)) {
+      return;
+    }
+
+    const animationFrameId = window.requestAnimationFrame(() => {
+      const input = titleInputRef.current;
+
+      if (!input) {
+        return;
+      }
+
+      input.focus();
+      input.select();
+      input.setSelectionRange(0, input.value.length);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+    };
+  }, [initialDocument.id]);
+
   return (
     <div className="min-h-dvh pb-14 sm:pb-20">
       <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
         <input
+          ref={titleInputRef}
           value={title}
           onChange={(event) => {
             handleTitleChange(event.target.value);

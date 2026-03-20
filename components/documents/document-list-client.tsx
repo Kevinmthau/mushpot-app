@@ -13,6 +13,7 @@ import {
   setLastActiveOwner,
 } from "@/lib/doc-cache";
 import { getSupabaseBrowserClient } from "@/lib/document-sync";
+import { markNewDocumentForTitleFocus } from "@/lib/new-document-focus";
 
 type DocumentListClientProps = {
   documents: CachedDocumentListItem[];
@@ -100,6 +101,7 @@ export function DocumentListClient({
       ]);
 
       void preloadEditorClient();
+      markNewDocumentForTitleFocus(data.id);
       startTransition(() => {
         router.push(`/doc/${data.id}`);
       });
