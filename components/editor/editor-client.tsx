@@ -10,6 +10,7 @@ import {
   markdownLiveFormatting,
 } from "@/components/editor/editor-appearance";
 import { CodeMirrorEditor } from "@/components/editor/code-mirror-editor";
+import { useDocumentClone } from "@/components/editor/use-document-clone";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { EditorClientProps } from "@/components/editor/editor-types";
@@ -66,6 +67,12 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     ],
     [imageDropPasteHandlers],
   );
+  const { isCloning, handleClone } = useDocumentClone({
+    documentId: initialDocument.id,
+    owner: initialDocument.owner,
+    getLatestTitle: getLatestTitle,
+    getLatestContent: getLatestContent,
+  });
   const handleDeleteDocument = useDocumentDelete({
     documentId: initialDocument.id,
     owner: initialDocument.owner,
@@ -135,6 +142,17 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
             className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             Share
+          </button>
+          <span>•</span>
+          <button
+            type="button"
+            onClick={() => {
+              void handleClone();
+            }}
+            disabled={isCloning || isDeleting}
+            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isCloning ? "Cloning..." : "Clone"}
           </button>
           <span>•</span>
           <button
