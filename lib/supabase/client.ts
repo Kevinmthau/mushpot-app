@@ -15,7 +15,12 @@ export function createSupabaseBrowserClient() {
   }
 
   if (!browserClient) {
-    browserClient = createBrowserClient<Database>(supabaseUrl, supabaseAnonKey);
+    browserClient = createBrowserClient<Database>(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        flowType: "implicit",
+        detectSessionInUrl: true,
+      },
+    });
   }
 
   return browserClient;
