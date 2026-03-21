@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 
 import { DocumentListClient } from "@/components/documents/document-list-client";
 import PullToRefresh from "@/components/pull-to-refresh";
-import { getSupabaseBrowserClient } from "@/lib/document-sync";
 import {
   clearLastActiveOwner,
   setLastActiveOwner,
   syncDocumentList,
   type CachedDocumentListItem,
 } from "@/lib/doc-cache";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type DocumentsPageClientProps = {
   documents: CachedDocumentListItem[];

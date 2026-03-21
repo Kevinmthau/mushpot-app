@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 import { deleteCachedDocument } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/document-sync";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type UseDocumentDeleteParams = {
   documentId: string;

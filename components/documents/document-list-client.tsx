@@ -12,8 +12,8 @@ import {
   putCachedDocument,
   setLastActiveOwner,
 } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/document-sync";
 import { markNewDocumentForTitleFocus } from "@/lib/new-document-focus";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type DocumentListClientProps = {
   documents: CachedDocumentListItem[];

@@ -22,6 +22,21 @@ const AUTOSAVE_DEBOUNCE_MS = 800;
 const LOCAL_CACHE_DEBOUNCE_MS = 400;
 const STATS_SYNC_DEBOUNCE_MS = 250;
 
+function getMostRecentTimestamp(currentTimestamp: string, nextTimestamp: string) {
+  const currentTime = Date.parse(currentTimestamp);
+  const nextTime = Date.parse(nextTimestamp);
+
+  if (Number.isNaN(currentTime)) {
+    return nextTimestamp;
+  }
+
+  if (Number.isNaN(nextTime)) {
+    return currentTimestamp;
+  }
+
+  return nextTime >= currentTime ? nextTimestamp : currentTimestamp;
+}
+
 type UseDocumentDraftResult = {
   formattedUpdated: string;
   getLatestContent: () => string;
@@ -36,7 +51,7 @@ type UseDocumentDraftResult = {
   shareEnabled: boolean;
   shareToken: string | null;
   title: string;
-  updateShareState: (enabled: boolean, token: string | null) => void;
+  updateShareState: (enabled: boolean, token: string | null, updatedAt: string) => void;
 };
 
 export function useDocumentDraft(
@@ -58,6 +73,7 @@ export function useDocumentDraft(
   const didEditSinceHydrationRef = useRef(false);
   const latestTitleRef = useRef(initialDocument.title);
   const latestContentRef = useRef<Text | string>(initialDocument.content);
+  const latestUpdatedAtRef = useRef(initialDocument.updated_at);
   const shareEnabledRef = useRef(initialDocument.share_enabled);
   const shareTokenRef = useRef(initialDocument.share_token);
   const lastSavedRef = useRef({
@@ -94,6 +110,7 @@ export function useDocumentDraft(
     setIsDeleting(false);
     latestTitleRef.current = initialDocument.title;
     latestContentRef.current = initialDocument.content;
+    latestUpdatedAtRef.current = initialDocument.updated_at;
     shareEnabledRef.current = initialDocument.share_enabled;
     shareTokenRef.current = initialDocument.share_token;
     isDeletingRef.current = false;
@@ -136,6 +153,31 @@ export function useDocumentDraft(
     }, STATS_SYNC_DEBOUNCE_MS);
   }, [getLatestContent]);
 
+  const writeLocalCacheSnapshot = useCallback(() => {
+    if (isDeletingRef.current) {
+      return;
+    }
+
+    const latestContent = getLatestContent();
+    const latestTitle = latestTitleRef.current;
+    const isDirty =
+      latestTitle !== lastSavedRef.current.title ||
+      latestContent !== lastSavedRef.current.content;
+    const doc: CachedDocument = {
+      id: initialDocument.id,
+      owner: initialDocument.owner,
+      title: latestTitle,
+      content: latestContent,
+      updated_at: latestUpdatedAtRef.current,
+      share_enabled: shareEnabledRef.current,
+      share_token: shareTokenRef.current,
+      _localUpdatedAt: Date.now(),
+      _dirty: isDirty,
+    };
+
+    void putCachedDocument(doc);
+  }, [getLatestContent, initialDocument.id, initialDocument.owner]);
+
   const scheduleLocalCacheWrite = useCallback(() => {
     if (localCacheTimeoutRef.current !== null) {
       window.clearTimeout(localCacheTimeoutRef.current);
@@ -143,30 +185,23 @@ export function useDocumentDraft(
 
     localCacheTimeoutRef.current = window.setTimeout(() => {
       localCacheTimeoutRef.current = null;
-
-      if (isDeletingRef.current) {
-        return;
-      }
-
-      const latestContent = getLatestContent();
-      const latestTitle = latestTitleRef.current;
-      const isDirty =
-        latestTitle !== lastSavedRef.current.title ||
-        latestContent !== lastSavedRef.current.content;
-      const doc: CachedDocument = {
-        id: initialDocument.id,
-        owner: initialDocument.owner,
-        title: latestTitle,
-        content: latestContent,
-        updated_at: new Date().toISOString(),
-        share_enabled: shareEnabledRef.current,
-        share_token: shareTokenRef.current,
-        _localUpdatedAt: Date.now(),
-        _dirty: isDirty,
-      };
-      void putCachedDocument(doc);
+      writeLocalCacheSnapshot();
     }, LOCAL_CACHE_DEBOUNCE_MS);
-  }, [getLatestContent, initialDocument.id, initialDocument.owner]);
+  }, [writeLocalCacheSnapshot]);
+
+  const applyUpdatedAt = useCallback((nextUpdatedAt: string) => {
+    const resolvedUpdatedAt = getMostRecentTimestamp(
+      latestUpdatedAtRef.current,
+      nextUpdatedAt,
+    );
+
+    latestUpdatedAtRef.current = resolvedUpdatedAt;
+    setUpdatedAt((currentUpdatedAt) =>
+      currentUpdatedAt === resolvedUpdatedAt ? currentUpdatedAt : resolvedUpdatedAt,
+    );
+
+    return resolvedUpdatedAt;
+  }, []);
 
   const saveDraft = useCallback(
     async (nextTitle: string, nextContent: string) => {
@@ -199,13 +234,15 @@ export function useDocumentDraft(
             return true;
           }
 
+          const shareEnabledToSave = shareEnabledRef.current;
+          const shareTokenToSave = shareTokenRef.current;
           const result = await persistDocumentSnapshot({
             id: initialDocument.id,
             owner: initialDocument.owner,
             title: titleToSave,
             content: contentToSave,
-            share_enabled: shareEnabledRef.current,
-            share_token: shareTokenRef.current,
+            share_enabled: shareEnabledToSave,
+            share_token: shareTokenToSave,
           });
 
           if (!result.ok || !result.updatedAt) {
@@ -216,7 +253,15 @@ export function useDocumentDraft(
             title: titleToSave,
             content: contentToSave,
           };
-          setUpdatedAt(result.updatedAt);
+          const resolvedUpdatedAt = applyUpdatedAt(result.updatedAt);
+
+          if (
+            resolvedUpdatedAt !== result.updatedAt ||
+            shareEnabledRef.current !== shareEnabledToSave ||
+            shareTokenRef.current !== shareTokenToSave
+          ) {
+            writeLocalCacheSnapshot();
+          }
 
           const queuedSave = queuedSaveRef.current;
           if (!queuedSave) {
@@ -238,7 +283,7 @@ export function useDocumentDraft(
         saveInFlightRef.current = false;
       }
     },
-    [initialDocument.id, initialDocument.owner],
+    [applyUpdatedAt, initialDocument.id, initialDocument.owner, writeLocalCacheSnapshot],
   );
 
   useEffect(() => {
@@ -328,11 +373,17 @@ export function useDocumentDraft(
     [getLatestContent, saveDraft, scheduleLocalCacheWrite, scheduleStatsSync],
   );
 
-  const updateShareState = useCallback((enabled: boolean, token: string | null) => {
+  const updateShareState = useCallback((
+    enabled: boolean,
+    token: string | null,
+    updatedAt: string,
+  ) => {
+    shareEnabledRef.current = enabled;
+    shareTokenRef.current = token;
+    applyUpdatedAt(updatedAt);
     setShareEnabled(enabled);
     setShareToken(token);
-    setUpdatedAt(new Date().toISOString());
-  }, []);
+  }, [applyUpdatedAt]);
 
   const markDeleting = useCallback(() => {
     isDeletingRef.current = true;

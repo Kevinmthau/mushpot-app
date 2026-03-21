@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { type CachedDocument, putCachedDocument } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/document-sync";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type UseDocumentCloneParams = {
   documentId: string;

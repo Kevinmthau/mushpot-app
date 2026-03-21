@@ -2,7 +2,10 @@ import { createBrowserClient } from "@supabase/ssr";
 
 import type { Database } from "@/lib/supabase/types";
 
-let browserClient: ReturnType<typeof createBrowserClient<Database>> | null = null;
+export type SupabaseBrowserClient = ReturnType<typeof createBrowserClient<Database>>;
+
+let browserClient: SupabaseBrowserClient | null = null;
+let browserClientPromise: Promise<SupabaseBrowserClient> | null = null;
 
 export function createSupabaseBrowserClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -23,4 +26,12 @@ export function createSupabaseBrowserClient() {
   }
 
   return browserClient;
+}
+
+export async function getSupabaseBrowserClient() {
+  if (!browserClientPromise) {
+    browserClientPromise = Promise.resolve(createSupabaseBrowserClient());
+  }
+
+  return browserClientPromise;
 }

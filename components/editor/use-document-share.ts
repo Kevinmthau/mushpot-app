@@ -3,13 +3,13 @@
 import { useCallback, useMemo, useState } from "react";
 import { customAlphabet } from "nanoid";
 
-import { getSupabaseBrowserClient } from "@/lib/document-sync";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type UseDocumentShareParams = {
   documentId: string;
   getDocumentText: () => string;
   getDocumentTitle: () => string;
-  onShareUpdated: (enabled: boolean, token: string | null) => void;
+  onShareUpdated: (enabled: boolean, token: string | null, updatedAt: string) => void;
   shareEnabled: boolean;
   shareToken: string | null;
 };
@@ -65,22 +65,28 @@ export function useDocumentShare({
     return `${origin}/s/${documentId}/${shareToken}`;
   }, [documentId, shareEnabled, shareToken]);
 
-  const updateShareState = useCallback(
+  const persistShareState = useCallback(
     async (enabled: boolean, token: string | null) => {
       const supabase = await getSupabaseBrowserClient();
-      const { error: updateError } = await supabase
+      const { data, error: updateError } = await supabase
         .from("documents")
         .update({
           share_enabled: enabled,
           share_token: token,
         })
-        .eq("id", documentId);
+        .eq("id", documentId)
+        .select("updated_at")
+        .single();
 
       if (updateError) {
         throw new Error(updateError.message);
       }
 
-      onShareUpdated(enabled, token);
+      if (!data?.updated_at) {
+        throw new Error("Unable to update sharing settings.");
+      }
+
+      onShareUpdated(enabled, token, data.updated_at);
     },
     [documentId, onShareUpdated],
   );
@@ -107,42 +113,42 @@ export function useDocumentShare({
 
     try {
       const nextToken = shareToken ?? tokenGenerator();
-      await updateShareState(true, nextToken);
+      await persistShareState(true, nextToken);
       setCopiedAction(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to enable sharing.");
     } finally {
       setBusyAction(null);
     }
-  }, [shareToken, updateShareState]);
+  }, [persistShareState, shareToken]);
 
   const handleRotate = useCallback(async () => {
     setBusyAction("rotate");
     setError(null);
 
     try {
-      await updateShareState(true, tokenGenerator());
+      await persistShareState(true, tokenGenerator());
       setCopiedAction(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to rotate link.");
     } finally {
       setBusyAction(null);
     }
-  }, [updateShareState]);
+  }, [persistShareState]);
 
   const handleDisable = useCallback(async () => {
     setBusyAction("disable");
     setError(null);
 
     try {
-      await updateShareState(false, null);
+      await persistShareState(false, null);
       setCopiedAction(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to disable sharing.");
     } finally {
       setBusyAction(null);
     }
-  }, [updateShareState]);
+  }, [persistShareState]);
 
   const handleCopyLink = useCallback(async () => {
     if (!shareUrl) {

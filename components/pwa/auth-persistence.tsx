@@ -3,8 +3,8 @@
 import { useEffect, useEffectEvent } from "react";
 import { useRouter, usePathname } from "next/navigation";
 
-import { getSupabaseBrowserClient } from "@/lib/document-sync";
-import { setLastActiveOwner, clearLastActiveOwner } from "@/lib/doc-cache";
+import { clearLastActiveOwner, setLastActiveOwner } from "@/lib/doc-cache";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 /**
  * Subscribes to Supabase auth state changes so the PWA detects

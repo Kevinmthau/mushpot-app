@@ -3,7 +3,7 @@ import {
   putCachedDocument,
   type CachedDocument,
 } from "@/lib/doc-cache";
-import type { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export type PersistableDocumentSnapshot = Pick<
   CachedDocument,
@@ -18,19 +18,6 @@ export type PersistDocumentResult = {
 
 const SAVE_RETRY_DELAYS_MS = [1000, 2000, 4000];
 
-let supabaseClientPromise: Promise<ReturnType<typeof createSupabaseBrowserClient>> | null =
-  null;
-
-export async function getSupabaseBrowserClient() {
-  if (!supabaseClientPromise) {
-    supabaseClientPromise = import("@/lib/supabase/client").then((module) =>
-      module.createSupabaseBrowserClient(),
-    );
-  }
-
-  return supabaseClientPromise;
-}
-
 export function normalizeDocumentTitle(title: string) {
   return title.trim() || "Untitled";
 }
@@ -44,17 +31,19 @@ export async function persistDocumentSnapshot(
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < SAVE_RETRY_DELAYS_MS.length; attempt += 1) {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("documents")
       .update({
         title: persistedTitle,
         content: snapshot.content,
       })
       .eq("id", snapshot.id)
-      .eq("owner", snapshot.owner);
+      .eq("owner", snapshot.owner)
+      .select("updated_at")
+      .single();
 
-    if (!error) {
-      const updatedAt = new Date().toISOString();
+    if (!error && data?.updated_at) {
+      const updatedAt = data.updated_at;
 
       void putCachedDocument({
         ...snapshot,
@@ -71,7 +60,7 @@ export async function persistDocumentSnapshot(
       };
     }
 
-    lastError = error;
+    lastError = error ?? new Error("Updated document timestamp was missing.");
 
     if (attempt < SAVE_RETRY_DELAYS_MS.length - 1) {
       await new Promise((resolve) => {
