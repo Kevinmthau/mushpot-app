@@ -12,7 +12,7 @@ import {
   setLastActiveOwner,
   type CachedDocument,
 } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/document-sync";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type DocumentPageClientProps = {
   documentId: string;

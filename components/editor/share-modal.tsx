@@ -10,7 +10,7 @@ type ShareModalProps = {
   onClose: () => void;
   shareEnabled: boolean;
   shareToken: string | null;
-  onShareUpdated: (enabled: boolean, token: string | null) => void;
+  onShareUpdated: (enabled: boolean, token: string | null, updatedAt: string) => void;
 };
 
 export function ShareModal({

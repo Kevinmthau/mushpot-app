@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { EditorView } from "@codemirror/view";
 
-import { getSupabaseBrowserClient } from "@/lib/document-sync";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 const IMAGE_BUCKET = "document-images";
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;

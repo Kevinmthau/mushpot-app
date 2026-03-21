@@ -36,7 +36,7 @@ type UseDocumentDraftResult = {
   shareEnabled: boolean;
   shareToken: string | null;
   title: string;
-  updateShareState: (enabled: boolean, token: string | null) => void;
+  updateShareState: (enabled: boolean, token: string | null, updatedAt: string) => void;
 };
 
 export function useDocumentDraft(
@@ -58,6 +58,7 @@ export function useDocumentDraft(
   const didEditSinceHydrationRef = useRef(false);
   const latestTitleRef = useRef(initialDocument.title);
   const latestContentRef = useRef<Text | string>(initialDocument.content);
+  const latestUpdatedAtRef = useRef(initialDocument.updated_at);
   const shareEnabledRef = useRef(initialDocument.share_enabled);
   const shareTokenRef = useRef(initialDocument.share_token);
   const lastSavedRef = useRef({
@@ -94,6 +95,7 @@ export function useDocumentDraft(
     setIsDeleting(false);
     latestTitleRef.current = initialDocument.title;
     latestContentRef.current = initialDocument.content;
+    latestUpdatedAtRef.current = initialDocument.updated_at;
     shareEnabledRef.current = initialDocument.share_enabled;
     shareTokenRef.current = initialDocument.share_token;
     isDeletingRef.current = false;
@@ -158,7 +160,7 @@ export function useDocumentDraft(
         owner: initialDocument.owner,
         title: latestTitle,
         content: latestContent,
-        updated_at: new Date().toISOString(),
+        updated_at: latestUpdatedAtRef.current,
         share_enabled: shareEnabledRef.current,
         share_token: shareTokenRef.current,
         _localUpdatedAt: Date.now(),
@@ -216,6 +218,7 @@ export function useDocumentDraft(
             title: titleToSave,
             content: contentToSave,
           };
+          latestUpdatedAtRef.current = result.updatedAt;
           setUpdatedAt(result.updatedAt);
 
           const queuedSave = queuedSaveRef.current;
@@ -328,10 +331,17 @@ export function useDocumentDraft(
     [getLatestContent, saveDraft, scheduleLocalCacheWrite, scheduleStatsSync],
   );
 
-  const updateShareState = useCallback((enabled: boolean, token: string | null) => {
+  const updateShareState = useCallback((
+    enabled: boolean,
+    token: string | null,
+    updatedAt: string,
+  ) => {
+    shareEnabledRef.current = enabled;
+    shareTokenRef.current = token;
+    latestUpdatedAtRef.current = updatedAt;
     setShareEnabled(enabled);
     setShareToken(token);
-    setUpdatedAt(new Date().toISOString());
+    setUpdatedAt(updatedAt);
   }, []);
 
   const markDeleting = useCallback(() => {
