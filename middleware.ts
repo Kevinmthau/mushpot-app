@@ -12,9 +12,6 @@ export async function middleware(request: NextRequest) {
   }
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      flowType: "implicit",
-    },
     cookies: {
       getAll() {
         return request.cookies.getAll();
