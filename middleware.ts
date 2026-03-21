@@ -11,6 +11,14 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
+  // Skip session refresh for the PKCE callback route. The /auth/confirm
+  // route handler needs the code-verifier cookie intact. Calling getUser()
+  // here when there is no valid session causes the SDK to clear auth
+  // cookies (including the verifier) before the route handler can read them.
+  if (request.nextUrl.pathname === "/auth/confirm") {
+    return supabaseResponse;
+  }
+
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
       getAll() {
