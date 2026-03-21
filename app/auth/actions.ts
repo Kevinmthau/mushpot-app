@@ -91,7 +91,7 @@ export async function requestMagicLinkAction(formData: FormData) {
     );
   }
 
-  const emailRedirectTo = `${redirectOrigin}/auth/callback?next=${encodeURIComponent(nextPath)}`;
+  const emailRedirectTo = `${redirectOrigin}/auth/confirm?next=${encodeURIComponent(nextPath)}`;
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.auth.signInWithOtp({
     email,
