@@ -1,199 +1,110 @@
 # Mushpot
 
-Minimalist writing app with an infinite Markdown canvas, inspired by distraction-free writing environments.
+Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Private documents load through a local IndexedDB cache and reconcile with Supabase in the background, while shared documents are published through a Supabase Edge Function and rendered as clean read-only pages.
+
+## Current Feature Set
+
+- Email magic-link sign-in with PKCE confirmation at `/auth/confirm`
+- Authenticated document list with instant document creation
+- Markdown editor with title editing, debounced autosave, reading-time display, clone, and delete
+- Image upload by drag/drop or paste into Markdown documents via a public Supabase Storage bucket
+- Secret bearer share links with enable, copy, rotate, and disable controls
+- Public shared document pages with generated Open Graph images
+- IndexedDB-backed document cache plus background retry sync for unsaved local edits
+- PWA assets including a web app manifest, production service worker, and offline fallback page
 
 ## Stack
 
-- Next.js (App Router) + TypeScript + Tailwind CSS
-- Supabase (Postgres + Auth + Edge Functions)
-- Netlify hosting
-- CodeMirror 6 for Markdown editing
-- `react-markdown` + `remark-gfm` for Markdown rendering
+- Next.js 16 App Router
+- React 19 + TypeScript
+- Tailwind CSS v4
+- CodeMirror 6
+- Supabase Auth, Postgres, Storage, and Edge Functions
+- `react-markdown` + `remark-gfm` for shared-document rendering
 
-## Features
+## Routes
 
-- Authenticated document workspace (`/`)
-- Infinite-scroll editor canvas (`/doc/[id]`)
-- Debounced autosave (500ms) with save status
-- Word count + estimated reading time
-- Focus mode and typewriter mode
-- Share modal with:
-  - Enable share link
-  - Copy link
-  - Rotate link token
-  - Disable sharing
-- Public shared read view (`/s/[id]/[token]`)
+- `/auth`: request a magic link
+- `/auth/confirm`: exchange the PKCE auth code for a session
+- `/auth/callback`: client-side fallback completion page
+- `/`: authenticated document list
+- `/doc/[id]`: authenticated document editor
+- `/s/[id]/[token]`: public shared document
+- `/s/[id]/[token]/opengraph-image`: generated social preview image for shared docs
 
-## 1) Supabase Setup
+## Repository Layout
+
+- `app/(private)`: authenticated document list and editor routes
+- `app/auth`: auth page, server action, PKCE confirm route, fallback callback page
+- `app/s/[id]/[token]`: shared document page and Open Graph image route
+- `components/auth`: auth form UI
+- `components/documents`: document list and create flow
+- `components/editor`: editor, share modal, image upload, clone/delete hooks, shared-doc renderer
+- `components/pwa`: auth persistence, sync manager, service worker registration
+- `lib/`: Supabase clients, document cache, sync helpers, shared-document helpers, markdown utilities
+- `supabase/migrations`: database and storage setup
+- `supabase/functions/get-shared-doc`: share-token validation and public shared-doc fetch
+- `public`: manifest, service worker, offline page, and app icons
+- `proxy.ts`: route protection and auth-cookie/session refresh handling
+
+## Environment Variables
+
+Create `.env.local` with:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+# Optional but recommended when localhost or proxies should redirect to a canonical app URL.
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+Notes:
+
+- `NEXT_PUBLIC_APP_URL` is used for auth redirect generation and shared-link origins.
+- `SUPABASE_SERVICE_ROLE_KEY` is not used by the Next.js app directly. It is required by the Supabase Edge Function runtime when serving `get-shared-doc` locally.
+
+## Supabase Setup
 
 1. Create a Supabase project.
-2. In **Authentication > URL Configuration**, set:
-   - Site URL: your app URL (local and production as needed)
-   - Redirect URLs:
-     - `http://localhost:3000/auth/callback`
-     - `https://<your-netlify-site>.netlify.app/auth/callback`
-3. Create `.env.local` from `.env.example`:
-
-```bash
-cp .env.example .env.local
-```
-
-4. Fill in:
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY` (required by the `get-shared-doc` edge function)
-
-## 2) Database Schema + RLS
-
-Run this SQL in Supabase SQL Editor (or apply via Supabase migrations):
-
-```sql
-create extension if not exists pgcrypto;
-
-create table if not exists public.documents (
-  id uuid primary key default gen_random_uuid(),
-  owner uuid not null references auth.users (id) on delete cascade,
-  title text not null default 'Untitled',
-  content text not null default '',
-  share_enabled boolean not null default false,
-  share_token text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists documents_owner_updated_at_idx
-  on public.documents (owner, updated_at desc);
-
-create index if not exists documents_id_share_token_idx
-  on public.documents (id, share_token);
-
-create or replace function public.set_documents_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
-drop trigger if exists documents_set_updated_at on public.documents;
-create trigger documents_set_updated_at
-before update on public.documents
-for each row
-execute function public.set_documents_updated_at();
-
-alter table public.documents enable row level security;
-
-create policy "Owners can select own documents"
-  on public.documents
-  for select
-  using (auth.uid() = owner);
-
-create policy "Owners can insert own documents"
-  on public.documents
-  for insert
-  with check (auth.uid() = owner);
-
-create policy "Owners can update own documents"
-  on public.documents
-  for update
-  using (auth.uid() = owner)
-  with check (auth.uid() = owner);
-
-create policy "Owners can delete own documents"
-  on public.documents
-  for delete
-  using (auth.uid() = owner);
-```
-
-Migration file is included at:
-- `supabase/migrations/20260303164000_create_documents.sql`
-
-## 3) Edge Function: `get-shared-doc`
-
-Function path:
-- `supabase/functions/get-shared-doc/index.ts`
-
-It validates `docId + token` against `documents.share_enabled` and `documents.share_token`, then returns:
-
-```json
-{
-  "title": "...",
-  "content": "...",
-  "updated_at": "..."
-}
-```
-
-### Deploy edge function
-
-1. Install Supabase CLI and login:
-
-```bash
-supabase login
-supabase link --project-ref <your-project-ref>
-```
-
-2. `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_URL` are injected automatically in hosted Supabase Edge Functions.  
-   You do not need to set `SUPABASE_SERVICE_ROLE_KEY` manually in the project secrets.
-
-```bash
-# only needed when serving functions locally:
-# supabase functions serve --env-file supabase/functions/.env
-```
-
-3. Deploy as public function (no JWT required):
+2. In Supabase Auth URL settings, set your Site URL and add full `/auth/confirm` URLs to the allowed redirect list.
+   Local example: `http://localhost:3000/auth/confirm`
+3. Apply the SQL migrations in `supabase/migrations/`:
+   - `20260303164000_create_documents.sql`
+   - `20260304102000_create_document_images_bucket.sql`
+4. Deploy the public Edge Function used for shared-document reads:
 
 ```bash
 supabase functions deploy get-shared-doc --no-verify-jwt
 ```
 
-4. Test:
+For local Edge Function serving, provide `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the function runtime.
 
-```bash
-curl -X POST "https://<project-ref>.supabase.co/functions/v1/get-shared-doc" \
-  -H "Content-Type: application/json" \
-  -H "apikey: <anon-key>" \
-  -H "Authorization: Bearer <anon-key>" \
-  -d '{"docId":"<doc-id>","token":"<share-token>"}'
-```
-
-## 4) Local Development
+## Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+Quality gate before merge:
 
-## 5) Netlify Deployment
+```bash
+npm run lint
+npm run build
+```
 
-### Build settings
+## Deployment Notes
 
-- Build command: `npm run build`
-- Publish directory: leave default for Next.js runtime
-- Plugin: `@netlify/plugin-nextjs` (configured in `netlify.toml`)
+- `netlify.toml` is included for Netlify deployments and runs `npm run build`.
+- Any Next.js-compatible host can work as long as the public env vars are set and the `get-shared-doc` Supabase Edge Function is deployed.
+- The production service worker is registered only in production builds.
 
-### Environment variables in Netlify
+## Behavior Notes
 
-Set:
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-
-`SUPABASE_SERVICE_ROLE_KEY` is used by the Supabase Edge Function runtime, not by the Netlify-hosted Next.js app itself.
-
-### Next.js on Netlify notes
-
-- This project uses App Router and is compatible with Netlify’s Next.js runtime.
-- Middleware is used for auth route protection.
-- Dynamic shared page (`/s/[id]/[token]`) calls Supabase Edge Function with `cache: "no-store"` for fresh content.
-
-## Routes
-
-- `/auth` - email magic-link login
-- `/` - authenticated document list + create document
-- `/doc/[id]` - authenticated Markdown editor
-- `/s/[id]/[token]` - public shared Markdown render
+- Private routes are protected in `proxy.ts`.
+- `/auth/confirm` only redirects to internal app paths from the `next` query param.
+- The app favors local cached document data first, then reconciles with Supabase in the background.
+- Dirty cached documents are retried on startup, when the app regains focus, and when the browser comes back online.
+- Share links are bearer URLs: anyone with the full `/s/[id]/[token]` URL can read that document until the token is rotated or sharing is disabled.
+- Uploaded document images live in the public `document-images` bucket; bucket policies restrict who can manage them, but the file URLs themselves are publicly fetchable.
+- Shared-document rendering supports GitHub Flavored Markdown and remote/public images, so third-party image hosts can receive reader requests for embedded remote assets.
