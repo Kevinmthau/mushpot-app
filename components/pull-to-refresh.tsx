@@ -12,7 +12,13 @@ import {
 const THRESHOLD = 80;
 const MAX_PULL = 120;
 
-export default function PullToRefresh({ children }: { children: ReactNode }) {
+export default function PullToRefresh({
+  children,
+  onRefresh,
+}: {
+  children: ReactNode;
+  onRefresh?: () => Promise<void> | void;
+}) {
   const router = useRouter();
   const [pullDistance, setPullDistance] = useState(0);
   const [isPending, startTransition] = useTransition();
@@ -45,11 +51,16 @@ export default function PullToRefresh({ children }: { children: ReactNode }) {
 
     if (pullDistance >= THRESHOLD) {
       startTransition(() => {
+        if (onRefresh) {
+          void onRefresh();
+          return;
+        }
+
         router.refresh();
       });
     }
     setPullDistance(0);
-  }, [pullDistance, router]);
+  }, [onRefresh, pullDistance, router]);
 
   const isActive = pullDistance > 0 || isPending;
   const progress = Math.min(pullDistance / THRESHOLD, 1);

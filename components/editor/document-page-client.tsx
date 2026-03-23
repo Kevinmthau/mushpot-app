@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { EditorClient } from "@/components/editor/editor-lazy";
@@ -8,6 +9,7 @@ import { MissingDocumentFallback } from "@/components/editor/missing-document-fa
 import type { EditorDocument } from "@/components/editor/editor-types";
 import {
   getCachedDocumentForOwner,
+  getLastActiveOwner,
   reconcileCachedDocumentWithServer,
   setLastActiveOwner,
   type CachedDocument,
@@ -16,8 +18,25 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type DocumentPageClientProps = {
   documentId: string;
-  userId: string;
 };
+
+function EditorPageLoading() {
+  return (
+    <div className="min-h-dvh pb-14 sm:pb-20">
+      <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
+        <div className="mb-4 h-10 w-3/4 animate-pulse rounded bg-[var(--line)]" />
+        <div className="mb-4 h-4 w-1/4 animate-pulse rounded bg-[var(--line)]" />
+        <div className="space-y-3 pt-4">
+          <div className="h-4 w-full animate-pulse rounded bg-[var(--line)]" />
+          <div className="h-4 w-5/6 animate-pulse rounded bg-[var(--line)]" />
+          <div className="h-4 w-4/6 animate-pulse rounded bg-[var(--line)]" />
+          <div className="h-4 w-full animate-pulse rounded bg-[var(--line)]" />
+          <div className="h-4 w-3/4 animate-pulse rounded bg-[var(--line)]" />
+        </div>
+      </main>
+    </div>
+  );
+}
 
 function toEditorDocument(document: CachedDocument): EditorDocument {
   return {
@@ -43,24 +62,67 @@ function areDocumentsEqual(left: EditorDocument, right: EditorDocument) {
   );
 }
 
-export function DocumentPageClient({ documentId, userId }: DocumentPageClientProps) {
+export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
+  const router = useRouter();
   const [document, setDocument] = useState<EditorDocument | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [hasResolvedRemoteState, setHasResolvedRemoteState] = useState(false);
 
   useEffect(() => {
     let isActive = true;
 
     void (async () => {
-      // 1. Try loading from IndexedDB cache instantly
-      const cached = await getCachedDocumentForOwner(documentId, userId);
-      if (cached && isActive) {
-        setDocument(toEditorDocument(cached));
-      }
+      let cachedDocument: CachedDocument | null = null;
 
-      // 2. Fetch from server in the background
       try {
+        const cachedOwner = await getLastActiveOwner();
+        if (!isActive) {
+          return;
+        }
+
+        if (cachedOwner) {
+          cachedDocument = await getCachedDocumentForOwner(documentId, cachedOwner);
+          if (!isActive) {
+            return;
+          }
+
+          if (cachedDocument) {
+            setDocument(toEditorDocument(cachedDocument));
+          }
+        }
+
         const supabase = await getSupabaseBrowserClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!isActive) {
+          return;
+        }
+
+        const userId = session?.user?.id ?? null;
+        if (!userId) {
+          setHasResolvedRemoteState(true);
+          router.replace(`/auth?next=/doc/${documentId}`);
+          return;
+        }
+
+        void setLastActiveOwner(userId);
+
+        if (cachedOwner !== userId) {
+          cachedDocument = await getCachedDocumentForOwner(documentId, userId);
+          if (!isActive) {
+            return;
+          }
+
+          if (cachedDocument) {
+            setDocument(toEditorDocument(cachedDocument));
+          } else {
+            setDocument(null);
+          }
+        }
+
         const { data: serverDoc, error: fetchError } = await supabase
           .from("documents")
           .select("id, owner, title, content, updated_at, share_enabled, share_token")
@@ -68,49 +130,56 @@ export function DocumentPageClient({ documentId, userId }: DocumentPageClientPro
           .eq("owner", userId)
           .maybeSingle();
 
-        if (!isActive) return;
+        if (!isActive) {
+          return;
+        }
+
+        setHasResolvedRemoteState(true);
 
         if (fetchError) {
-          // If we have a cached version, keep showing it
-          if (!cached) {
+          if (!cachedDocument) {
             setError(fetchError.message);
           }
           return;
         }
 
         if (!serverDoc) {
-          if (!cached) {
+          if (!cachedDocument) {
             setNotFound(true);
           }
           return;
         }
 
-        // 3. Reconcile server data with cache
         const reconciled = await reconcileCachedDocumentWithServer({
           ...serverDoc,
           _dirty: false,
         });
 
-        if (!isActive) return;
+        if (!isActive) {
+          return;
+        }
 
         const nextDocument = toEditorDocument(reconciled);
         setDocument((current) =>
           current && areDocumentsEqual(current, nextDocument) ? current : nextDocument,
         );
       } catch {
-        // Network error – if we have cached data, keep showing it
-        if (!cached && isActive) {
+        if (!isActive) {
+          return;
+        }
+
+        setHasResolvedRemoteState(true);
+
+        if (!cachedDocument) {
           setError("Unable to load document. Please check your connection.");
         }
       }
     })();
 
-    void setLastActiveOwner(userId);
-
     return () => {
       isActive = false;
     };
-  }, [documentId, userId]);
+  }, [documentId, router]);
 
   if (error || notFound) {
     return (
@@ -134,7 +203,7 @@ export function DocumentPageClient({ documentId, userId }: DocumentPageClientPro
   }
 
   if (!document) {
-    return <MissingDocumentFallback />;
+    return hasResolvedRemoteState ? <MissingDocumentFallback /> : <EditorPageLoading />;
   }
 
   return <EditorClient key={document.id} initialDocument={document} />;
