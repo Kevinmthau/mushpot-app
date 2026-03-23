@@ -52,9 +52,11 @@ video {
 
 .markdown-body {
   color: var(--ink);
-  line-height: 1.85;
-  font-size: 1.05rem;
+  line-height: 1.75;
+  font-size: var(--doc-title-size-mobile);
   font-family: var(--font-writing), "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  font-weight: 400;
+  letter-spacing: normal;
 }
 
 .markdown-body > *:first-child {
@@ -96,6 +98,7 @@ video {
 .markdown-body li,
 .markdown-body blockquote {
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .markdown-body ul,
@@ -232,7 +235,7 @@ video {
 
 @media (max-width: 639px) {
   .markdown-body {
-    font-size: 1rem;
+    font-size: var(--doc-title-size-mobile);
     line-height: 1.75;
   }
 
@@ -256,6 +259,10 @@ video {
 }
 
 @media (min-width: 640px) {
+  .markdown-body {
+    font-size: var(--doc-title-size-desktop);
+  }
+
   .document-title-text {
     font-size: var(--doc-title-size-desktop);
   }
