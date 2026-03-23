@@ -3,7 +3,8 @@
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorView } from "@codemirror/view";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   editorTheme,
@@ -34,10 +35,12 @@ export function EditorClient(props: EditorClientProps) {
 }
 
 function EditorClientInner({ initialDocument }: EditorClientProps) {
+  const router = useRouter();
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const {
     formattedUpdated,
+    flushLatestDraft,
     getLatestContent,
     getLatestTitle,
     handleEditorChange,
@@ -106,6 +109,12 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     };
   }, [initialDocument.id]);
 
+  const handleReadingTimeSelect = useCallback(() => {
+    flushLatestDraft();
+    router.replace("/");
+    router.refresh();
+  }, [flushLatestDraft, router]);
+
   return (
     <div className="min-h-dvh pb-14 sm:pb-20">
       <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
@@ -122,7 +131,16 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
         />
 
         <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
-          <span>{readingTime} min</span>
+          <button
+            type="button"
+            onClick={handleReadingTimeSelect}
+            disabled={isDeleting}
+            aria-label="Back to documents"
+            title="Back to documents"
+            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {readingTime} min
+          </button>
           <span>•</span>
           <span>{formattedUpdated}</span>
           {uploadingImagesCount > 0 ? (

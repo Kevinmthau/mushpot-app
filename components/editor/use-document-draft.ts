@@ -39,6 +39,7 @@ function getMostRecentTimestamp(currentTimestamp: string, nextTimestamp: string)
 
 type UseDocumentDraftResult = {
   formattedUpdated: string;
+  flushLatestDraft: () => void;
   getLatestContent: () => string;
   getLatestTitle: () => string;
   handleEditorChange: (doc: Text) => void;
@@ -345,6 +346,16 @@ export function useDocumentDraft(
     return formatRelativeTimestamp(updatedAt);
   }, [updatedAt]);
 
+  const flushLatestDraft = useCallback(() => {
+    if (isDeletingRef.current) {
+      return;
+    }
+
+    clearScheduledWork();
+    writeLocalCacheSnapshot();
+    void saveDraft(latestTitleRef.current, getLatestContent());
+  }, [clearScheduledWork, getLatestContent, saveDraft, writeLocalCacheSnapshot]);
+
   const handleTitleChange = useCallback((nextTitle: string) => {
     didEditSinceHydrationRef.current = true;
     setTitle(nextTitle);
@@ -399,6 +410,7 @@ export function useDocumentDraft(
 
   return {
     formattedUpdated,
+    flushLatestDraft,
     getLatestContent,
     getLatestTitle,
     handleEditorChange,

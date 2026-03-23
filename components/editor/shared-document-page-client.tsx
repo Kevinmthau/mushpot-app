@@ -7,6 +7,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -131,7 +132,16 @@ export function SharedDocumentPageClient({
         </h1>
 
         <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
-          <span>{readingTime} min</span>
+          <Link
+            href="/"
+            replace
+            prefetch={false}
+            aria-label="Back to documents"
+            title="Back to documents"
+            className="transition hover:text-[var(--ink)]"
+          >
+            {readingTime} min
+          </Link>
           <span>•</span>
           <span>{formattedUpdated}</span>
         </div>
