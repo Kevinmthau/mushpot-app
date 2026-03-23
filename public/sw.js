@@ -1,34 +1,21 @@
 const STATIC_CACHE_NAME = "mushpot-static-v5";
-const NAV_CACHE_NAME = "mushpot-nav-v5";
-const NAVIGATION_NETWORK_TIMEOUT_MS = 800;
+const NAV_CACHE_NAME = "mushpot-nav-v6";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/offline.html",
 ];
-const HOME_NAVIGATION_REQUEST = new Request("/", {
-  credentials: "same-origin",
-  headers: {
-    Accept: "text/html",
-  },
-});
 
 // Known cache names – anything else gets cleaned up on activate
 const KNOWN_CACHES = new Set([STATIC_CACHE_NAME, NAV_CACHE_NAME]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    Promise.all([
-      caches
-        .open(STATIC_CACHE_NAME)
-        .then((cache) => cache.addAll(STATIC_FILES))
-        .catch(() => undefined),
-      caches
-        .open(NAV_CACHE_NAME)
-        .then((cache) => cache.add(HOME_NAVIGATION_REQUEST))
-        .catch(() => undefined),
-    ]),
+    caches
+      .open(STATIC_CACHE_NAME)
+      .then((cache) => cache.addAll(STATIC_FILES))
+      .catch(() => undefined),
   );
   self.skipWaiting();
 });
@@ -76,44 +63,29 @@ async function staleWhileRevalidate(request, cacheName) {
 }
 
 /**
- * Network-preferred for navigation with a short stale-shell timeout.
- * This keeps launches responsive while still refreshing the cached shell
- * in the background once the network responds.
+ * Network-first for navigation. Serving stale App Router shells across deploys
+ * can mismatch the current JS bundle and trigger client-side crashes.
  */
-async function fetchAndCacheNavigation(request, cache) {
-  const response = await fetch(request);
-
-  if (response.ok) {
-    await cache.put(request, response.clone());
-  }
-
-  return response;
-}
-
-async function navigationNetworkFirst(event) {
-  const request = event.request;
-  const cache = await caches.open(NAV_CACHE_NAME);
-  const cachedResponse = await cache.match(request);
-  const networkResponsePromise = fetchAndCacheNavigation(request, cache);
-
-  if (cachedResponse) {
-    event.waitUntil(networkResponsePromise.catch(() => undefined));
-
-    try {
-      return await Promise.race([
-        networkResponsePromise,
-        new Promise((resolve) => {
-          setTimeout(() => resolve(cachedResponse), NAVIGATION_NETWORK_TIMEOUT_MS);
-        }),
-      ]);
-    } catch {
-      return cachedResponse;
-    }
-  }
+async function navigationNetworkFirst(request) {
+  const pathname = new URL(request.url).pathname;
+  const allowNavigationCache =
+    pathname === "/auth" || pathname.startsWith("/s/");
+  const cache = allowNavigationCache ? await caches.open(NAV_CACHE_NAME) : null;
 
   try {
-    return await networkResponsePromise;
+    const networkResponse = await fetch(request);
+    if (cache && networkResponse.ok) {
+      cache.put(request, networkResponse.clone());
+    }
+    return networkResponse;
   } catch {
+    if (cache) {
+      const cachedResponse = await cache.match(request);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+    }
+
     const fallback = await caches.match("/offline.html");
     return fallback || Response.error();
   }
@@ -134,10 +106,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Prefer fresh navigations, but fall back quickly to the cached shell if
-  // the network is slow on app launch.
+  // Keep navigation network-first so route payloads stay in sync with the
+  // current deployment.
   if (request.mode === "navigate") {
-    event.respondWith(navigationNetworkFirst(event));
+    event.respondWith(navigationNetworkFirst(request));
     return;
   }
 

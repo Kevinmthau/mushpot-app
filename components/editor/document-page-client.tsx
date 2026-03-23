@@ -9,7 +9,6 @@ import { MissingDocumentFallback } from "@/components/editor/missing-document-fa
 import type { EditorDocument } from "@/components/editor/editor-types";
 import {
   getCachedDocumentForOwner,
-  getLastActiveOwner,
   reconcileCachedDocumentWithServer,
   setLastActiveOwner,
   type CachedDocument,
@@ -76,22 +75,6 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
       let cachedDocument: CachedDocument | null = null;
 
       try {
-        const cachedOwner = await getLastActiveOwner();
-        if (!isActive) {
-          return;
-        }
-
-        if (cachedOwner) {
-          cachedDocument = await getCachedDocumentForOwner(documentId, cachedOwner);
-          if (!isActive) {
-            return;
-          }
-
-          if (cachedDocument) {
-            setDocument(toEditorDocument(cachedDocument));
-          }
-        }
-
         const supabase = await getSupabaseBrowserClient();
         const {
           data: { session },
@@ -110,17 +93,13 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
 
         void setLastActiveOwner(userId);
 
-        if (cachedOwner !== userId) {
-          cachedDocument = await getCachedDocumentForOwner(documentId, userId);
-          if (!isActive) {
-            return;
-          }
+        cachedDocument = await getCachedDocumentForOwner(documentId, userId);
+        if (!isActive) {
+          return;
+        }
 
-          if (cachedDocument) {
-            setDocument(toEditorDocument(cachedDocument));
-          } else {
-            setDocument(null);
-          }
+        if (cachedDocument) {
+          setDocument(toEditorDocument(cachedDocument));
         }
 
         const { data: serverDoc, error: fetchError } = await supabase

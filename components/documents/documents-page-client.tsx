@@ -8,7 +8,6 @@ import PullToRefresh from "@/components/pull-to-refresh";
 import {
   clearLastActiveOwner,
   getCachedDocumentListForOwner,
-  getLastActiveOwner,
   syncDocumentList,
   setLastActiveOwner,
   type CachedDocumentListItem,
@@ -56,23 +55,6 @@ export function DocumentsPageClient() {
     setError(null);
 
     try {
-      const cachedOwner = await getLastActiveOwner();
-      if (requestId !== requestIdRef.current) {
-        return;
-      }
-
-      if (cachedOwner) {
-        const cachedDocuments = await getCachedDocumentListForOwner(cachedOwner);
-        if (requestId !== requestIdRef.current) {
-          return;
-        }
-
-        cachedDocumentCount = cachedDocuments.length;
-        setDocuments(cachedDocuments);
-      } else {
-        setDocuments([]);
-      }
-
       const supabase = await getSupabaseBrowserClient();
       const {
         data: { session },
@@ -94,15 +76,13 @@ export function DocumentsPageClient() {
       setUserId(nextUserId);
       void setLastActiveOwner(nextUserId);
 
-      if (nextUserId !== cachedOwner) {
-        const nextCachedDocuments = await getCachedDocumentListForOwner(nextUserId);
-        if (requestId !== requestIdRef.current) {
-          return;
-        }
-
-        cachedDocumentCount = nextCachedDocuments.length;
-        setDocuments(nextCachedDocuments);
+      const cachedDocuments = await getCachedDocumentListForOwner(nextUserId);
+      if (requestId !== requestIdRef.current) {
+        return;
       }
+
+      cachedDocumentCount = cachedDocuments.length;
+      setDocuments(cachedDocuments);
 
       const { data, error: fetchError } = await supabase
         .from("documents")
