@@ -8,7 +8,6 @@ import PullToRefresh from "@/components/pull-to-refresh";
 import {
   clearLastActiveOwner,
   getCachedDocumentListForOwner,
-  getLastActiveOwner,
   syncDocumentList,
   setLastActiveOwner,
   type CachedDocumentListItem,
@@ -39,11 +38,17 @@ function DocumentsPageLoading() {
   );
 }
 
-export function DocumentsPageClient() {
+type DocumentsPageClientProps = {
+  initialUserId: string;
+};
+
+export function DocumentsPageClient({
+  initialUserId,
+}: DocumentsPageClientProps) {
   const router = useRouter();
   const [documents, setDocuments] = useState<CachedDocumentListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [userId, setUserId] = useState(initialUserId);
   const [hasResolvedRemoteState, setHasResolvedRemoteState] = useState(false);
   const requestIdRef = useRef(0);
 
@@ -52,23 +57,19 @@ export function DocumentsPageClient() {
     requestIdRef.current = requestId;
 
     let cachedDocumentCount = 0;
-    let cachedOwner: string | null = null;
-    let cachedDocuments: CachedDocumentListItem[] = [];
     setError(null);
+    setUserId(initialUserId);
 
     try {
-      cachedOwner = await getLastActiveOwner();
+      void setLastActiveOwner(initialUserId);
 
+      let cachedDocuments = await getCachedDocumentListForOwner(initialUserId);
       if (requestId !== requestIdRef.current) {
         return;
       }
 
-      if (cachedOwner) {
-        cachedDocuments = await getCachedDocumentListForOwner(cachedOwner);
-        if (requestId !== requestIdRef.current) {
-          return;
-        }
-      }
+      cachedDocumentCount = cachedDocuments.length;
+      setDocuments(cachedDocuments);
 
       const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
       const supabase = await getSupabaseBrowserClient();
@@ -82,7 +83,6 @@ export function DocumentsPageClient() {
 
       const nextUserId = session?.user?.id ?? null;
       if (!nextUserId) {
-        setUserId(null);
         setDocuments([]);
         setHasResolvedRemoteState(true);
         void clearLastActiveOwner();
@@ -90,14 +90,9 @@ export function DocumentsPageClient() {
         return;
       }
 
-      setUserId(nextUserId);
-      void setLastActiveOwner(nextUserId);
-
-      if (cachedOwner === nextUserId) {
-        cachedDocumentCount = cachedDocuments.length;
-        setDocuments(cachedDocuments);
-      } else {
-        setDocuments([]);
+      if (nextUserId !== initialUserId) {
+        setUserId(nextUserId);
+        void setLastActiveOwner(nextUserId);
         cachedDocuments = await getCachedDocumentListForOwner(nextUserId);
         if (requestId !== requestIdRef.current) {
           return;
@@ -140,15 +135,12 @@ export function DocumentsPageClient() {
         setError("Unable to load documents. Please check your connection.");
       }
     }
-  }, [router]);
+  }, [initialUserId, router]);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void loadDocuments();
-    }, 0);
+    void loadDocuments();
 
     return () => {
-      window.clearTimeout(timeoutId);
       requestIdRef.current += 1;
     };
   }, [loadDocuments]);

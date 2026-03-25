@@ -98,6 +98,10 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
   });
 
   useEffect(() => {
+    router.prefetch("/");
+  }, [router]);
+
+  useEffect(() => {
     if (!consumeNewDocumentTitleFocus(initialDocument.id)) {
       return;
     }
