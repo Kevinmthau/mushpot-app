@@ -1,22 +1,16 @@
 "use client";
 
-import { markdown } from "@codemirror/lang-markdown";
-import { EditorView } from "@codemirror/view";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type Text } from "@codemirror/state";
+import type { ComponentType } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import {
-  editorTheme,
-  markdownLiveFormatting,
-} from "@/components/editor/editor-appearance";
-import { CodeMirrorEditor } from "@/components/editor/code-mirror-editor";
 import { useDocumentClone } from "@/components/editor/use-document-clone";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
-import { useImageUploadInsertion } from "@/components/editor/use-image-upload";
 import { consumeNewDocumentTitleFocus } from "@/lib/new-document-focus";
 
 const ShareModal = dynamic(
@@ -25,6 +19,36 @@ const ShareModal = dynamic(
     ssr: false,
   },
 );
+
+type EditorWorkspaceProps = {
+  documentId: string;
+  initialValue: string;
+  onChange: (doc: Text) => void;
+  onUploadingImagesCountChange?: (count: number) => void;
+  owner: string;
+  placeholder?: string;
+};
+
+let editorWorkspaceModulePromise:
+  | Promise<typeof import("@/components/editor/editor-workspace")>
+  | null = null;
+let resolvedEditorWorkspace: ComponentType<EditorWorkspaceProps> | null = null;
+
+export function preloadEditorWorkspace() {
+  if (!editorWorkspaceModulePromise) {
+    editorWorkspaceModulePromise = import("@/components/editor/editor-workspace")
+      .then((module) => {
+        resolvedEditorWorkspace = module.EditorWorkspace;
+        return module;
+      })
+      .catch((error) => {
+        editorWorkspaceModulePromise = null;
+        throw error;
+      });
+  }
+
+  return editorWorkspaceModulePromise;
+}
 
 export function EditorClient(props: EditorClientProps) {
   if (!props?.initialDocument) {
@@ -37,6 +61,7 @@ export function EditorClient(props: EditorClientProps) {
 function EditorClientInner({ initialDocument }: EditorClientProps) {
   const router = useRouter();
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [uploadingImagesCount, setUploadingImagesCount] = useState(0);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const {
     formattedUpdated,
@@ -55,21 +80,6 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     title,
     updateShareState,
   } = useDocumentDraft(initialDocument);
-  const { imageDropPasteHandlers, uploadingImagesCount } = useImageUploadInsertion({
-    documentId: initialDocument.id,
-    owner: initialDocument.owner,
-  });
-
-  const editorExtensions = useMemo(
-    () => [
-      markdown(),
-      markdownLiveFormatting,
-      imageDropPasteHandlers,
-      EditorView.lineWrapping,
-      editorTheme,
-    ],
-    [imageDropPasteHandlers],
-  );
   const { isCloning, handleClone } = useDocumentClone({
     documentId: initialDocument.id,
     owner: initialDocument.owner,
@@ -112,7 +122,6 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
   const handleReadingTimeSelect = useCallback(() => {
     flushLatestDraft();
     router.replace("/");
-    router.refresh();
   }, [flushLatestDraft, router]);
 
   return (
@@ -186,11 +195,13 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
         </div>
 
         <div className="pb-24">
-          <CodeMirrorEditor
+          <EditorWorkspaceLoader
+            key={initialDocument.id}
             documentId={initialDocument.id}
             initialValue={initialDocument.content}
             onChange={handleEditorChange}
-            extensions={editorExtensions}
+            onUploadingImagesCountChange={setUploadingImagesCount}
+            owner={initialDocument.owner}
             placeholder="|..."
           />
         </div>
@@ -210,4 +221,60 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
       ) : null}
     </div>
   );
+}
+
+function EditorWorkspaceFallback({ initialValue }: Pick<EditorWorkspaceProps, "initialValue">) {
+  const previewContent = initialValue.trim();
+
+  if (!previewContent) {
+    return (
+      <div className="space-y-3">
+        <div className="h-4 w-full animate-pulse rounded bg-[var(--line)]" />
+        <div className="h-4 w-5/6 animate-pulse rounded bg-[var(--line)]" />
+        <div className="h-4 w-4/6 animate-pulse rounded bg-[var(--line)]" />
+        <div className="h-4 w-full animate-pulse rounded bg-[var(--line)]" />
+        <div className="h-4 w-3/4 animate-pulse rounded bg-[var(--line)]" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-h-[60vh] overflow-hidden whitespace-pre-wrap break-words font-[var(--font-writing)] text-[var(--doc-title-size-mobile)] leading-[1.75] text-[var(--ink)]">
+      {previewContent}
+    </div>
+  );
+}
+
+function EditorWorkspaceLoader(props: EditorWorkspaceProps) {
+  const [LoadedWorkspace, setLoadedWorkspace] = useState<ComponentType<EditorWorkspaceProps> | null>(
+    () => resolvedEditorWorkspace,
+  );
+
+  useEffect(() => {
+    if (LoadedWorkspace) {
+      return;
+    }
+
+    let isActive = true;
+
+    void preloadEditorWorkspace()
+      .then((module) => {
+        if (isActive) {
+          setLoadedWorkspace(() => module.EditorWorkspace);
+        }
+      })
+      .catch(() => {
+        // Leave the lightweight fallback in place if the editor workspace chunk fails.
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [LoadedWorkspace]);
+
+  if (!LoadedWorkspace) {
+    return <EditorWorkspaceFallback initialValue={props.initialValue} />;
+  }
+
+  return <LoadedWorkspace {...props} />;
 }

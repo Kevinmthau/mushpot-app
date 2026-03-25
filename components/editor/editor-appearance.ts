@@ -1,7 +1,7 @@
 "use client";
 
 import { syntaxTree } from "@codemirror/language";
-import { type Range, type Text } from "@codemirror/state";
+import { type Range } from "@codemirror/state";
 import { type SyntaxNode } from "@lezer/common";
 import {
   Decoration,
@@ -100,10 +100,6 @@ function shouldDisableLiveFormatting(view: EditorView) {
     view.state.doc.length > MAX_LIVE_FORMATTING_DOC_LENGTH ||
     view.state.doc.lines > MAX_LIVE_FORMATTING_LINE_COUNT
   );
-}
-
-export function readDocumentText(doc: Text | string) {
-  return typeof doc === "string" ? doc : doc.toString();
 }
 
 function parseMarkdownImage(

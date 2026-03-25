@@ -3,7 +3,6 @@ import {
   putCachedDocument,
   type CachedDocument,
 } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export type PersistableDocumentSnapshot = Pick<
   CachedDocument,
@@ -26,6 +25,7 @@ export async function persistDocumentSnapshot(
   snapshot: PersistableDocumentSnapshot,
 ): Promise<PersistDocumentResult> {
   const persistedTitle = normalizeDocumentTitle(snapshot.title);
+  const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
   const supabase = await getSupabaseBrowserClient();
 
   let lastError: unknown = null;

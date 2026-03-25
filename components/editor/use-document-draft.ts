@@ -11,7 +11,7 @@ import {
   useState,
 } from "react";
 
-import { readDocumentText } from "@/components/editor/editor-appearance";
+import { readDocumentText } from "@/components/editor/read-document-text";
 import type { EditorDocument } from "@/components/editor/editor-types";
 import { putCachedDocument, type CachedDocument } from "@/lib/doc-cache";
 import { getReadingTimeFromText } from "@/lib/document-stats";

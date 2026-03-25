@@ -16,6 +16,7 @@ export function preloadEditorClient() {
     editorClientModulePromise = import("@/components/editor/editor-client")
       .then((module) => {
         resolvedEditorClient = module.EditorClient;
+        void module.preloadEditorWorkspace?.();
         return module;
       })
       .catch((error) => {

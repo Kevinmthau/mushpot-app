@@ -13,7 +13,6 @@ import {
   setLastActiveOwner,
 } from "@/lib/doc-cache";
 import { markNewDocumentForTitleFocus } from "@/lib/new-document-focus";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type DocumentListClientProps = {
   documents: CachedDocumentListItem[];
@@ -66,6 +65,7 @@ export function DocumentListClient({
     setIsCreating(true);
 
     try {
+      const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
       const supabase = await getSupabaseBrowserClient();
       const { data, error } = await supabase
         .from("documents")

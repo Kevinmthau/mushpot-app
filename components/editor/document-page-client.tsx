@@ -9,11 +9,11 @@ import { MissingDocumentFallback } from "@/components/editor/missing-document-fa
 import type { EditorDocument } from "@/components/editor/editor-types";
 import {
   getCachedDocumentForOwner,
+  getLastActiveOwner,
   reconcileCachedDocumentWithServer,
   setLastActiveOwner,
   type CachedDocument,
 } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type DocumentPageClientProps = {
   documentId: string;
@@ -73,8 +73,27 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
 
     void (async () => {
       let cachedDocument: CachedDocument | null = null;
+      let cachedOwner: string | null = null;
 
       try {
+        cachedOwner = await getLastActiveOwner();
+
+        if (!isActive) {
+          return;
+        }
+
+        if (cachedOwner) {
+          cachedDocument = await getCachedDocumentForOwner(documentId, cachedOwner);
+          if (!isActive) {
+            return;
+          }
+
+          if (cachedDocument) {
+            setDocument(toEditorDocument(cachedDocument));
+          }
+        }
+
+        const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
         const supabase = await getSupabaseBrowserClient();
         const {
           data: { session },
@@ -93,13 +112,19 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
 
         void setLastActiveOwner(userId);
 
-        cachedDocument = await getCachedDocumentForOwner(documentId, userId);
-        if (!isActive) {
-          return;
-        }
+        if (cachedOwner !== userId || !cachedDocument) {
+          const ownerScopedCachedDocument = await getCachedDocumentForOwner(
+            documentId,
+            userId,
+          );
+          if (!isActive) {
+            return;
+          }
 
-        if (cachedDocument) {
-          setDocument(toEditorDocument(cachedDocument));
+          if (ownerScopedCachedDocument) {
+            cachedDocument = ownerScopedCachedDocument;
+            setDocument(toEditorDocument(ownerScopedCachedDocument));
+          }
         }
 
         const { data: serverDoc, error: fetchError } = await supabase

@@ -8,11 +8,11 @@ import PullToRefresh from "@/components/pull-to-refresh";
 import {
   clearLastActiveOwner,
   getCachedDocumentListForOwner,
+  getLastActiveOwner,
   syncDocumentList,
   setLastActiveOwner,
   type CachedDocumentListItem,
 } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 function DocumentsPageLoading() {
   return (
@@ -52,9 +52,31 @@ export function DocumentsPageClient() {
     requestIdRef.current = requestId;
 
     let cachedDocumentCount = 0;
+    let cachedOwner: string | null = null;
     setError(null);
 
     try {
+      cachedOwner = await getLastActiveOwner();
+
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
+
+      if (cachedOwner) {
+        const cachedDocuments = await getCachedDocumentListForOwner(cachedOwner);
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
+
+        cachedDocumentCount = cachedDocuments.length;
+
+        if (cachedDocuments.length > 0) {
+          setUserId(cachedOwner);
+          setDocuments(cachedDocuments);
+        }
+      }
+
+      const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
       const supabase = await getSupabaseBrowserClient();
       const {
         data: { session },
@@ -76,13 +98,15 @@ export function DocumentsPageClient() {
       setUserId(nextUserId);
       void setLastActiveOwner(nextUserId);
 
-      const cachedDocuments = await getCachedDocumentListForOwner(nextUserId);
-      if (requestId !== requestIdRef.current) {
-        return;
-      }
+      if (cachedOwner !== nextUserId) {
+        const cachedDocuments = await getCachedDocumentListForOwner(nextUserId);
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
 
-      cachedDocumentCount = cachedDocuments.length;
-      setDocuments(cachedDocuments);
+        cachedDocumentCount = cachedDocuments.length;
+        setDocuments(cachedDocuments);
+      }
 
       const { data, error: fetchError } = await supabase
         .from("documents")
@@ -131,6 +155,7 @@ export function DocumentsPageClient() {
   }, [loadDocuments]);
 
   const handleSignOut = useCallback(async () => {
+    const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
     const supabase = await getSupabaseBrowserClient();
     await supabase.auth.signOut();
     void clearLastActiveOwner();

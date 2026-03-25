@@ -4,7 +4,6 @@ import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 import { deleteCachedDocument } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type UseDocumentDeleteParams = {
   documentId: string;
@@ -37,6 +36,7 @@ export function useDocumentDelete({
 
     onDeleteStart();
 
+    const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
     const supabase = await getSupabaseBrowserClient();
     const { error } = await supabase
       .from("documents")
@@ -53,6 +53,5 @@ export function useDocumentDelete({
     void deleteCachedDocument(documentId);
 
     router.replace("/");
-    router.refresh();
   }, [documentId, isDeleting, onDeleteError, onDeleteStart, owner, router]);
 }

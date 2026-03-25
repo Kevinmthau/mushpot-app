@@ -1,4 +1,4 @@
-import { PrivateStartup } from "@/components/pwa/private-startup";
+import { PrivateStartupSlot } from "@/components/pwa/private-startup-slot";
 
 export default function PrivateLayout({
   children,
@@ -8,7 +8,7 @@ export default function PrivateLayout({
   return (
     <>
       {children}
-      <PrivateStartup />
+      <PrivateStartupSlot />
     </>
   );
 }
