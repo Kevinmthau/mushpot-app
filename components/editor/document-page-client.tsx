@@ -74,6 +74,7 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
     void (async () => {
       let cachedDocument: CachedDocument | null = null;
       let cachedOwner: string | null = null;
+      let hasValidatedCachedDocument = false;
 
       try {
         cachedOwner = await getLastActiveOwner();
@@ -86,10 +87,6 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
           cachedDocument = await getCachedDocumentForOwner(documentId, cachedOwner);
           if (!isActive) {
             return;
-          }
-
-          if (cachedDocument) {
-            setDocument(toEditorDocument(cachedDocument));
           }
         }
 
@@ -105,12 +102,22 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
 
         const userId = session?.user?.id ?? null;
         if (!userId) {
+          cachedDocument = null;
+          setDocument(null);
           setHasResolvedRemoteState(true);
           router.replace(`/auth?next=/doc/${documentId}`);
           return;
         }
 
         void setLastActiveOwner(userId);
+
+        if (cachedOwner !== userId) {
+          cachedDocument = null;
+          setDocument((current) => (current?.owner === userId ? current : null));
+        } else if (cachedDocument) {
+          hasValidatedCachedDocument = true;
+          setDocument(toEditorDocument(cachedDocument));
+        }
 
         if (cachedOwner !== userId || !cachedDocument) {
           const ownerScopedCachedDocument = await getCachedDocumentForOwner(
@@ -123,6 +130,7 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
 
           if (ownerScopedCachedDocument) {
             cachedDocument = ownerScopedCachedDocument;
+            hasValidatedCachedDocument = true;
             setDocument(toEditorDocument(ownerScopedCachedDocument));
           }
         }
@@ -141,14 +149,14 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
         setHasResolvedRemoteState(true);
 
         if (fetchError) {
-          if (!cachedDocument) {
+          if (!hasValidatedCachedDocument) {
             setError(fetchError.message);
           }
           return;
         }
 
         if (!serverDoc) {
-          if (!cachedDocument) {
+          if (!hasValidatedCachedDocument) {
             setNotFound(true);
           }
           return;
@@ -174,7 +182,8 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
 
         setHasResolvedRemoteState(true);
 
-        if (!cachedDocument) {
+        if (!hasValidatedCachedDocument) {
+          setDocument(null);
           setError("Unable to load document. Please check your connection.");
         }
       }

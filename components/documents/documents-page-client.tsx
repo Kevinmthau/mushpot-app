@@ -53,6 +53,7 @@ export function DocumentsPageClient() {
 
     let cachedDocumentCount = 0;
     let cachedOwner: string | null = null;
+    let cachedDocuments: CachedDocumentListItem[] = [];
     setError(null);
 
     try {
@@ -63,16 +64,9 @@ export function DocumentsPageClient() {
       }
 
       if (cachedOwner) {
-        const cachedDocuments = await getCachedDocumentListForOwner(cachedOwner);
+        cachedDocuments = await getCachedDocumentListForOwner(cachedOwner);
         if (requestId !== requestIdRef.current) {
           return;
-        }
-
-        cachedDocumentCount = cachedDocuments.length;
-
-        if (cachedDocuments.length > 0) {
-          setUserId(cachedOwner);
-          setDocuments(cachedDocuments);
         }
       }
 
@@ -89,6 +83,7 @@ export function DocumentsPageClient() {
       const nextUserId = session?.user?.id ?? null;
       if (!nextUserId) {
         setUserId(null);
+        setDocuments([]);
         setHasResolvedRemoteState(true);
         void clearLastActiveOwner();
         router.replace("/auth?next=/");
@@ -98,8 +93,12 @@ export function DocumentsPageClient() {
       setUserId(nextUserId);
       void setLastActiveOwner(nextUserId);
 
-      if (cachedOwner !== nextUserId) {
-        const cachedDocuments = await getCachedDocumentListForOwner(nextUserId);
+      if (cachedOwner === nextUserId) {
+        cachedDocumentCount = cachedDocuments.length;
+        setDocuments(cachedDocuments);
+      } else {
+        setDocuments([]);
+        cachedDocuments = await getCachedDocumentListForOwner(nextUserId);
         if (requestId !== requestIdRef.current) {
           return;
         }
