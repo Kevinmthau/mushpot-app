@@ -272,6 +272,7 @@ video {
   display: inline-block;
   min-width: 1.4rem;
   color: var(--muted);
+  white-space: pre;
 }
 
 .cm-md-link {

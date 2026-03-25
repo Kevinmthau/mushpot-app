@@ -49,19 +49,19 @@ class HiddenMarkdownMarkWidget extends WidgetType {
 }
 
 class MarkdownListMarkWidget extends WidgetType {
-  constructor(private readonly text: string) {
+  constructor(private readonly renderedText: string) {
     super();
   }
 
   eq(other: MarkdownListMarkWidget) {
-    return this.text === other.text;
+    return this.renderedText === other.renderedText;
   }
 
   toDOM() {
     const element = document.createElement("span");
     element.className = "cm-md-list-mark";
     element.setAttribute("aria-hidden", "true");
-    element.textContent = this.text;
+    element.textContent = this.renderedText;
     return element;
   }
 
@@ -464,11 +464,12 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
 
           const markerText = view.state.doc.sliceString(node.from, node.to).trim();
           const replaceTo = skipLinePrefixWhitespace(view, node.to);
+          const spacingText = view.state.doc.sliceString(node.to, replaceTo) || " ";
           const renderedMarker = /^\d+\.$/.test(markerText) ? markerText : "•";
 
           decorations.push(
             Decoration.replace({
-              widget: new MarkdownListMarkWidget(renderedMarker),
+              widget: new MarkdownListMarkWidget(`${renderedMarker}${spacingText}`),
             }).range(node.from, replaceTo),
           );
           return;
