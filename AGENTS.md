@@ -15,7 +15,7 @@ This is a Next.js App Router project with TypeScript, Tailwind v4, Supabase, and
 - `proxy.ts`: auth protection and Supabase session/cookie handling for private routes
 
 ## Build, Test, and Development Commands
-- `npm run newchange -- <branch-name>`: create a task branch from local `main`
+- `npm run newchange -- <branch-name>`: create a task branch from local `main` when explicitly requested
 - `npm install`: install dependencies
 - `npm run dev`: start local dev server at `http://localhost:3000`
 - `npm run lint`: run ESLint checks
@@ -53,11 +53,10 @@ PRs should include:
 - manual verification steps (routes, auth, sharing flow)
 
 ## Branch Workflow
-- Never commit directly to `main`.
-- Before starting a requested change, create a dedicated branch from local `main`.
-- Use `npm run newchange -- <branch-name>` to create the branch.
-- Keep one task per branch so each change can be reviewed in its own PR.
-- Push the branch and open a PR for review before merging.
+- Work on the current branch by default, including `main`.
+- Only create a dedicated branch when the user explicitly asks for one.
+- When a branch is requested, use `npm run newchange -- <branch-name>` to create it from local `main`.
+- Keep one task per requested branch so each change can be reviewed in its own PR when needed.
 
 ## Security & Configuration Tips
 - Required env vars: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.

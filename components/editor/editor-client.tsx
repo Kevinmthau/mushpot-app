@@ -2,7 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { type Text } from "@codemirror/state";
-import type { ComponentType } from "react";
+import Link from "next/link";
+import type { ComponentType, MouseEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -128,6 +129,30 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     router.replace("/");
   }, [flushLatestDraft, router]);
 
+  const handleDocumentsClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      if (isDeleting) {
+        event.preventDefault();
+        return;
+      }
+
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      handleReadingTimeSelect();
+    },
+    [handleReadingTimeSelect, isDeleting],
+  );
+
   return (
     <div className="min-h-dvh pb-14 sm:pb-20">
       <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
@@ -144,16 +169,16 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
         />
 
         <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
-          <button
-            type="button"
-            onClick={handleReadingTimeSelect}
-            disabled={isDeleting}
+          <Link
+            href="/"
+            prefetch={false}
+            onClick={handleDocumentsClick}
             aria-label="Back to documents"
             title="Back to documents"
-            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)]"
           >
             {readingTime} min
-          </button>
+          </Link>
           <span>•</span>
           <span>{formattedUpdated}</span>
           {uploadingImagesCount > 0 ? (
