@@ -15,20 +15,17 @@ import {
 
 type DocumentsPageClientProps = {
   initialUserId: string;
-  initialDocuments: CachedDocumentListItem[];
-  initialError: string | null;
 };
 
 export function DocumentsPageClient({
   initialUserId,
-  initialDocuments,
-  initialError,
 }: DocumentsPageClientProps) {
   const router = useRouter();
-  const [documents, setDocuments] = useState<CachedDocumentListItem[]>(initialDocuments);
-  const [error, setError] = useState<string | null>(initialError);
+  const [documents, setDocuments] = useState<CachedDocumentListItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
-  const hasDocuments = documents.length > 0;
+  const hasDocumentsRef = useRef(false);
+  hasDocumentsRef.current = documents.length > 0;
 
   const loadDocuments = useCallback(async () => {
     const requestId = requestIdRef.current + 1;
@@ -50,7 +47,7 @@ export function DocumentsPageClient({
       }
 
       if (fetchError) {
-        if (!hasDocuments) {
+        if (!hasDocumentsRef.current) {
           setError(fetchError.message);
         }
         return;
@@ -64,35 +61,31 @@ export function DocumentsPageClient({
         return;
       }
 
-      if (!hasDocuments) {
+      if (!hasDocumentsRef.current) {
         setError("Unable to load documents. Please check your connection.");
       }
     }
-  }, [hasDocuments, initialUserId]);
+  }, [initialUserId]);
 
   useEffect(() => {
     let isActive = true;
 
     void setLastActiveOwner(initialUserId);
 
-    if (initialError) {
-      void getCachedDocumentListForOwner(initialUserId).then((cachedDocuments) => {
-        if (!isActive || cachedDocuments.length === 0) {
-          return;
-        }
+    // Show cached data from IndexedDB for instant display
+    void getCachedDocumentListForOwner(initialUserId).then((cached) => {
+      if (!isActive || cached.length === 0) return;
+      setDocuments(cached);
+    });
 
-        setDocuments(cachedDocuments);
-        setError(null);
-      });
-    } else {
-      void syncDocumentList(initialDocuments, initialUserId);
-    }
+    // Refresh from Supabase in background
+    void loadDocuments();
 
     return () => {
       isActive = false;
       requestIdRef.current += 1;
     };
-  }, [initialDocuments, initialError, initialUserId]);
+  }, [initialUserId, loadDocuments]);
 
   const handleSignOut = useCallback(async () => {
     const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
