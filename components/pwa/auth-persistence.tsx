@@ -4,7 +4,6 @@ import { useEffect, useEffectEvent } from "react";
 import { useRouter, usePathname } from "next/navigation";
 
 import { clearLastActiveOwner, setLastActiveOwner } from "@/lib/doc-cache";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 /**
  * Subscribes to Supabase auth state changes so the PWA detects
@@ -24,6 +23,7 @@ export function AuthPersistence() {
     let unsubscribe: (() => void) | undefined;
 
     void (async () => {
+      const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
       const supabase = await getSupabaseBrowserClient();
 
       if (!isActive) {

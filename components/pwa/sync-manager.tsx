@@ -2,8 +2,6 @@
 
 import { useEffect } from "react";
 
-import { flushDirtyDocuments } from "@/lib/document-sync";
-
 /**
  * Flushes dirty (unsaved) documents to Supabase on startup,
  * when coming back online, and when the app becomes visible again.
@@ -19,6 +17,7 @@ export function SyncManager() {
       flushInProgress = true;
 
       try {
+        const { flushDirtyDocuments } = await import("@/lib/document-sync");
         await flushDirtyDocuments();
       } catch {
         // Best-effort — will retry on next trigger

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { DocumentsPageClient } from "@/components/documents/documents-page-client";
+import type { CachedDocumentListItem } from "@/lib/doc-cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -15,5 +16,17 @@ export default async function DocumentsPage() {
     redirect("/auth?next=/");
   }
 
-  return <DocumentsPageClient initialUserId={session.user.id} />;
+  const { data, error } = await supabase
+    .from("documents")
+    .select("id, title, updated_at")
+    .eq("owner", session.user.id)
+    .order("updated_at", { ascending: false });
+
+  return (
+    <DocumentsPageClient
+      initialUserId={session.user.id}
+      initialDocuments={(data ?? []) as CachedDocumentListItem[]}
+      initialError={error?.message ?? null}
+    />
+  );
 }
