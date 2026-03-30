@@ -77,6 +77,9 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
       let hasValidatedCachedDocument = false;
 
       try {
+        // Start loading the Supabase module in parallel with cache reads
+        const supabaseModulePromise = import("@/lib/supabase/client");
+
         cachedOwner = await getLastActiveOwner();
 
         if (!isActive) {
@@ -90,7 +93,7 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
           }
         }
 
-        const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
+        const { getSupabaseBrowserClient } = await supabaseModulePromise;
         const supabase = await getSupabaseBrowserClient();
         const {
           data: { session },

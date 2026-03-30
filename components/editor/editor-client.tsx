@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { type Text } from "@codemirror/state";
 import Link from "next/link";
 import type { ComponentType, MouseEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useDocumentClone } from "@/components/editor/use-document-clone";
@@ -126,7 +126,9 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
 
   const handleReadingTimeSelect = useCallback(() => {
     flushLatestDraft();
-    router.replace("/");
+    startTransition(() => {
+      router.push("/");
+    });
   }, [flushLatestDraft, router]);
 
   const handleDocumentsClick = useCallback(
