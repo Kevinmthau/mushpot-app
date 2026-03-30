@@ -27,6 +27,12 @@ export function DocumentsPageClient({
   const hasDocumentsRef = useRef(false);
   hasDocumentsRef.current = documents.length > 0;
 
+  // Eagerly start loading the Supabase module so it's warm by the time we need it
+  const supabaseModuleRef = useRef<Promise<typeof import("@/lib/supabase/client")> | null>(null);
+  if (!supabaseModuleRef.current) {
+    supabaseModuleRef.current = import("@/lib/supabase/client");
+  }
+
   const loadDocuments = useCallback(async () => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
@@ -34,7 +40,7 @@ export function DocumentsPageClient({
     setError(null);
 
     try {
-      const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
+      const { getSupabaseBrowserClient } = await supabaseModuleRef.current!;
       const supabase = await getSupabaseBrowserClient();
       const { data, error: fetchError } = await supabase
         .from("documents")

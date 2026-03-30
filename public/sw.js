@@ -1,5 +1,5 @@
 const STATIC_CACHE_NAME = "mushpot-static-v5";
-const NAV_CACHE_NAME = "mushpot-nav-v6";
+const NAV_CACHE_NAME = "mushpot-nav-v7";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
@@ -63,17 +63,54 @@ async function staleWhileRevalidate(request, cacheName) {
 }
 
 /**
- * Network-first for navigation. Serving stale App Router shells across deploys
- * can mismatch the current JS bundle and trigger client-side crashes.
+ * Network-first for navigation with a fast timeout for private routes.
+ *
+ * Private routes (/, /doc/*) use the App Router shell as a container while
+ * real data comes from IndexedDB + Supabase on the client.  On slow mobile
+ * connections the network roundtrip for the HTML shell is the main bottleneck,
+ * so we race the network against a 2 s timeout and fall back to a cached
+ * shell if the network is too slow.  The client-side code will still fetch
+ * fresh data independently.
  */
+const NAV_TIMEOUT_MS = 2000;
+
 async function navigationNetworkFirst(request) {
   const pathname = new URL(request.url).pathname;
   const allowNavigationCache =
     pathname === "/auth" || pathname.startsWith("/s/");
-  const cache = allowNavigationCache ? await caches.open(NAV_CACHE_NAME) : null;
+  const isPrivateRoute =
+    pathname === "/" || pathname.startsWith("/doc/");
+
+  const cacheName = (allowNavigationCache || isPrivateRoute) ? NAV_CACHE_NAME : null;
+  const cache = cacheName ? await caches.open(cacheName) : null;
 
   try {
-    const networkResponse = await fetch(request);
+    let networkResponse;
+
+    if (isPrivateRoute && cache) {
+      // Race the network against a timeout so cached shells load instantly
+      // on slow mobile connections.
+      const cachedResponse = await cache.match(request);
+
+      if (cachedResponse) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), NAV_TIMEOUT_MS);
+
+        try {
+          networkResponse = await fetch(request, { signal: controller.signal });
+          clearTimeout(timeout);
+        } catch {
+          clearTimeout(timeout);
+          // Network too slow or offline – serve cached shell immediately
+          return cachedResponse;
+        }
+      } else {
+        networkResponse = await fetch(request);
+      }
+    } else {
+      networkResponse = await fetch(request);
+    }
+
     if (cache && networkResponse.ok) {
       cache.put(request, networkResponse.clone());
     }
