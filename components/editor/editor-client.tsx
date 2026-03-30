@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { type Text } from "@codemirror/state";
 import Link from "next/link";
 import type { ComponentType, MouseEvent } from "react";
-import { startTransition, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useDocumentClone } from "@/components/editor/use-document-clone";
@@ -124,13 +124,6 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     };
   }, [initialDocument.id]);
 
-  const handleReadingTimeSelect = useCallback(() => {
-    flushLatestDraft();
-    startTransition(() => {
-      router.push("/");
-    });
-  }, [flushLatestDraft, router]);
-
   const handleDocumentsClick = useCallback(
     (event: MouseEvent<HTMLAnchorElement>) => {
       if (isDeleting) {
@@ -138,21 +131,9 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
         return;
       }
 
-      if (
-        event.defaultPrevented ||
-        event.button !== 0 ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.shiftKey ||
-        event.altKey
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-      handleReadingTimeSelect();
+      flushLatestDraft();
     },
-    [handleReadingTimeSelect, isDeleting],
+    [flushLatestDraft, isDeleting],
   );
 
   return (
@@ -177,7 +158,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
             onClick={handleDocumentsClick}
             aria-label="Back to documents"
             title="Back to documents"
-            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)]"
+            className="-mx-1 -my-1 px-1 py-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)]"
           >
             {readingTime} min
           </Link>
