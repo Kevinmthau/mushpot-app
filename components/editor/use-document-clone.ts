@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { type CachedDocument, putCachedDocument } from "@/lib/doc-cache";
@@ -19,9 +19,15 @@ export function useDocumentClone({
 }: UseDocumentCloneParams) {
   const router = useRouter();
   const [isCloning, setIsCloning] = useState(false);
+  const isCloningRef = useRef(false);
+  const getLatestTitleRef = useRef(getLatestTitle);
+  getLatestTitleRef.current = getLatestTitle;
+  const getLatestContentRef = useRef(getLatestContent);
+  getLatestContentRef.current = getLatestContent;
 
   const handleClone = useCallback(async () => {
-    if (isCloning) return;
+    if (isCloningRef.current) return;
+    isCloningRef.current = true;
     setIsCloning(true);
 
     try {
@@ -31,8 +37,8 @@ export function useDocumentClone({
         .from("documents")
         .insert({
           owner,
-          title: `${getLatestTitle()} (copy)`,
-          content: getLatestContent(),
+          title: `${getLatestTitleRef.current()} (copy)`,
+          content: getLatestContentRef.current(),
         })
         .select("id, owner, title, content, updated_at, share_enabled, share_token")
         .single();
@@ -57,9 +63,10 @@ export function useDocumentClone({
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Failed to clone document.");
     } finally {
+      isCloningRef.current = false;
       setIsCloning(false);
     }
-  }, [isCloning, owner, getLatestTitle, getLatestContent, router]);
+  }, [owner, router]);
 
   return { isCloning, handleClone };
 }

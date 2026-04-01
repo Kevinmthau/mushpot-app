@@ -81,7 +81,7 @@ export async function persistDocumentSnapshot(
 export async function flushDirtyDocuments() {
   const dirtyDocuments = await getDirtyDocuments();
 
-  for (const document of dirtyDocuments) {
-    await persistDocumentSnapshot(document);
-  }
+  await Promise.allSettled(
+    dirtyDocuments.map((document) => persistDocumentSnapshot(document)),
+  );
 }

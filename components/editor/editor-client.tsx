@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { type Text } from "@codemirror/state";
 import Link from "next/link";
-import type { ComponentType, MouseEvent } from "react";
+import type { ComponentType, MouseEvent, ChangeEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -87,14 +87,16 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     getLatestTitle: getLatestTitle,
     getLatestContent: getLatestContent,
   });
+  const handleDeleteStart = useCallback(() => {
+    markDeleting();
+    setIsShareModalOpen(false);
+  }, [markDeleting]);
+
   const handleDeleteDocument = useDocumentDelete({
     documentId: initialDocument.id,
     owner: initialDocument.owner,
     isDeleting,
-    onDeleteStart: () => {
-      markDeleting();
-      setIsShareModalOpen(false);
-    },
+    onDeleteStart: handleDeleteStart,
     onDeleteError: resetDeletingState,
   });
 
@@ -124,6 +126,29 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     };
   }, [initialDocument.id]);
 
+  const handleTitleInputChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      handleTitleChange(event.target.value);
+    },
+    [handleTitleChange],
+  );
+
+  const handleOpenShareModal = useCallback(() => {
+    setIsShareModalOpen(true);
+  }, []);
+
+  const handleCloseShareModal = useCallback(() => {
+    setIsShareModalOpen(false);
+  }, []);
+
+  const handleCloneClick = useCallback(() => {
+    void handleClone();
+  }, [handleClone]);
+
+  const handleDeleteClick = useCallback(() => {
+    void handleDeleteDocument();
+  }, [handleDeleteDocument]);
+
   const handleDocumentsClick = useCallback(
     (event: MouseEvent<HTMLAnchorElement>) => {
       if (isDeleting) {
@@ -142,9 +167,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
         <input
           ref={titleInputRef}
           value={title}
-          onChange={(event) => {
-            handleTitleChange(event.target.value);
-          }}
+          onChange={handleTitleInputChange}
           onBlur={handleTitleBlur}
           placeholder="Untitled"
           className="editor-title-input mb-4 w-full border-none bg-transparent p-0 text-[var(--ink)] outline-none"
@@ -176,7 +199,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
           <span>•</span>
           <button
             type="button"
-            onClick={() => setIsShareModalOpen(true)}
+            onClick={handleOpenShareModal}
             disabled={isDeleting}
             className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -185,9 +208,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
           <span>•</span>
           <button
             type="button"
-            onClick={() => {
-              void handleClone();
-            }}
+            onClick={handleCloneClick}
             disabled={isCloning || isDeleting}
             className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -196,9 +217,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
           <span>•</span>
           <button
             type="button"
-            onClick={() => {
-              void handleDeleteDocument();
-            }}
+            onClick={handleDeleteClick}
             disabled={isDeleting}
             className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -225,7 +244,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
           getDocumentText={getLatestContent}
           getDocumentTitle={getLatestTitle}
           isOpen={isShareModalOpen}
-          onClose={() => setIsShareModalOpen(false)}
+          onClose={handleCloseShareModal}
           shareEnabled={shareEnabled}
           shareToken={shareToken}
           onShareUpdated={updateShareState}

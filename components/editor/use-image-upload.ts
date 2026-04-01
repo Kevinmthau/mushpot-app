@@ -149,10 +149,7 @@ export function useImageUploadInsertion({
           try {
             const supabase = await getSupabaseBrowserClient();
             const safeName = sanitizeStorageFileName(file.name);
-            const randomId =
-              typeof crypto !== "undefined" && "randomUUID" in crypto
-                ? crypto.randomUUID()
-                : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+            const randomId = crypto.randomUUID();
             const path = `${owner}/${documentId}/${randomId}-${safeName}`;
             const inferredMimeType = inferImageMimeType(file.name);
             const normalizedMimeType = file.type ? normalizeImageMimeType(file.type) : null;

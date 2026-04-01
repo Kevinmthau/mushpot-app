@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 import { deleteCachedDocument } from "@/lib/doc-cache";
@@ -21,9 +21,15 @@ export function useDocumentDelete({
   onDeleteError,
 }: UseDocumentDeleteParams) {
   const router = useRouter();
+  const isDeletingRef = useRef(isDeleting);
+  isDeletingRef.current = isDeleting;
+  const onDeleteStartRef = useRef(onDeleteStart);
+  onDeleteStartRef.current = onDeleteStart;
+  const onDeleteErrorRef = useRef(onDeleteError);
+  onDeleteErrorRef.current = onDeleteError;
 
   return useCallback(async () => {
-    if (isDeleting) {
+    if (isDeletingRef.current) {
       return;
     }
 
@@ -34,7 +40,7 @@ export function useDocumentDelete({
       return;
     }
 
-    onDeleteStart();
+    onDeleteStartRef.current();
 
     const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
     const supabase = await getSupabaseBrowserClient();
@@ -45,7 +51,7 @@ export function useDocumentDelete({
       .eq("owner", owner);
 
     if (error) {
-      onDeleteError();
+      onDeleteErrorRef.current();
       window.alert(error.message || "Unable to delete document. Please try again.");
       return;
     }
@@ -53,5 +59,5 @@ export function useDocumentDelete({
     void deleteCachedDocument(documentId);
 
     router.replace("/");
-  }, [documentId, isDeleting, onDeleteError, onDeleteStart, owner, router]);
+  }, [documentId, owner, router]);
 }
