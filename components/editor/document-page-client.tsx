@@ -71,6 +71,12 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
   useEffect(() => {
     let isActive = true;
 
+    // Clear stale state from a previous documentId so an old error or
+    // not-found result doesn't persist while the new document loads.
+    setError(null);
+    setNotFound(false);
+    setHasResolvedRemoteState(false);
+
     void (async () => {
       let cachedDocument: CachedDocument | null = null;
       let cachedOwner: string | null = null;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -114,6 +114,13 @@ export function useImageUploadInsertion({
   owner,
 }: UseImageUploadInsertionParams) {
   const [uploadingImagesCount, setUploadingImagesCount] = useState(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const insertUploadedImages = useCallback(
     async (view: EditorView, files: File[], initialInsertPosition: number) => {
@@ -160,6 +167,10 @@ export function useImageUploadInsertion({
 
             if (error) {
               throw error;
+            }
+
+            if (!mountedRef.current) {
+              return;
             }
 
             const { data } = supabase.storage.from(IMAGE_BUCKET).getPublicUrl(path);

@@ -26,6 +26,9 @@ export async function GET(request: NextRequest) {
 
   // Only allow post-auth redirects to internal app paths.
   const redirectUrl = new URL(next, request.nextUrl.origin);
+  if (redirectUrl.origin !== request.nextUrl.origin) {
+    return NextResponse.redirect(new URL("/", request.nextUrl.origin));
+  }
   const response = NextResponse.redirect(redirectUrl);
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
