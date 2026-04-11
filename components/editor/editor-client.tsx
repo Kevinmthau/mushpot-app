@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { type Text } from "@codemirror/state";
 import Link from "next/link";
 import type { ComponentType, MouseEvent, ChangeEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useDocumentClone } from "@/components/editor/use-document-clone";
@@ -12,7 +12,10 @@ import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
-import { consumeNewDocumentTitleFocus } from "@/lib/new-document-focus";
+import {
+  consumeNewDocumentTitleFocus,
+  releaseTemporaryKeyboardHolder,
+} from "@/lib/new-document-focus";
 
 const ShareModal = dynamic(
   () => import("@/components/editor/share-modal").then((module) => module.ShareModal),
@@ -104,26 +107,26 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     router.prefetch("/");
   }, [router]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!consumeNewDocumentTitleFocus(initialDocument.id)) {
       return;
     }
 
-    const animationFrameId = window.requestAnimationFrame(() => {
-      const input = titleInputRef.current;
+    const input = titleInputRef.current;
 
-      if (!input) {
-        return;
-      }
+    if (!input) {
+      releaseTemporaryKeyboardHolder();
+      return;
+    }
 
-      input.focus();
-      input.select();
-      input.setSelectionRange(0, input.value.length);
-    });
-
-    return () => {
-      window.cancelAnimationFrame(animationFrameId);
-    };
+    // Move focus from the temporary keyboard holder (see
+    // openKeyboardForNewDocument) to the real title input. Doing this
+    // before the temporary input is removed keeps the mobile virtual
+    // keyboard open across the transfer on iOS Safari.
+    input.focus({ preventScroll: true });
+    input.select();
+    input.setSelectionRange(0, input.value.length);
+    releaseTemporaryKeyboardHolder();
   }, [initialDocument.id]);
 
   const handleTitleInputChange = useCallback(

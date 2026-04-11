@@ -12,7 +12,11 @@ import {
   putCachedDocument,
   setLastActiveOwner,
 } from "@/lib/doc-cache";
-import { markNewDocumentForTitleFocus } from "@/lib/new-document-focus";
+import {
+  markNewDocumentForTitleFocus,
+  openKeyboardForNewDocument,
+  releaseTemporaryKeyboardHolder,
+} from "@/lib/new-document-focus";
 
 type DocumentListClientProps = {
   documents: CachedDocumentListItem[];
@@ -62,6 +66,13 @@ export function DocumentListClient({
 
   const handleCreateDocument = useCallback(async () => {
     if (isCreating || !userId) return;
+
+    // Open the mobile keyboard synchronously while still inside the user's
+    // tap gesture. iOS Safari only opens the virtual keyboard when focus()
+    // is called in direct response to a trusted user event, so we can't
+    // wait for the async document insert + navigation to finish.
+    openKeyboardForNewDocument();
+
     setIsCreating(true);
 
     try {
@@ -106,6 +117,7 @@ export function DocumentListClient({
         router.push(`/doc/${data.id}`);
       });
     } catch (err) {
+      releaseTemporaryKeyboardHolder();
       window.alert(err instanceof Error ? err.message : "Failed to create document.");
       setIsCreating(false);
     }
