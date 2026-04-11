@@ -14,10 +14,15 @@ import {
 import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { useEffect, useRef } from "react";
 
+export type CodeMirrorEditorApi = {
+  focus: () => void;
+};
+
 type CodeMirrorEditorProps = {
   documentId: string;
   initialValue: string;
   onChange?: (doc: Text) => void;
+  onReady?: (api: CodeMirrorEditorApi | null) => void;
   extensions: Extension[];
   editable?: boolean;
   readOnly?: boolean;
@@ -28,6 +33,7 @@ export function CodeMirrorEditor({
   documentId,
   initialValue,
   onChange,
+  onReady,
   extensions,
   editable = true,
   readOnly = false,
@@ -36,10 +42,15 @@ export function CodeMirrorEditor({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
+  const onReadyRef = useRef(onReady);
 
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -82,8 +93,14 @@ export function CodeMirrorEditor({
     });
 
     viewRef.current = view;
+    onReadyRef.current?.({
+      focus: () => {
+        view.focus();
+      },
+    });
 
     return () => {
+      onReadyRef.current?.(null);
       view.destroy();
       if (viewRef.current === view) {
         viewRef.current = null;

@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { type Text } from "@codemirror/state";
 import Link from "next/link";
-import type { ComponentType, MouseEvent, ChangeEvent } from "react";
+import type { ComponentType, KeyboardEvent, MouseEvent, ChangeEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -24,10 +24,15 @@ const ShareModal = dynamic(
   },
 );
 
+type EditorWorkspaceApi = {
+  focus: () => void;
+};
+
 type EditorWorkspaceProps = {
   documentId: string;
   initialValue: string;
   onChange: (doc: Text) => void;
+  onReady?: (api: EditorWorkspaceApi | null) => void;
   onUploadingImagesCountChange?: (count: number) => void;
   owner: string;
   placeholder?: string;
@@ -67,6 +72,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [uploadingImagesCount, setUploadingImagesCount] = useState(0);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const editorWorkspaceApiRef = useRef<EditorWorkspaceApi | null>(null);
   const {
     formattedUpdated,
     flushLatestDraft,
@@ -136,6 +142,28 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     [handleTitleChange],
   );
 
+  const handleTitleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      event.preventDefault();
+
+      // Transfer focus from the title input to the body editor inside the
+      // same user-gesture event so the iOS virtual keyboard stays up.
+      editorWorkspaceApiRef.current?.focus();
+    },
+    [],
+  );
+
+  const handleEditorWorkspaceReady = useCallback(
+    (api: EditorWorkspaceApi | null) => {
+      editorWorkspaceApiRef.current = api;
+    },
+    [],
+  );
+
   const handleOpenShareModal = useCallback(() => {
     setIsShareModalOpen(true);
   }, []);
@@ -171,8 +199,10 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
           ref={titleInputRef}
           value={title}
           onChange={handleTitleInputChange}
+          onKeyDown={handleTitleKeyDown}
           onBlur={handleTitleBlur}
           placeholder="Untitled"
+          enterKeyHint="next"
           className="editor-title-input mb-4 w-full border-none bg-transparent p-0 text-[var(--ink)] outline-none"
           aria-label="Document title"
         />
@@ -234,6 +264,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
             documentId={initialDocument.id}
             initialValue={initialDocument.content}
             onChange={handleEditorChange}
+            onReady={handleEditorWorkspaceReady}
             onUploadingImagesCountChange={setUploadingImagesCount}
             owner={initialDocument.owner}
             placeholder="|..."
