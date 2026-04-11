@@ -50,6 +50,7 @@ export function EditorWorkspace({
       markdownLiveFormatting,
       imageDropPasteHandlers,
       EditorView.lineWrapping,
+      EditorView.contentAttributes.of({ autocapitalize: "sentences" }),
       editorTheme,
     ],
     [imageDropPasteHandlers],

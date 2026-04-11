@@ -175,6 +175,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
           placeholder="Untitled"
           className="editor-title-input mb-4 w-full border-none bg-transparent p-0 text-[var(--ink)] outline-none"
           aria-label="Document title"
+          autoCapitalize="sentences"
         />
 
         <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
