@@ -34,6 +34,20 @@ const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function waitForTransaction(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 function openDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
 
@@ -69,12 +83,11 @@ function openDB(): Promise<IDBDatabase> {
 export async function getCachedDocument(id: string): Promise<CachedDocument | null> {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(DOCS_STORE, "readonly");
-      const request = tx.objectStore(DOCS_STORE).get(id);
-      request.onsuccess = () => resolve(request.result ?? null);
-      request.onerror = () => reject(request.error);
-    });
+    const tx = db.transaction(DOCS_STORE, "readonly");
+    const document = await requestToPromise<CachedDocument | undefined>(
+      tx.objectStore(DOCS_STORE).get(id),
+    );
+    return document ?? null;
   } catch {
     return null;
   }
@@ -93,23 +106,18 @@ export async function getCachedDocumentListForOwner(
 ): Promise<CachedDocumentListItem[]> {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(DOCS_STORE, "readonly");
-      const request = tx.objectStore(DOCS_STORE).index("owner").getAll(owner);
+    const tx = db.transaction(DOCS_STORE, "readonly");
+    const documents = await requestToPromise<CachedDocument[]>(
+      tx.objectStore(DOCS_STORE).index("owner").getAll(owner),
+    );
 
-      request.onsuccess = () => {
-        const documents = (request.result as CachedDocument[])
-          .map((document) => ({
-            id: document.id,
-            title: document.title,
-            updated_at: document.updated_at,
-          }))
-          .sort((left, right) => right.updated_at.localeCompare(left.updated_at));
-
-        resolve(documents);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    return documents
+      .map((document) => ({
+        id: document.id,
+        title: document.title,
+        updated_at: document.updated_at,
+      }))
+      .sort((left, right) => right.updated_at.localeCompare(left.updated_at));
   } catch {
     return [];
   }
@@ -138,12 +146,9 @@ export async function reconcileCachedDocumentWithServer(
 export async function putCachedDocument(doc: CachedDocument): Promise<void> {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(DOCS_STORE, "readwrite");
-      tx.objectStore(DOCS_STORE).put(doc);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    const tx = db.transaction(DOCS_STORE, "readwrite");
+    tx.objectStore(DOCS_STORE).put(doc);
+    await waitForTransaction(tx);
   } catch {
     // Silently ignore – cache is best-effort
   }
@@ -152,12 +157,9 @@ export async function putCachedDocument(doc: CachedDocument): Promise<void> {
 export async function deleteCachedDocument(id: string): Promise<void> {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(DOCS_STORE, "readwrite");
-      tx.objectStore(DOCS_STORE).delete(id);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    const tx = db.transaction(DOCS_STORE, "readwrite");
+    tx.objectStore(DOCS_STORE).delete(id);
+    await waitForTransaction(tx);
   } catch {
     // Silently ignore
   }
@@ -170,12 +172,9 @@ export async function deleteCachedDocument(id: string): Promise<void> {
 export async function setMeta(key: string, value: string): Promise<void> {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(META_STORE, "readwrite");
-      tx.objectStore(META_STORE).put({ key, value });
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    const tx = db.transaction(META_STORE, "readwrite");
+    tx.objectStore(META_STORE).put({ key, value });
+    await waitForTransaction(tx);
   } catch {
     // Silently ignore
   }
@@ -184,12 +183,11 @@ export async function setMeta(key: string, value: string): Promise<void> {
 export async function getMeta(key: string): Promise<string | null> {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(META_STORE, "readonly");
-      const request = tx.objectStore(META_STORE).get(key);
-      request.onsuccess = () => resolve(request.result?.value ?? null);
-      request.onerror = () => reject(request.error);
-    });
+    const tx = db.transaction(META_STORE, "readonly");
+    const meta = await requestToPromise<{ value?: string } | undefined>(
+      tx.objectStore(META_STORE).get(key),
+    );
+    return meta?.value ?? null;
   } catch {
     return null;
   }
@@ -206,12 +204,9 @@ export function getLastActiveOwner(): Promise<string | null> {
 export async function clearLastActiveOwner(): Promise<void> {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(META_STORE, "readwrite");
-      tx.objectStore(META_STORE).delete(LAST_ACTIVE_OWNER_KEY);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    const tx = db.transaction(META_STORE, "readwrite");
+    tx.objectStore(META_STORE).delete(LAST_ACTIVE_OWNER_KEY);
+    await waitForTransaction(tx);
   } catch {
     // Silently ignore
   }
@@ -227,15 +222,11 @@ export async function clearLastActiveOwner(): Promise<void> {
 export async function getDirtyDocuments(): Promise<CachedDocument[]> {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(DOCS_STORE, "readonly");
-      const request = tx.objectStore(DOCS_STORE).getAll();
-      request.onsuccess = () => {
-        const docs = (request.result as CachedDocument[]).filter((d) => d._dirty);
-        resolve(docs);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    const tx = db.transaction(DOCS_STORE, "readonly");
+    const documents = await requestToPromise<CachedDocument[]>(
+      tx.objectStore(DOCS_STORE).getAll(),
+    );
+    return documents.filter((document) => document._dirty);
   } catch {
     return [];
   }
@@ -259,11 +250,7 @@ export async function syncDocumentList(
     const store = tx.objectStore(DOCS_STORE);
 
     // Get all existing docs to check for dirty state
-    const existing: CachedDocument[] = await new Promise((resolve, reject) => {
-      const req = store.getAll();
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
+    const existing = await requestToPromise<CachedDocument[]>(store.getAll());
 
     const existingForOwner = existing.filter((doc) => doc.owner === owner);
     const dirtyIds = new Set(existingForOwner.filter((d) => d._dirty).map((d) => d.id));
@@ -302,10 +289,7 @@ export async function syncDocumentList(
       }
     }
 
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    await waitForTransaction(tx);
 
     await setMeta("lastSyncAt", new Date().toISOString());
   } catch {

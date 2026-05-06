@@ -1,18 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-function normalizeNextPath(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return "/";
-  }
-
-  return value;
-}
+import { normalizeInternalPath } from "@/lib/app-url";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const code = searchParams.get("code");
-  const next = normalizeNextPath(searchParams.get("next"));
+  const next = normalizeInternalPath(searchParams.get("next"));
 
   if (!code) {
     const errorUrl = new URL("/auth", request.nextUrl.origin);

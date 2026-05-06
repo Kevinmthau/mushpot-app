@@ -3,12 +3,13 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { normalizeInternalPath } from "@/lib/app-url";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 function AuthCallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get("next") || "/";
+  const next = normalizeInternalPath(searchParams.get("next"));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {

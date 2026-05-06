@@ -14,15 +14,26 @@ This is a Next.js App Router project with TypeScript, Tailwind v4, Supabase, and
 - `public/`: manifest, service worker, offline page, and app icons
 - `proxy.ts`: auth protection and Supabase session/cookie handling for private routes
 
+## Architecture Notes & Common Pitfalls
+- Keep `app/(private)/layout.tsx` dynamic. Private pages need authenticated Supabase state at runtime and should not be prerendered during `next build`.
+- Use `lib/app-url.ts` for auth `next` path normalization, forwarded-host app-origin resolution, and `/auth` redirect URL construction.
+- Use `lib/documents.ts` for document select strings, list/editor document shapes, display titles, and cache/editor mapping helpers.
+- `components/documents/use-document-list.ts` owns the cache-first document list flow.
+- `components/editor/use-editor-document.ts` owns cache-first editor loading, session validation, and server reconciliation.
+- `components/editor/use-document-draft.ts` owns local draft state, debounced cache writes, autosave retries, and share-state timestamp handling.
+- Keep `lib/doc-cache.ts` browser-only/best-effort IndexedDB logic and keep Supabase persistence in `lib/document-sync.ts` or feature hooks.
+- If changing Markdown image behavior, keep `components/editor/image-upload-utils.ts`, live editor rendering, and shared-document rendering aligned.
+
 ## Build, Test, and Development Commands
 - `npm run newchange -- <branch-name>`: create a task branch from local `main` when explicitly requested
 - `npm install`: install dependencies
 - `npm run dev`: start local dev server at `http://localhost:3000`
 - `npm run lint`: run ESLint checks
+- `npm run typecheck`: run TypeScript without emitting files
 - `npm run build`: create production build (required before merge)
 - `npm run start`: run built app locally
 
-Use `npm run lint && npm run build` before opening a PR.
+Use `npm run lint && npm run typecheck && npm run build` before opening a PR.
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript (`.ts`/`.tsx`), 2-space indentation, semicolons enabled.
@@ -36,6 +47,7 @@ Use `npm run lint && npm run build` before opening a PR.
 ## Testing Guidelines
 There is no dedicated test framework configured yet. Current quality gate is:
 - lint (`npm run lint`)
+- TypeScript (`npm run typecheck`)
 - production build (`npm run build`)
 
 When adding tests, colocate them near feature code and use clear names like `feature-name.test.ts`.

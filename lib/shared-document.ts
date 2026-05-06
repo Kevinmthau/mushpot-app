@@ -1,18 +1,15 @@
 import { cache } from "react";
 import { headers } from "next/headers";
 
+import { resolveAppOriginFromHeaders } from "@/lib/app-url";
+
 export type SharedDocument = {
   title: string;
   content: string;
   updated_at: string;
 };
 
-const LOCALHOST_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
 const DEFAULT_SHARED_DOCUMENT_DESCRIPTION = "Open this shared document in Mushpot.";
-
-function stripTrailingSlashes(value: string) {
-  return value.replace(/\/+$/, "");
-}
 
 function truncateText(value: string, maxLength: number) {
   if (value.length <= maxLength) {
@@ -41,25 +38,6 @@ function stripMarkdownForPreview(content: string) {
     .replace(/\|/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function buildRequestOriginFromHeaders(
-  headersList: {
-    get(name: string): string | null;
-  },
-  isLocalhost: boolean,
-) {
-  const forwardedHost = headersList.get("x-forwarded-host");
-  const host = (forwardedHost ?? headersList.get("host") ?? "").split(",")[0]?.trim();
-
-  if (!host) {
-    return null;
-  }
-
-  const forwardedProto = headersList.get("x-forwarded-proto")?.split(",")[0]?.trim();
-  const protocol = forwardedProto || (isLocalhost ? "http" : "https");
-
-  return `${protocol}://${host}`;
 }
 
 export function normalizeSharedDocumentTitle(title: string) {
@@ -107,14 +85,6 @@ export const fetchSharedDocument = cache(
 );
 
 export async function resolveAppOrigin() {
-  const configuredAppUrl = stripTrailingSlashes(process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "");
   const headersList = await headers();
-  const host = (headersList.get("x-forwarded-host") ?? headersList.get("host") ?? "")
-    .split(",")[0]
-    ?.trim();
-  const hostname = host?.split(":")[0]?.toLowerCase() ?? "";
-  const isLocalhost = LOCALHOST_HOSTNAMES.has(hostname);
-  const requestOrigin = buildRequestOriginFromHeaders(headersList, isLocalhost);
-
-  return isLocalhost && configuredAppUrl ? configuredAppUrl : requestOrigin ?? configuredAppUrl;
+  return resolveAppOriginFromHeaders(headersList);
 }

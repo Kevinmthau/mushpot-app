@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { customAlphabet } from "nanoid";
 
+import { getConfiguredAppOrigin } from "@/lib/app-url";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type UseDocumentShareParams = {
@@ -21,16 +22,11 @@ const tokenGenerator = customAlphabet(
   "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_",
   64,
 );
-const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
-
-function stripTrailingSlashes(value: string) {
-  return value.replace(/\/+$/, "");
-}
 
 function resolveShareOrigin() {
-  const normalizedConfiguredAppUrl = stripTrailingSlashes(configuredAppUrl);
-  if (normalizedConfiguredAppUrl) {
-    return normalizedConfiguredAppUrl;
+  const configuredAppOrigin = getConfiguredAppOrigin();
+  if (configuredAppOrigin) {
+    return configuredAppOrigin;
   }
 
   if (typeof window === "undefined") {

@@ -3,10 +3,10 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { type CachedDocument, putCachedDocument } from "@/lib/doc-cache";
+import { putCachedDocument } from "@/lib/doc-cache";
+import { EDITOR_DOCUMENT_SELECT, toCachedDocument } from "@/lib/documents";
 
 type UseDocumentCloneParams = {
-  documentId: string;
   owner: string;
   getLatestTitle: () => string;
   getLatestContent: () => string;
@@ -40,24 +40,14 @@ export function useDocumentClone({
           title: `${getLatestTitleRef.current()} (copy)`,
           content: getLatestContentRef.current(),
         })
-        .select("id, owner, title, content, updated_at, share_enabled, share_token")
+        .select(EDITOR_DOCUMENT_SELECT)
         .single();
 
       if (error || !data) {
         throw new Error(error?.message ?? "Unable to clone document.");
       }
 
-      const cachedDocument: CachedDocument = {
-        id: data.id,
-        owner: data.owner,
-        title: data.title,
-        content: data.content,
-        updated_at: data.updated_at,
-        share_enabled: data.share_enabled,
-        share_token: data.share_token,
-        _dirty: false,
-      };
-      await putCachedDocument(cachedDocument);
+      await putCachedDocument(toCachedDocument(data));
 
       router.push(`/doc/${data.id}`);
     } catch (err) {

@@ -6,12 +6,13 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 
 import { preloadEditorClient } from "@/components/editor/editor-lazy";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
+import { putCachedDocument, setLastActiveOwner } from "@/lib/doc-cache";
 import {
-  type CachedDocument,
-  type CachedDocumentListItem,
-  putCachedDocument,
-  setLastActiveOwner,
-} from "@/lib/doc-cache";
+  EDITOR_DOCUMENT_SELECT,
+  getDocumentDisplayTitle,
+  toCachedDocument,
+  type DocumentListItem,
+} from "@/lib/documents";
 import {
   markNewDocumentForTitleFocus,
   openKeyboardForNewDocument,
@@ -19,8 +20,8 @@ import {
 } from "@/lib/new-document-focus";
 
 type DocumentListClientProps = {
-  documents: CachedDocumentListItem[];
-  userId: string | null;
+  documents: DocumentListItem[];
+  userId: string;
 };
 
 export function DocumentListClient({
@@ -65,7 +66,7 @@ export function DocumentListClient({
   }, []);
 
   const handleCreateDocument = useCallback(async () => {
-    if (isCreating || !userId) return;
+    if (isCreating) return;
 
     // Open the mobile keyboard synchronously while still inside the user's
     // tap gesture. iOS Safari only opens the virtual keyboard when focus()
@@ -81,24 +82,14 @@ export function DocumentListClient({
       const { data, error } = await supabase
         .from("documents")
         .insert({ owner: userId, title: "Untitled", content: "" })
-        .select("id, owner, title, content, updated_at, share_enabled, share_token")
+        .select(EDITOR_DOCUMENT_SELECT)
         .single();
 
       if (error || !data) {
         throw new Error(error?.message ?? "Unable to create document.");
       }
 
-      const cachedDocument: CachedDocument = {
-        id: data.id,
-        owner: data.owner,
-        title: data.title,
-        content: data.content,
-        updated_at: data.updated_at,
-        share_enabled: data.share_enabled,
-        share_token: data.share_token,
-        _dirty: false,
-      };
-      await putCachedDocument(cachedDocument);
+      await putCachedDocument(toCachedDocument(data));
       void setLastActiveOwner(data.owner);
 
       setOptimisticDocumentIds((currentIds) => {
@@ -131,7 +122,7 @@ export function DocumentListClient({
         onFocus={handleWarmEditor}
         onPointerEnter={handleWarmEditor}
         onTouchStart={handleWarmEditor}
-        disabled={isCreating || !userId}
+        disabled={isCreating}
         aria-label="New document"
         title="New document"
         className="group block w-full appearance-none rounded-2xl border-0 bg-transparent p-0 text-left transition hover:bg-[var(--paper)] hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)] disabled:opacity-60"
@@ -154,7 +145,7 @@ export function DocumentListClient({
           className="group block rounded-2xl bg-[var(--paper)] px-4 py-3 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)] sm:px-5 sm:py-4"
         >
           <p className="document-title-text line-clamp-1 text-[var(--ink)]">
-            {doc.title || "Untitled"}
+            {getDocumentDisplayTitle(doc.title)}
           </p>
           <p className="mt-1 text-xs text-[var(--muted)]">
             {formatRelativeTimestamp(doc.updated_at)}

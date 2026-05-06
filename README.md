@@ -47,6 +47,17 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - `public`: manifest, service worker, offline page, and app icons
 - `proxy.ts`: route protection and auth-cookie/session refresh handling
 
+## Architecture Notes
+
+- Private pages are dynamic server routes. Keep `app/(private)/layout.tsx` dynamic so production builds do not try to prerender authenticated Supabase pages.
+- Auth redirect path validation and app-origin resolution live in `lib/app-url.ts`. Use those helpers instead of open-coding `next` path or forwarded-host logic.
+- Shared document metadata and Open Graph generation use `lib/shared-document.ts`, which calls the `get-shared-doc` Edge Function rather than querying private tables directly.
+- Document row select strings, editor/list shapes, and cache/editor mapping helpers live in `lib/documents.ts`.
+- `components/documents/use-document-list.ts` owns the cache-first document list load and background Supabase refresh.
+- `components/editor/use-editor-document.ts` owns cache-first editor document loading, session validation, and Supabase reconciliation.
+- `components/editor/use-document-draft.ts` owns local draft state, debounced IndexedDB writes, autosave retries, and share-state timestamp merging.
+- `lib/doc-cache.ts` is best-effort IndexedDB storage. `lib/document-sync.ts` retries dirty cached documents on startup, focus, online, and interval triggers through the PWA startup components.
+
 ## Environment Variables
 
 Create `.env.local` with:
@@ -61,6 +72,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 Notes:
 
 - `NEXT_PUBLIC_APP_URL` is used for auth redirect generation and shared-link origins.
+- `npm run build` does not require Supabase env vars, but running authenticated pages does.
 - `SUPABASE_SERVICE_ROLE_KEY` is not used by the Next.js app directly. It is required by the Supabase Edge Function runtime when serving `get-shared-doc` locally.
 
 ## Supabase Setup
@@ -90,8 +102,11 @@ Quality gate before merge:
 
 ```bash
 npm run lint
+npm run typecheck
 npm run build
 ```
+
+There is no dedicated test runner configured yet.
 
 ## Deployment Notes
 

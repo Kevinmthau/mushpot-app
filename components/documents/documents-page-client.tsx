@@ -1,17 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 import { DocumentListClient } from "@/components/documents/document-list-client";
+import { useDocumentList } from "@/components/documents/use-document-list";
 import PullToRefresh from "@/components/pull-to-refresh";
-import {
-  clearLastActiveOwner,
-  getCachedDocumentListForOwner,
-  syncDocumentList,
-  setLastActiveOwner,
-  type CachedDocumentListItem,
-} from "@/lib/doc-cache";
+import { clearLastActiveOwner } from "@/lib/doc-cache";
 
 type DocumentsPageClientProps = {
   initialUserId: string;
@@ -21,77 +16,7 @@ export function DocumentsPageClient({
   initialUserId,
 }: DocumentsPageClientProps) {
   const router = useRouter();
-  const [documents, setDocuments] = useState<CachedDocumentListItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const requestIdRef = useRef(0);
-  const hasDocumentsRef = useRef(false);
-  hasDocumentsRef.current = documents.length > 0;
-
-  // Eagerly start loading the Supabase module so it's warm by the time we need it
-  const supabaseModuleRef = useRef<Promise<typeof import("@/lib/supabase/client")> | null>(null);
-  if (!supabaseModuleRef.current) {
-    supabaseModuleRef.current = import("@/lib/supabase/client");
-  }
-
-  const loadDocuments = useCallback(async () => {
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-
-    setError(null);
-
-    try {
-      const { getSupabaseBrowserClient } = await supabaseModuleRef.current!;
-      const supabase = await getSupabaseBrowserClient();
-      const { data, error: fetchError } = await supabase
-        .from("documents")
-        .select("id, title, updated_at")
-        .eq("owner", initialUserId)
-        .order("updated_at", { ascending: false });
-
-      if (requestId !== requestIdRef.current) {
-        return;
-      }
-
-      if (fetchError) {
-        if (!hasDocumentsRef.current) {
-          setError(fetchError.message);
-        }
-        return;
-      }
-
-      const nextDocuments = (data ?? []) as CachedDocumentListItem[];
-      setDocuments(nextDocuments);
-      void syncDocumentList(nextDocuments, initialUserId);
-    } catch {
-      if (requestId !== requestIdRef.current) {
-        return;
-      }
-
-      if (!hasDocumentsRef.current) {
-        setError("Unable to load documents. Please check your connection.");
-      }
-    }
-  }, [initialUserId]);
-
-  useEffect(() => {
-    let isActive = true;
-
-    void setLastActiveOwner(initialUserId);
-
-    // Show cached data from IndexedDB for instant display
-    void getCachedDocumentListForOwner(initialUserId).then((cached) => {
-      if (!isActive || cached.length === 0) return;
-      setDocuments(cached);
-    });
-
-    // Refresh from Supabase in background
-    void loadDocuments();
-
-    return () => {
-      isActive = false;
-      requestIdRef.current += 1;
-    };
-  }, [initialUserId, loadDocuments]);
+  const { documents, error, refreshDocuments } = useDocumentList(initialUserId);
 
   const handleSignOut = useCallback(async () => {
     const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
@@ -102,7 +27,7 @@ export function DocumentsPageClient({
   }, [router]);
 
   return (
-    <PullToRefresh onRefresh={loadDocuments}>
+    <PullToRefresh onRefresh={refreshDocuments}>
       <main className="mx-auto min-h-dvh w-full max-w-[880px] px-4 py-8 sm:px-6 sm:py-12">
         <header className="mb-6 flex items-center justify-end sm:mb-10">
           <button

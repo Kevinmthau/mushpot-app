@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 
 import { useDocumentClone } from "@/components/editor/use-document-clone";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
+import { EditorPreviewFallback } from "@/components/editor/editor-loading";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
@@ -85,7 +86,6 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     updateShareState,
   } = useDocumentDraft(initialDocument);
   const { isCloning, handleClone } = useDocumentClone({
-    documentId: initialDocument.id,
     owner: initialDocument.owner,
     getLatestTitle: getLatestTitle,
     getLatestContent: getLatestContent,
@@ -258,28 +258,6 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
   );
 }
 
-function EditorWorkspaceFallback({ initialValue }: Pick<EditorWorkspaceProps, "initialValue">) {
-  const previewContent = initialValue.trim();
-
-  if (!previewContent) {
-    return (
-      <div className="space-y-3">
-        <div className="h-4 w-full animate-pulse rounded bg-[var(--line)]" />
-        <div className="h-4 w-5/6 animate-pulse rounded bg-[var(--line)]" />
-        <div className="h-4 w-4/6 animate-pulse rounded bg-[var(--line)]" />
-        <div className="h-4 w-full animate-pulse rounded bg-[var(--line)]" />
-        <div className="h-4 w-3/4 animate-pulse rounded bg-[var(--line)]" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-h-[60vh] overflow-hidden whitespace-pre-wrap break-words font-[var(--font-writing)] text-[var(--doc-title-size-mobile)] leading-[1.75] text-[var(--ink)]">
-      {previewContent}
-    </div>
-  );
-}
-
 function EditorWorkspaceLoader(props: EditorWorkspaceProps) {
   const [LoadedWorkspace, setLoadedWorkspace] = useState<ComponentType<EditorWorkspaceProps> | null>(
     () => resolvedEditorWorkspace,
@@ -308,7 +286,7 @@ function EditorWorkspaceLoader(props: EditorWorkspaceProps) {
   }, [LoadedWorkspace]);
 
   if (!LoadedWorkspace) {
-    return <EditorWorkspaceFallback initialValue={props.initialValue} />;
+    return <EditorPreviewFallback initialValue={props.initialValue} />;
   }
 
   return <LoadedWorkspace {...props} />;

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { AuthForm } from "@/components/auth/auth-form";
+import { normalizeInternalPath } from "@/lib/app-url";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -11,8 +12,7 @@ type AuthPageProps = {
 
 export default async function AuthPage({ searchParams }: AuthPageProps) {
   const { next, sent, error } = await searchParams;
-  const nextPath =
-    next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  const nextPath = normalizeInternalPath(next);
   const supabase = await createSupabaseServerClient();
   const {
     data: { session },
