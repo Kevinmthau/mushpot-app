@@ -4,12 +4,14 @@
     "supabase": {
       "source": "supabase/agent-skills",
       "sourceType": "github",
+      "ref": "daaed4afe2c78cbdbf92a98f43540cb0293b512d",
       "skillPath": "skills/supabase/SKILL.md",
       "computedHash": "45a3cdccc364a4bbd6cdf700fc069e9f24ebc0428098746cbfbf8b18a5e160d2"
     },
     "supabase-postgres-best-practices": {
       "source": "supabase/agent-skills",
       "sourceType": "github",
+      "ref": "daaed4afe2c78cbdbf92a98f43540cb0293b512d",
       "skillPath": "skills/supabase-postgres-best-practices/SKILL.md",
       "computedHash": "d606a1146be6d54fb9e73f718b5320b9acac5ff2ba2d7230a555df4b5a923b4a"
     }
