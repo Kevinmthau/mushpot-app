@@ -18,12 +18,18 @@ import {
   SUPPORTED_MEDIA_FORMATS_LABEL,
   type SupportedMediaKind,
 } from "@/components/editor/image-upload-utils";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import {
+  getSupabaseBrowserClient,
+  type SupabaseBrowserClient,
+} from "@/lib/supabase/client";
 
 type UseMediaUploadInsertionParams = {
   documentId: string;
   owner: string;
 };
+
+const RESUMABLE_UPLOAD_THRESHOLD_BYTES = 6 * 1024 * 1024;
+const TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024;
 
 function getMediaUploadLimit(kind: SupportedMediaKind) {
   return kind === "video" ? MAX_VIDEO_SIZE_BYTES : MAX_IMAGE_SIZE_BYTES;
@@ -31,6 +37,149 @@ function getMediaUploadLimit(kind: SupportedMediaKind) {
 
 function formatMegabytes(bytes: number) {
   return `${Math.floor(bytes / (1024 * 1024))}MB`;
+}
+
+function getRequiredEnvValue(name: string, value: string | undefined) {
+  if (!value) {
+    throw new Error(`Missing ${name} environment variable.`);
+  }
+
+  return value;
+}
+
+function getResumableUploadEndpoint(supabaseUrlValue: string) {
+  const supabaseUrl = new URL(supabaseUrlValue);
+  const hostParts = supabaseUrl.hostname.split(".");
+
+  if (
+    hostParts.length === 3 &&
+    hostParts[1] === "supabase" &&
+    hostParts[2] === "co"
+  ) {
+    supabaseUrl.hostname = `${hostParts[0]}.storage.supabase.co`;
+  }
+
+  supabaseUrl.pathname = "/storage/v1/upload/resumable";
+  supabaseUrl.search = "";
+  supabaseUrl.hash = "";
+
+  return supabaseUrl.toString();
+}
+
+async function uploadMediaWithResumableUpload({
+  bucket,
+  contentType,
+  file,
+  path,
+  supabase,
+}: {
+  bucket: string;
+  contentType: string | undefined;
+  file: File;
+  path: string;
+  supabase: SupabaseBrowserClient;
+}) {
+  const supabaseUrl = getRequiredEnvValue(
+    "NEXT_PUBLIC_SUPABASE_URL",
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+  );
+  const supabaseAnonKey = getRequiredEnvValue(
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  );
+  const { Upload } = await import("tus-js-client");
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    throw sessionError;
+  }
+
+  if (!session?.access_token) {
+    throw new Error("Missing Supabase session for upload.");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const upload = new Upload(file, {
+      endpoint: getResumableUploadEndpoint(supabaseUrl),
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+      headers: {
+        apikey: supabaseAnonKey,
+        authorization: `Bearer ${session.access_token}`,
+      },
+      uploadDataDuringCreation: true,
+      storeFingerprintForResuming: false,
+      removeFingerprintOnSuccess: true,
+      chunkSize: TUS_CHUNK_SIZE_BYTES,
+      metadata: {
+        bucketName: bucket,
+        objectName: path,
+        contentType: contentType || file.type || "application/octet-stream",
+        cacheControl: "3600",
+      },
+      onError(error) {
+        reject(error);
+      },
+      onSuccess() {
+        resolve();
+      },
+    });
+
+    upload.start();
+  });
+}
+
+async function uploadMediaToStorage({
+  bucket,
+  contentType,
+  file,
+  path,
+  supabase,
+}: {
+  bucket: string;
+  contentType: string | undefined;
+  file: File;
+  path: string;
+  supabase: SupabaseBrowserClient;
+}) {
+  if (file.size > RESUMABLE_UPLOAD_THRESHOLD_BYTES) {
+    await uploadMediaWithResumableUpload({
+      bucket,
+      contentType,
+      file,
+      path,
+      supabase,
+    });
+    return;
+  }
+
+  const { error } = await supabase.storage.from(bucket).upload(path, file, {
+    contentType,
+    upsert: false,
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+function getUploadErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  return null;
 }
 
 export function useMediaUploadInsertion({
@@ -90,16 +239,13 @@ export function useMediaUploadInsertion({
             const path = `${owner}/${documentId}/${randomId}-${safeName}`;
             const bucket = getDocumentMediaBucket(mediaKind);
 
-            const { error } = await supabase.storage
-              .from(bucket)
-              .upload(path, file, {
-                contentType,
-                upsert: false,
-              });
-
-            if (error) {
-              throw error;
-            }
+            await uploadMediaToStorage({
+              bucket,
+              contentType,
+              file,
+              path,
+              supabase,
+            });
 
             if (!mountedRef.current) {
               return;
@@ -126,7 +272,12 @@ export function useMediaUploadInsertion({
             insertPosition = safeInsertPosition + markdownMedia.length;
           } catch (error) {
             console.error("Media upload failed", error);
-            failures.push(`Failed to upload ${file.name || "a file"}.`);
+            const message = getUploadErrorMessage(error);
+            failures.push(
+              message
+                ? `Failed to upload ${file.name || "a file"}: ${message}`
+                : `Failed to upload ${file.name || "a file"}.`,
+            );
           }
         }
       } finally {
