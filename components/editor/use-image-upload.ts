@@ -88,29 +88,34 @@ async function uploadMediaWithResumableUpload({
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   );
   const { Upload } = await import("tus-js-client");
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    throw sessionError;
-  }
-
-  if (!session?.access_token) {
-    throw new Error("Missing Supabase session for upload.");
-  }
+  let uploadedPath = path;
 
   await new Promise<void>((resolve, reject) => {
+    const pathFolder = path.slice(0, path.lastIndexOf("/") + 1);
     const upload = new Upload(file, {
       endpoint: getResumableUploadEndpoint(supabaseUrl),
       retryDelays: [0, 3000, 5000, 10000, 20000],
       headers: {
         apikey: supabaseAnonKey,
-        authorization: `Bearer ${session.access_token}`,
+      },
+      async onBeforeRequest(request) {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        if (!session?.access_token) {
+          throw new Error("Missing Supabase session for upload.");
+        }
+
+        request.setHeader("authorization", `Bearer ${session.access_token}`);
       },
       uploadDataDuringCreation: true,
-      storeFingerprintForResuming: false,
+      storeFingerprintForResuming: true,
       removeFingerprintOnSuccess: true,
       chunkSize: TUS_CHUNK_SIZE_BYTES,
       metadata: {
@@ -127,8 +132,31 @@ async function uploadMediaWithResumableUpload({
       },
     });
 
-    upload.start();
+    upload
+      .findPreviousUploads()
+      .then((previousUploads) => {
+        const previousUpload = previousUploads.find(
+          (candidate) =>
+            candidate.metadata.bucketName === bucket &&
+            candidate.metadata.objectName.startsWith(pathFolder),
+        );
+
+        if (previousUpload) {
+          uploadedPath = previousUpload.metadata.objectName;
+          upload.options.metadata = {
+            ...upload.options.metadata,
+            bucketName: bucket,
+            objectName: uploadedPath,
+          };
+          upload.resumeFromPreviousUpload(previousUpload);
+        }
+
+        upload.start();
+      })
+      .catch(reject);
   });
+
+  return uploadedPath;
 }
 
 async function uploadMediaToStorage({
@@ -145,14 +173,13 @@ async function uploadMediaToStorage({
   supabase: SupabaseBrowserClient;
 }) {
   if (file.size > RESUMABLE_UPLOAD_THRESHOLD_BYTES) {
-    await uploadMediaWithResumableUpload({
+    return uploadMediaWithResumableUpload({
       bucket,
       contentType,
       file,
       path,
       supabase,
     });
-    return;
   }
 
   const { error } = await supabase.storage.from(bucket).upload(path, file, {
@@ -163,6 +190,8 @@ async function uploadMediaToStorage({
   if (error) {
     throw error;
   }
+
+  return path;
 }
 
 function getUploadErrorMessage(error: unknown) {
@@ -239,7 +268,7 @@ export function useMediaUploadInsertion({
             const path = `${owner}/${documentId}/${randomId}-${safeName}`;
             const bucket = getDocumentMediaBucket(mediaKind);
 
-            await uploadMediaToStorage({
+            const uploadedPath = await uploadMediaToStorage({
               bucket,
               contentType,
               file,
@@ -251,7 +280,7 @@ export function useMediaUploadInsertion({
               return;
             }
 
-            const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+            const { data } = supabase.storage.from(bucket).getPublicUrl(uploadedPath);
             const markdownMedia = buildEmbeddedMediaMarkdown(
               view,
               insertPosition,
