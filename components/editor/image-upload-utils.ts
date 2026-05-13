@@ -115,7 +115,7 @@ export function ensureStorageFileNameMatchesMediaKind(
   mimeType: string | null | undefined,
 ) {
   const extensionKind = getSupportedMediaKindFromExtension(getFileExtension(fileName));
-  if (extensionKind === kind || (kind === "image" && extensionKind === null)) {
+  if (extensionKind === kind) {
     return fileName;
   }
 
