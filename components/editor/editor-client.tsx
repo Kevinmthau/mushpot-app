@@ -29,7 +29,7 @@ type EditorWorkspaceProps = {
   documentId: string;
   initialValue: string;
   onChange: (doc: Text) => void;
-  onUploadingImagesCountChange?: (count: number) => void;
+  onUploadingMediaCountChange?: (count: number) => void;
   owner: string;
   placeholder?: string;
 };
@@ -66,7 +66,7 @@ export function EditorClient(props: EditorClientProps) {
 function EditorClientInner({ initialDocument }: EditorClientProps) {
   const router = useRouter();
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [uploadingImagesCount, setUploadingImagesCount] = useState(0);
+  const [uploadingMediaCount, setUploadingMediaCount] = useState(0);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const {
     formattedUpdated,
@@ -191,12 +191,12 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
           </Link>
           <span>•</span>
           <span>{formattedUpdated}</span>
-          {uploadingImagesCount > 0 ? (
+          {uploadingMediaCount > 0 ? (
             <>
               <span>•</span>
               <span>
-                Uploading {uploadingImagesCount} image
-                {uploadingImagesCount === 1 ? "" : "s"}...
+                Uploading {uploadingMediaCount} file
+                {uploadingMediaCount === 1 ? "" : "s"}...
               </span>
             </>
           ) : null}
@@ -235,7 +235,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
             documentId={initialDocument.id}
             initialValue={initialDocument.content}
             onChange={handleEditorChange}
-            onUploadingImagesCountChange={setUploadingImagesCount}
+            onUploadingMediaCountChange={setUploadingMediaCount}
             owner={initialDocument.owner}
             placeholder="|..."
           />

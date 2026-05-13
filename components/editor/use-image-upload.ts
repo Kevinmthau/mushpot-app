@@ -4,28 +4,39 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 
 import {
-  buildImageMarkdown,
-  IMAGE_BUCKET,
-  inferImageMimeType,
-  isSupportedImageFile,
+  buildEmbeddedMediaMarkdown,
+  DOCUMENT_MEDIA_BUCKET,
+  getSupportedMediaKind,
+  inferMediaMimeType,
+  isSupportedMediaFile,
   MAX_IMAGE_SIZE_BYTES,
-  normalizeImageMimeType,
-  sanitizeImageAltText,
+  MAX_VIDEO_SIZE_BYTES,
+  normalizeMediaMimeType,
+  sanitizeMediaAltText,
   sanitizeStorageFileName,
-  SUPPORTED_IMAGE_FORMATS_LABEL,
+  SUPPORTED_MEDIA_FORMATS_LABEL,
+  type SupportedMediaKind,
 } from "@/components/editor/image-upload-utils";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
-type UseImageUploadInsertionParams = {
+type UseMediaUploadInsertionParams = {
   documentId: string;
   owner: string;
 };
 
-export function useImageUploadInsertion({
+function getMediaUploadLimit(kind: SupportedMediaKind) {
+  return kind === "video" ? MAX_VIDEO_SIZE_BYTES : MAX_IMAGE_SIZE_BYTES;
+}
+
+function formatMegabytes(bytes: number) {
+  return `${Math.floor(bytes / (1024 * 1024))}MB`;
+}
+
+export function useMediaUploadInsertion({
   documentId,
   owner,
-}: UseImageUploadInsertionParams) {
-  const [uploadingImagesCount, setUploadingImagesCount] = useState(0);
+}: UseMediaUploadInsertionParams) {
+  const [uploadingMediaCount, setUploadingMediaCount] = useState(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -34,27 +45,31 @@ export function useImageUploadInsertion({
     };
   }, []);
 
-  const insertUploadedImages = useCallback(
+  const insertUploadedMedia = useCallback(
     async (view: EditorView, files: File[], initialInsertPosition: number) => {
       if (files.length === 0) {
         return;
       }
 
-      setUploadingImagesCount((count) => count + files.length);
+      setUploadingMediaCount((count) => count + files.length);
 
       let insertPosition = initialInsertPosition;
       const failures: string[] = [];
       try {
         for (const file of files) {
-          if (!isSupportedImageFile(file)) {
+          const mediaKind = getSupportedMediaKind(file);
+          if (!mediaKind) {
             failures.push(
-              `${file.name || "File"} is not a supported image. Allowed formats: ${SUPPORTED_IMAGE_FORMATS_LABEL}.`,
+              `${file.name || "File"} is not a supported media file. Allowed formats: ${SUPPORTED_MEDIA_FORMATS_LABEL}.`,
             );
             continue;
           }
 
-          if (file.size > MAX_IMAGE_SIZE_BYTES) {
-            failures.push(`${file.name || "Image"} exceeds the 10MB upload limit.`);
+          const uploadLimit = getMediaUploadLimit(mediaKind);
+          if (file.size > uploadLimit) {
+            failures.push(
+              `${file.name || "File"} exceeds the ${formatMegabytes(uploadLimit)} upload limit.`,
+            );
             continue;
           }
 
@@ -63,12 +78,14 @@ export function useImageUploadInsertion({
             const safeName = sanitizeStorageFileName(file.name);
             const randomId = crypto.randomUUID();
             const path = `${owner}/${documentId}/${randomId}-${safeName}`;
-            const inferredMimeType = inferImageMimeType(file.name);
-            const normalizedMimeType = file.type ? normalizeImageMimeType(file.type) : null;
+            const inferredMimeType = inferMediaMimeType(file.name);
+            const normalizedMimeType = file.type
+              ? normalizeMediaMimeType(file.type)?.mimeType
+              : null;
             const contentType = normalizedMimeType || inferredMimeType || undefined;
 
             const { error } = await supabase.storage
-              .from(IMAGE_BUCKET)
+              .from(DOCUMENT_MEDIA_BUCKET)
               .upload(path, file, {
                 contentType,
                 upsert: false,
@@ -82,11 +99,11 @@ export function useImageUploadInsertion({
               return;
             }
 
-            const { data } = supabase.storage.from(IMAGE_BUCKET).getPublicUrl(path);
-            const markdownImage = buildImageMarkdown(
+            const { data } = supabase.storage.from(DOCUMENT_MEDIA_BUCKET).getPublicUrl(path);
+            const markdownMedia = buildEmbeddedMediaMarkdown(
               view,
               insertPosition,
-              sanitizeImageAltText(file.name),
+              sanitizeMediaAltText(file.name, mediaKind),
               data.publicUrl,
             );
             const safeInsertPosition = Math.min(insertPosition, view.state.doc.length);
@@ -94,20 +111,20 @@ export function useImageUploadInsertion({
               changes: {
                 from: safeInsertPosition,
                 to: safeInsertPosition,
-                insert: markdownImage,
+                insert: markdownMedia,
               },
               selection: {
-                anchor: safeInsertPosition + markdownImage.length,
+                anchor: safeInsertPosition + markdownMedia.length,
               },
             });
-            insertPosition = safeInsertPosition + markdownImage.length;
+            insertPosition = safeInsertPosition + markdownMedia.length;
           } catch (error) {
-            console.error("Image upload failed", error);
-            failures.push(`Failed to upload ${file.name || "an image"}.`);
+            console.error("Media upload failed", error);
+            failures.push(`Failed to upload ${file.name || "a file"}.`);
           }
         }
       } finally {
-        setUploadingImagesCount((count) => Math.max(0, count - files.length));
+        setUploadingMediaCount((count) => Math.max(0, count - files.length));
       }
 
       if (failures.length > 0) {
@@ -117,7 +134,7 @@ export function useImageUploadInsertion({
     [documentId, owner],
   );
 
-  const imageDropPasteHandlers = useMemo(
+  const mediaDropPasteHandlers = useMemo(
     () =>
       EditorView.domEventHandlers({
         dragover: (event) => {
@@ -140,10 +157,10 @@ export function useImageUploadInsertion({
 
           event.preventDefault();
 
-          const files = droppedFiles.filter(isSupportedImageFile);
+          const files = droppedFiles.filter(isSupportedMediaFile);
           if (files.length === 0) {
             window.alert(
-              `Only image files are supported. Allowed formats: ${SUPPORTED_IMAGE_FORMATS_LABEL}.`,
+              `Only image and video files are supported. Allowed formats: ${SUPPORTED_MEDIA_FORMATS_LABEL}.`,
             );
             return true;
           }
@@ -151,7 +168,7 @@ export function useImageUploadInsertion({
           const dropPosition =
             view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
             view.state.selection.main.from;
-          void insertUploadedImages(view, files, dropPosition);
+          void insertUploadedMedia(view, files, dropPosition);
           return true;
         },
         paste: (event, view) => {
@@ -162,23 +179,23 @@ export function useImageUploadInsertion({
 
           event.preventDefault();
 
-          const files = pastedFiles.filter(isSupportedImageFile);
+          const files = pastedFiles.filter(isSupportedMediaFile);
           if (files.length === 0) {
             window.alert(
-              `Only image files are supported. Allowed formats: ${SUPPORTED_IMAGE_FORMATS_LABEL}.`,
+              `Only image and video files are supported. Allowed formats: ${SUPPORTED_MEDIA_FORMATS_LABEL}.`,
             );
             return true;
           }
 
-          void insertUploadedImages(view, files, view.state.selection.main.from);
+          void insertUploadedMedia(view, files, view.state.selection.main.from);
           return true;
         },
       }),
-    [insertUploadedImages],
+    [insertUploadedMedia],
   );
 
   return {
-    imageDropPasteHandlers,
-    uploadingImagesCount,
+    mediaDropPasteHandlers,
+    uploadingMediaCount,
   };
 }

@@ -15,7 +15,7 @@ import {
   markdownLiveFormatting,
 } from "@/components/editor/editor-appearance";
 import { CodeMirrorEditor } from "@/components/editor/code-mirror-editor";
-import { useImageUploadInsertion } from "@/components/editor/use-image-upload";
+import { useMediaUploadInsertion } from "@/components/editor/use-image-upload";
 
 // iOS Safari does not reliably honor autocapitalize="sentences" inside
 // CodeMirror's contenteditable, so the first letter typed into an empty
@@ -75,7 +75,7 @@ type EditorWorkspaceProps = {
   documentId: string;
   initialValue: string;
   onChange: (doc: Text) => void;
-  onUploadingImagesCountChange?: (count: number) => void;
+  onUploadingMediaCountChange?: (count: number) => void;
   owner: string;
   placeholder?: string;
 };
@@ -84,36 +84,36 @@ export function EditorWorkspace({
   documentId,
   initialValue,
   onChange,
-  onUploadingImagesCountChange,
+  onUploadingMediaCountChange,
   owner,
   placeholder,
 }: EditorWorkspaceProps) {
-  const { imageDropPasteHandlers, uploadingImagesCount } = useImageUploadInsertion({
+  const { mediaDropPasteHandlers, uploadingMediaCount } = useMediaUploadInsertion({
     documentId,
     owner,
   });
 
   useEffect(() => {
-    onUploadingImagesCountChange?.(uploadingImagesCount);
-  }, [onUploadingImagesCountChange, uploadingImagesCount]);
+    onUploadingMediaCountChange?.(uploadingMediaCount);
+  }, [onUploadingMediaCountChange, uploadingMediaCount]);
 
   useEffect(() => {
     return () => {
-      onUploadingImagesCountChange?.(0);
+      onUploadingMediaCountChange?.(0);
     };
-  }, [onUploadingImagesCountChange]);
+  }, [onUploadingMediaCountChange]);
 
   const editorExtensions = useMemo(
     () => [
       markdown(),
       markdownLiveFormatting,
-      imageDropPasteHandlers,
+      mediaDropPasteHandlers,
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ autocapitalize: "sentences" }),
       autoCapitalizeSentences,
       editorTheme,
     ],
-    [imageDropPasteHandlers],
+    [mediaDropPasteHandlers],
   );
 
   return (

@@ -11,6 +11,7 @@ import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { isSupportedVideoUrl } from "@/components/editor/image-upload-utils";
 import { getReadingTimeFromText } from "@/lib/document-stats";
 import { getDocumentDisplayTitle } from "@/lib/documents";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
@@ -87,12 +88,27 @@ function SharedMarkdownImage({
     return null;
   }
 
+  const mediaClassName = "rounded-xl border border-[var(--line)] bg-[#f5f3ec]";
+  if (isSupportedVideoUrl(src)) {
+    return (
+      <video
+        aria-label={alt || "Video"}
+        className={mediaClassName}
+        controls
+        playsInline
+        preload="metadata"
+        src={src}
+        style={style}
+      />
+    );
+  }
+
   return (
     // Shared markdown can reference arbitrary remote images without known dimensions.
     // eslint-disable-next-line @next/next/no-img-element
     <img
       alt={alt ?? ""}
-      className="rounded-xl border border-[var(--line)] bg-[#f5f3ec]"
+      className={mediaClassName}
       decoding="async"
       loading="lazy"
       src={src}

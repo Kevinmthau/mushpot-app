@@ -217,20 +217,25 @@ video {
   border-left-color: #2c4f58 !important;
 }
 
-.cm-md-image-preview {
+.cm-md-media-preview {
   display: inline-block;
   max-width: 100%;
   vertical-align: top;
   margin: 0.8rem 0;
 }
 
-.cm-md-image-preview img {
+.cm-md-media-preview img,
+.cm-md-media-preview video {
   display: block;
   max-width: 100%;
   height: auto;
   border-radius: 0.75rem;
   border: 1px solid var(--line);
   background: #f5f3ec;
+}
+
+.cm-md-video-preview video {
+  background: #1f2a2f;
 }
 
 .cm-line.cm-md-heading-line {

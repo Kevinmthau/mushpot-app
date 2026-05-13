@@ -12,6 +12,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 
+import { isSupportedVideoUrl } from "@/components/editor/image-upload-utils";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
 
 const DECORATION_REBUILD_INTERVAL_MS = 120;
@@ -83,7 +84,7 @@ class MarkdownHorizontalRuleWidget extends WidgetType {
   }
 }
 
-class MarkdownImagePreviewWidget extends WidgetType {
+class MarkdownMediaPreviewWidget extends WidgetType {
   constructor(
     private readonly src: string,
     private readonly altText: string,
@@ -92,7 +93,7 @@ class MarkdownImagePreviewWidget extends WidgetType {
     super();
   }
 
-  eq(other: MarkdownImagePreviewWidget) {
+  eq(other: MarkdownMediaPreviewWidget) {
     return (
       this.src === other.src &&
       this.altText === other.altText &&
@@ -101,9 +102,26 @@ class MarkdownImagePreviewWidget extends WidgetType {
   }
 
   toDOM() {
+    const isVideo = isSupportedVideoUrl(this.src);
     const wrapper = document.createElement("span");
-    wrapper.className = "cm-md-image-preview";
-    wrapper.setAttribute("aria-label", this.altText || "Image");
+    wrapper.className = isVideo
+      ? "cm-md-media-preview cm-md-video-preview"
+      : "cm-md-media-preview cm-md-image-preview";
+    wrapper.setAttribute("aria-label", this.altText || (isVideo ? "Video" : "Image"));
+
+    if (isVideo) {
+      const video = document.createElement("video");
+      video.src = this.src;
+      video.controls = true;
+      video.playsInline = true;
+      video.preload = "metadata";
+      if (this.width) {
+        video.style.width = this.width;
+      }
+
+      wrapper.appendChild(video);
+      return wrapper;
+    }
 
     const image = document.createElement("img");
     image.src = this.src;
@@ -561,7 +579,7 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
 
           decorations.push(
             Decoration.replace({
-              widget: new MarkdownImagePreviewWidget(
+              widget: new MarkdownMediaPreviewWidget(
                 parsedImage.url,
                 parsedImage.altText,
                 parsedImage.width,
