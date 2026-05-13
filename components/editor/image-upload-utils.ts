@@ -2,7 +2,8 @@ import type { EditorView } from "@codemirror/view";
 
 export type SupportedMediaKind = "image" | "video";
 
-export const DOCUMENT_MEDIA_BUCKET = "document-images";
+export const DOCUMENT_IMAGE_BUCKET = "document-images";
+export const DOCUMENT_VIDEO_BUCKET = "document-videos";
 export const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
 export const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
 export const SUPPORTED_IMAGE_MIME_TYPES = [
@@ -32,6 +33,16 @@ const SUPPORTED_IMAGE_MIME_TYPE_SET = new Set([
 ]);
 const SUPPORTED_VIDEO_EXTENSIONS = new Set(["mp4", "mov"]);
 const SUPPORTED_VIDEO_MIME_TYPE_SET = new Set(SUPPORTED_VIDEO_MIME_TYPES);
+const PREFERRED_MEDIA_EXTENSION_BY_MIME_TYPE = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"],
+  ["image/gif", "gif"],
+  ["image/avif", "avif"],
+  ["image/svg+xml", "svg"],
+  ["video/mp4", "mp4"],
+  ["video/quicktime", "mov"],
+]);
 
 function getFileExtension(fileName: string) {
   const match = fileName.toLowerCase().match(/\.([a-z0-9]+)(?:[?#].*)?$/);
@@ -86,6 +97,32 @@ export function sanitizeStorageFileName(fileName: string) {
   const normalized = fileName.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
   const cleaned = normalized.replace(/-+/g, "-").replace(/^-|-$/g, "");
   return cleaned || "file";
+}
+
+function replaceFileExtension(fileName: string, extension: string) {
+  const withoutExtension = fileName.replace(/\.[^/.]+$/, "");
+  const baseName = withoutExtension.replace(/\.+$/g, "") || "file";
+  return `${baseName}.${extension}`;
+}
+
+export function getDocumentMediaBucket(kind: SupportedMediaKind) {
+  return kind === "video" ? DOCUMENT_VIDEO_BUCKET : DOCUMENT_IMAGE_BUCKET;
+}
+
+export function ensureStorageFileNameMatchesMediaKind(
+  fileName: string,
+  kind: SupportedMediaKind,
+  mimeType: string | null | undefined,
+) {
+  const extensionKind = getSupportedMediaKindFromExtension(getFileExtension(fileName));
+  if (extensionKind === kind || (kind === "image" && extensionKind === null)) {
+    return fileName;
+  }
+
+  const preferredExtension = mimeType
+    ? PREFERRED_MEDIA_EXTENSION_BY_MIME_TYPE.get(mimeType)
+    : null;
+  return replaceFileExtension(fileName, preferredExtension ?? (kind === "video" ? "mp4" : "jpg"));
 }
 
 export function inferMediaMimeType(fileName: string) {

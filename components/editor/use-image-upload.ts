@@ -5,7 +5,8 @@ import { EditorView } from "@codemirror/view";
 
 import {
   buildEmbeddedMediaMarkdown,
-  DOCUMENT_MEDIA_BUCKET,
+  ensureStorageFileNameMatchesMediaKind,
+  getDocumentMediaBucket,
   getSupportedMediaKind,
   inferMediaMimeType,
   isSupportedMediaFile,
@@ -75,17 +76,22 @@ export function useMediaUploadInsertion({
 
           try {
             const supabase = await getSupabaseBrowserClient();
-            const safeName = sanitizeStorageFileName(file.name);
-            const randomId = crypto.randomUUID();
-            const path = `${owner}/${documentId}/${randomId}-${safeName}`;
             const inferredMimeType = inferMediaMimeType(file.name);
             const normalizedMimeType = file.type
               ? normalizeMediaMimeType(file.type)?.mimeType
               : null;
             const contentType = normalizedMimeType || inferredMimeType || undefined;
+            const safeName = ensureStorageFileNameMatchesMediaKind(
+              sanitizeStorageFileName(file.name),
+              mediaKind,
+              contentType,
+            );
+            const randomId = crypto.randomUUID();
+            const path = `${owner}/${documentId}/${randomId}-${safeName}`;
+            const bucket = getDocumentMediaBucket(mediaKind);
 
             const { error } = await supabase.storage
-              .from(DOCUMENT_MEDIA_BUCKET)
+              .from(bucket)
               .upload(path, file, {
                 contentType,
                 upsert: false,
@@ -99,7 +105,7 @@ export function useMediaUploadInsertion({
               return;
             }
 
-            const { data } = supabase.storage.from(DOCUMENT_MEDIA_BUCKET).getPublicUrl(path);
+            const { data } = supabase.storage.from(bucket).getPublicUrl(path);
             const markdownMedia = buildEmbeddedMediaMarkdown(
               view,
               insertPosition,
