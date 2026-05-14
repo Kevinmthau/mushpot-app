@@ -35,8 +35,27 @@ function getMediaUploadLimit(kind: SupportedMediaKind) {
   return kind === "video" ? MAX_VIDEO_SIZE_BYTES : MAX_IMAGE_SIZE_BYTES;
 }
 
-function formatMegabytes(bytes: number) {
-  return `${Math.floor(bytes / (1024 * 1024))}MB`;
+function formatFileSize(bytes: number) {
+  const megabytes = bytes / (1024 * 1024);
+  const roundedMegabytes = Math.round(megabytes);
+
+  if (Math.abs(megabytes - roundedMegabytes) < 0.05) {
+    return `${roundedMegabytes}MB`;
+  }
+
+  return `${megabytes.toFixed(1)}MB`;
+}
+
+function capitalize(value: string) {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
+
+function getUploadLimitExceededMessage(
+  file: File,
+  kind: SupportedMediaKind,
+  limit: number,
+) {
+  return `${file.name || "File"} is ${formatFileSize(file.size)}. ${capitalize(kind)} uploads are limited to ${formatFileSize(limit)}. Compress the file or upload a shorter clip.`;
 }
 
 function getRequiredEnvValue(name: string, value: string | undefined) {
@@ -194,21 +213,71 @@ async function uploadMediaToStorage({
   return path;
 }
 
-function getUploadErrorMessage(error: unknown) {
+function getErrorValue(error: unknown, key: string) {
+  if (typeof error !== "object" || error === null || !(key in error)) {
+    return null;
+  }
+
+  return (error as Record<string, unknown>)[key];
+}
+
+function getUploadErrorStatusCode(error: unknown) {
+  for (const key of ["status", "statusCode"]) {
+    const value = getErrorValue(error, key);
+
+    if (typeof value === "number") {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const parsedValue = Number.parseInt(value, 10);
+      if (!Number.isNaN(parsedValue)) {
+        return parsedValue;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getUploadErrorText(error: unknown) {
   if (error instanceof Error && error.message) {
     return error.message;
   }
 
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
+  const message = getErrorValue(error, "message");
+
+  if (typeof message === "string") {
+    return message;
   }
 
   return null;
+}
+
+function isStorageMaximumSizeError(error: unknown) {
+  const message = getUploadErrorText(error)?.toLowerCase() ?? "";
+  return (
+    getUploadErrorStatusCode(error) === 413 ||
+    message.includes("response code: 413") ||
+    message.includes("maximum size exceeded")
+  );
+}
+
+function getUploadErrorMessage(
+  error: unknown,
+  file: File,
+  kind: SupportedMediaKind,
+  limit: number,
+) {
+  if (isStorageMaximumSizeError(error)) {
+    if (file.size > limit) {
+      return getUploadLimitExceededMessage(file, kind, limit);
+    }
+
+    return `${file.name || "File"} is ${formatFileSize(file.size)}, but Supabase rejected it for exceeding the active Storage limit. ${capitalize(kind)} uploads are configured for ${formatFileSize(limit)} in Mushpot; check the Supabase global Storage limit.`;
+  }
+
+  return getUploadErrorText(error);
 }
 
 export function useMediaUploadInsertion({
@@ -246,9 +315,7 @@ export function useMediaUploadInsertion({
 
           const uploadLimit = getMediaUploadLimit(mediaKind);
           if (file.size > uploadLimit) {
-            failures.push(
-              `${file.name || "File"} exceeds the ${formatMegabytes(uploadLimit)} upload limit.`,
-            );
+            failures.push(getUploadLimitExceededMessage(file, mediaKind, uploadLimit));
             continue;
           }
 
@@ -301,7 +368,12 @@ export function useMediaUploadInsertion({
             insertPosition = safeInsertPosition + markdownMedia.length;
           } catch (error) {
             console.error("Media upload failed", error);
-            const message = getUploadErrorMessage(error);
+            const message = getUploadErrorMessage(
+              error,
+              file,
+              mediaKind,
+              uploadLimit,
+            );
             failures.push(
               message
                 ? `Failed to upload ${file.name || "a file"}: ${message}`
