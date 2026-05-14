@@ -55,7 +55,11 @@ function getUploadLimitExceededMessage(
   kind: SupportedMediaKind,
   limit: number,
 ) {
-  return `${file.name || "File"} is ${formatFileSize(file.size)}. ${capitalize(kind)} uploads are limited to ${formatFileSize(limit)}. Compress the file or upload a shorter clip.`;
+  const suggestion =
+    kind === "video"
+      ? "Compress the file or upload a shorter clip."
+      : "Compress the file or choose a smaller image.";
+  return `${file.name || "File"} is ${formatFileSize(file.size)}. ${capitalize(kind)} uploads are limited to ${formatFileSize(limit)}. ${suggestion}`;
 }
 
 function getRequiredEnvValue(name: string, value: string | undefined) {
@@ -274,7 +278,10 @@ function getUploadErrorMessage(
       return getUploadLimitExceededMessage(file, kind, limit);
     }
 
-    return `${file.name || "File"} is ${formatFileSize(file.size)}, but Supabase rejected it for exceeding the active Storage limit. ${capitalize(kind)} uploads are configured for ${formatFileSize(limit)} in Mushpot; check the Supabase global Storage limit.`;
+    console.error(
+      `Storage rejected ${kind} upload as too large despite file size ${formatFileSize(file.size)} being under the Mushpot ${kind} limit of ${formatFileSize(limit)}. The Supabase global Storage limit may be lower than the Mushpot limit.`,
+    );
+    return `${file.name || "File"} is too large to upload.`;
   }
 
   return getUploadErrorText(error);
