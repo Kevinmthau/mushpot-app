@@ -397,18 +397,22 @@ export function useMediaUploadInsertion({
             const { data } = supabase.storage.from(bucket).getPublicUrl(uploadedPath);
 
             let posterTitle: string | undefined;
-            const posterImage = await posterImagePromise;
-            if (posterImage) {
-              const posterUrl = await uploadVideoPosterImage({
-                documentId,
-                owner,
-                poster: posterImage,
-                randomId,
-                supabase,
-              });
-              if (posterUrl) {
-                posterTitle = buildVideoPosterTitle(posterUrl);
+            try {
+              const posterImage = await posterImagePromise;
+              if (posterImage) {
+                const posterUrl = await uploadVideoPosterImage({
+                  documentId,
+                  owner,
+                  poster: posterImage,
+                  randomId,
+                  supabase,
+                });
+                if (posterUrl) {
+                  posterTitle = buildVideoPosterTitle(posterUrl);
+                }
               }
+            } catch (posterError) {
+              console.error("Video poster generation failed", posterError);
             }
 
             if (!mountedRef.current) {
