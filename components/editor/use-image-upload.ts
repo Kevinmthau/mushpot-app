@@ -5,6 +5,7 @@ import { EditorView } from "@codemirror/view";
 
 import {
   buildEmbeddedMediaMarkdown,
+  DOCUMENT_IMAGE_BUCKET,
   ensureStorageFileNameMatchesMediaKind,
   getDocumentMediaBucket,
   getSupportedMediaKind,
@@ -18,6 +19,8 @@ import {
   SUPPORTED_MEDIA_FORMATS_LABEL,
   type SupportedMediaKind,
 } from "@/components/editor/image-upload-utils";
+import { generateVideoPosterImage } from "@/components/editor/video-poster-utils";
+import { buildVideoPosterTitle } from "@/lib/markdown/video-poster";
 import {
   getSupabaseBrowserClient,
   type SupabaseBrowserClient,
@@ -217,6 +220,38 @@ async function uploadMediaToStorage({
   return path;
 }
 
+async function uploadVideoPosterImage({
+  documentId,
+  owner,
+  poster,
+  randomId,
+  supabase,
+}: {
+  documentId: string;
+  owner: string;
+  poster: File;
+  randomId: string;
+  supabase: SupabaseBrowserClient;
+}) {
+  try {
+    const path = `${owner}/${documentId}/${randomId}-poster.jpg`;
+    const uploadedPath = await uploadMediaToStorage({
+      bucket: DOCUMENT_IMAGE_BUCKET,
+      contentType: "image/jpeg",
+      file: poster,
+      path,
+      supabase,
+    });
+    const { data } = supabase.storage
+      .from(DOCUMENT_IMAGE_BUCKET)
+      .getPublicUrl(uploadedPath);
+    return data.publicUrl;
+  } catch (error) {
+    console.error("Video poster upload failed", error);
+    return null;
+  }
+}
+
 function getErrorValue(error: unknown, key: string) {
   if (typeof error !== "object" || error === null || !(key in error)) {
     return null;
@@ -342,6 +377,11 @@ export function useMediaUploadInsertion({
             const path = `${owner}/${documentId}/${randomId}-${safeName}`;
             const bucket = getDocumentMediaBucket(mediaKind);
 
+            const posterImagePromise =
+              mediaKind === "video"
+                ? generateVideoPosterImage(file)
+                : Promise.resolve(null);
+
             const uploadedPath = await uploadMediaToStorage({
               bucket,
               contentType,
@@ -355,11 +395,32 @@ export function useMediaUploadInsertion({
             }
 
             const { data } = supabase.storage.from(bucket).getPublicUrl(uploadedPath);
+
+            let posterTitle: string | undefined;
+            const posterImage = await posterImagePromise;
+            if (posterImage) {
+              const posterUrl = await uploadVideoPosterImage({
+                documentId,
+                owner,
+                poster: posterImage,
+                randomId,
+                supabase,
+              });
+              if (posterUrl) {
+                posterTitle = buildVideoPosterTitle(posterUrl);
+              }
+            }
+
+            if (!mountedRef.current) {
+              return;
+            }
+
             const markdownMedia = buildEmbeddedMediaMarkdown(
               view,
               insertPosition,
               sanitizeMediaAltText(file.name, mediaKind),
               data.publicUrl,
+              posterTitle,
             );
             const safeInsertPosition = Math.min(insertPosition, view.state.doc.length);
             view.dispatch({
