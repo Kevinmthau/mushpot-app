@@ -14,6 +14,10 @@ import {
 
 import { isSupportedVideoUrl } from "@/components/editor/image-upload-utils";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
+import {
+  appendFirstFrameFragment,
+  parseVideoPosterFromTitle,
+} from "@/lib/markdown/video-poster";
 
 const DECORATION_REBUILD_INTERVAL_MS = 120;
 const MAX_LIVE_FORMATTING_DOC_LENGTH = 20_000;
@@ -89,6 +93,7 @@ class MarkdownMediaPreviewWidget extends WidgetType {
     private readonly src: string,
     private readonly altText: string,
     private readonly width: string | null,
+    private readonly poster: string | null,
   ) {
     super();
   }
@@ -97,7 +102,8 @@ class MarkdownMediaPreviewWidget extends WidgetType {
     return (
       this.src === other.src &&
       this.altText === other.altText &&
-      this.width === other.width
+      this.width === other.width &&
+      this.poster === other.poster
     );
   }
 
@@ -111,10 +117,15 @@ class MarkdownMediaPreviewWidget extends WidgetType {
 
     if (isVideo) {
       const video = document.createElement("video");
-      video.src = this.src;
       video.controls = true;
       video.playsInline = true;
       video.preload = "metadata";
+      if (this.poster) {
+        video.poster = this.poster;
+        video.src = this.src;
+      } else {
+        video.src = appendFirstFrameFragment(this.src);
+      }
       if (this.width) {
         video.style.width = this.width;
       }
@@ -159,6 +170,17 @@ function shouldDisableLiveFormatting(view: EditorView) {
   );
 }
 
+function stripLinkTitleDelimiters(rawTitle: string) {
+  const first = rawTitle.at(0);
+  const last = rawTitle.at(-1);
+  const matchesDelimiter =
+    (first === '"' && last === '"') ||
+    (first === "'" && last === "'") ||
+    (first === "(" && last === ")");
+
+  return matchesDelimiter ? rawTitle.slice(1, -1) : rawTitle;
+}
+
 function parseMarkdownImage(
   view: EditorView,
   from: number,
@@ -166,12 +188,18 @@ function parseMarkdownImage(
   syntaxNode: SyntaxNode,
 ) {
   let url: string | null = null;
+  let title: string | null = null;
   let closingAltBracketPos: number | null = null;
 
   for (let child = syntaxNode.firstChild; child; child = child.nextSibling) {
     const childText = view.state.doc.sliceString(child.from, child.to);
     if (child.type.name === "URL") {
       url = childText.trim();
+      continue;
+    }
+
+    if (child.type.name === "LinkTitle") {
+      title = stripLinkTitleDelimiters(childText.trim());
       continue;
     }
 
@@ -204,6 +232,7 @@ function parseMarkdownImage(
 
   return {
     altText: altText || "image",
+    poster: parseVideoPosterFromTitle(title),
     replaceTo,
     url,
     width: parsedWidthToken?.width ?? null,
@@ -583,6 +612,7 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
                 parsedImage.url,
                 parsedImage.altText,
                 parsedImage.width,
+                parsedImage.poster,
               ),
             }).range(node.from, parsedImage.replaceTo),
           );

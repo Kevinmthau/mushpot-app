@@ -16,6 +16,10 @@ import { getReadingTimeFromText } from "@/lib/document-stats";
 import { getDocumentDisplayTitle } from "@/lib/documents";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
+import {
+  appendFirstFrameFragment,
+  parseVideoPosterFromTitle,
+} from "@/lib/markdown/video-poster";
 
 type SharedDocumentPageClientProps = {
   content: string;
@@ -83,6 +87,7 @@ function SharedMarkdownImage({
   alt,
   src,
   style,
+  title,
 }: ComponentPropsWithoutRef<"img">) {
   if (typeof src !== "string" || src.length === 0) {
     return null;
@@ -90,14 +95,16 @@ function SharedMarkdownImage({
 
   const mediaClassName = "rounded-xl border border-[var(--line)] bg-[#f5f3ec]";
   if (isSupportedVideoUrl(src)) {
+    const poster = parseVideoPosterFromTitle(title);
     return (
       <video
         aria-label={alt || "Video"}
         className={mediaClassName}
         controls
         playsInline
+        poster={poster ?? undefined}
         preload="metadata"
-        src={src}
+        src={poster ? src : appendFirstFrameFragment(src)}
         style={style}
       />
     );

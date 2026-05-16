@@ -234,6 +234,7 @@ export function buildEmbeddedMediaMarkdown(
   position: number,
   altText: string,
   url: string,
+  title?: string,
 ) {
   const before = position > 0 ? view.state.doc.sliceString(position - 1, position) : "\n";
   const after =
@@ -242,7 +243,8 @@ export function buildEmbeddedMediaMarkdown(
       : "\n";
   const prefix = before === "\n" ? "" : "\n";
   const suffix = after === "\n" ? "\n" : "\n\n";
-  return `${prefix}![${altText}](${url})${suffix}`;
+  const target = title ? `${url} "${title}"` : url;
+  return `${prefix}![${altText}](${target})${suffix}`;
 }
 
 export function buildImageMarkdown(
