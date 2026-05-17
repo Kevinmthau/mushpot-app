@@ -103,10 +103,13 @@ Quality gate before merge:
 ```bash
 npm run lint
 npm run typecheck
+npm run test
 npm run build
 ```
 
-There is no dedicated test runner configured yet.
+Unit tests run on [Vitest](https://vitest.dev/). Tests live next to their
+sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
+`npm run test:coverage` for a coverage report.
 
 ## Deployment Notes
 
