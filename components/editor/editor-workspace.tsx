@@ -88,7 +88,7 @@ export function EditorWorkspace({
   owner,
   placeholder,
 }: EditorWorkspaceProps) {
-  const { mediaDropPasteHandlers, uploadingMediaCount } = useMediaUploadInsertion({
+  const { mediaUploadExtensions, uploadingMediaCount } = useMediaUploadInsertion({
     documentId,
     owner,
   });
@@ -107,13 +107,13 @@ export function EditorWorkspace({
     () => [
       markdown(),
       markdownLiveFormatting,
-      mediaDropPasteHandlers,
+      mediaUploadExtensions,
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ autocapitalize: "sentences" }),
       autoCapitalizeSentences,
       editorTheme,
     ],
-    [mediaDropPasteHandlers],
+    [mediaUploadExtensions],
   );
 
   return (
