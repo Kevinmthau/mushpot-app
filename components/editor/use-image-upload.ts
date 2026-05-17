@@ -328,12 +328,27 @@ export function useMediaUploadInsertion({
 }: UseMediaUploadInsertionParams) {
   const [uploadingMediaCount, setUploadingMediaCount] = useState(0);
   const mountedRef = useRef(true);
+  const trackedInsertPositionsRef = useRef(new Set<{ pos: number }>());
 
   useEffect(() => {
     return () => {
       mountedRef.current = false;
     };
   }, []);
+
+  const insertPositionTracker = useMemo(
+    () =>
+      EditorView.updateListener.of((update) => {
+        if (!update.docChanged) {
+          return;
+        }
+
+        for (const tracked of trackedInsertPositionsRef.current) {
+          tracked.pos = update.changes.mapPos(tracked.pos, 1);
+        }
+      }),
+    [],
+  );
 
   const insertUploadedMedia = useCallback(
     async (view: EditorView, files: File[], initialInsertPosition: number) => {
@@ -343,7 +358,8 @@ export function useMediaUploadInsertion({
 
       setUploadingMediaCount((count) => count + files.length);
 
-      let insertPosition = initialInsertPosition;
+      const trackedInsertPosition = { pos: initialInsertPosition };
+      trackedInsertPositionsRef.current.add(trackedInsertPosition);
       const failures: string[] = [];
       try {
         for (const file of files) {
@@ -415,6 +431,7 @@ export function useMediaUploadInsertion({
               return;
             }
 
+            const insertPosition = trackedInsertPosition.pos;
             const markdownMedia = buildEmbeddedMediaMarkdown(
               view,
               insertPosition,
@@ -422,18 +439,16 @@ export function useMediaUploadInsertion({
               data.publicUrl,
               posterTitle,
             );
-            const safeInsertPosition = Math.min(insertPosition, view.state.doc.length);
             view.dispatch({
               changes: {
-                from: safeInsertPosition,
-                to: safeInsertPosition,
+                from: insertPosition,
+                to: insertPosition,
                 insert: markdownMedia,
               },
               selection: {
-                anchor: safeInsertPosition + markdownMedia.length,
+                anchor: insertPosition + markdownMedia.length,
               },
             });
-            insertPosition = safeInsertPosition + markdownMedia.length;
           } catch (error) {
             console.error("Media upload failed", error);
             const message = getUploadErrorMessage(
@@ -450,6 +465,7 @@ export function useMediaUploadInsertion({
           }
         }
       } finally {
+        trackedInsertPositionsRef.current.delete(trackedInsertPosition);
         setUploadingMediaCount((count) => Math.max(0, count - files.length));
       }
 
@@ -460,8 +476,8 @@ export function useMediaUploadInsertion({
     [documentId, owner],
   );
 
-  const mediaDropPasteHandlers = useMemo(
-    () =>
+  const mediaUploadExtensions = useMemo(
+    () => [
       EditorView.domEventHandlers({
         dragover: (event) => {
           const hasFiles = Array.from(event.dataTransfer?.types ?? []).includes("Files");
@@ -517,11 +533,13 @@ export function useMediaUploadInsertion({
           return true;
         },
       }),
-    [insertUploadedMedia],
+      insertPositionTracker,
+    ],
+    [insertPositionTracker, insertUploadedMedia],
   );
 
   return {
-    mediaDropPasteHandlers,
+    mediaUploadExtensions,
     uploadingMediaCount,
   };
 }
