@@ -1,15 +1,20 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-import { normalizeInternalPath } from "@/lib/app-url";
+import {
+  normalizeInternalPath,
+  resolveAppOriginFromHeaders,
+} from "@/lib/app-url";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const code = searchParams.get("code");
   const next = normalizeInternalPath(searchParams.get("next"));
+  const appOrigin =
+    resolveAppOriginFromHeaders(request.headers) ?? request.nextUrl.origin;
 
   if (!code) {
-    const errorUrl = new URL("/auth", request.nextUrl.origin);
+    const errorUrl = new URL("/auth", appOrigin);
     errorUrl.searchParams.set("next", next);
     errorUrl.searchParams.set("error", "Missing authentication code.");
     return NextResponse.redirect(errorUrl);
@@ -19,9 +24,9 @@ export async function GET(request: NextRequest) {
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
   // Only allow post-auth redirects to internal app paths.
-  const redirectUrl = new URL(next, request.nextUrl.origin);
-  if (redirectUrl.origin !== request.nextUrl.origin) {
-    return NextResponse.redirect(new URL("/", request.nextUrl.origin));
+  const redirectUrl = new URL(next, appOrigin);
+  if (redirectUrl.origin !== appOrigin) {
+    return NextResponse.redirect(new URL("/", appOrigin));
   }
   const response = NextResponse.redirect(redirectUrl);
 
@@ -42,7 +47,7 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     console.error("[auth/confirm] exchangeCodeForSession failed:", error.message);
-    const errorUrl = new URL("/auth", request.nextUrl.origin);
+    const errorUrl = new URL("/auth", appOrigin);
     errorUrl.searchParams.set("next", next);
     errorUrl.searchParams.set(
       "error",
