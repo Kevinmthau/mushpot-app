@@ -107,10 +107,10 @@ describe("resolveAppOriginFromHeaders", () => {
     ).toBe("https://mushpot.app");
   });
 
-  it("prefers the configured origin for non-localhost requests", () => {
+  it("uses the request origin for non-localhost requests", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://mushpot.app";
     expect(resolveAppOriginFromHeaders(headers({ host: "real.com" }))).toBe(
-      "https://mushpot.app",
+      "https://real.com",
     );
   });
 

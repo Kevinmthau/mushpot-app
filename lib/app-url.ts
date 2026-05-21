@@ -57,8 +57,19 @@ export function getRequestOriginFromHeaders(headersList: HeaderReader) {
 export function resolveAppOriginFromHeaders(headersList: HeaderReader) {
   const configuredAppOrigin = getConfiguredAppOrigin();
   const requestOrigin = getRequestOriginFromHeaders(headersList);
+  let requestHostname = "";
+  if (requestOrigin) {
+    try {
+      requestHostname = new URL(requestOrigin).hostname;
+    } catch {
+      requestHostname = "";
+    }
+  }
+  const isLocalhost = LOCALHOST_HOSTNAMES.has(requestHostname);
 
-  return configuredAppOrigin || requestOrigin;
+  return isLocalhost && configuredAppOrigin
+    ? configuredAppOrigin
+    : requestOrigin ?? configuredAppOrigin;
 }
 
 type AuthRedirectParams = {
