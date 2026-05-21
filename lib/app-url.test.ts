@@ -151,6 +151,22 @@ describe("resolveAppOriginFromHeaders", () => {
     );
   });
 
+  it("ignores malformed configured app URLs", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "mushpot.app";
+    expect(getConfiguredAppOrigin()).toBe("");
+    expect(resolveAppOriginFromHeaders(headers({ host: "real.com" }))).toBe(
+      "https://real.com",
+    );
+  });
+
+  it("ignores configured app URLs with non-http schemes", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "ftp://mushpot.app";
+    expect(getConfiguredAppOrigin()).toBe("");
+    expect(resolveAppOriginFromHeaders(headers({ host: "real.com" }))).toBe(
+      "https://real.com",
+    );
+  });
+
   it("keeps the localhost origin when no app origin is configured", () => {
     delete process.env.NEXT_PUBLIC_APP_URL;
     expect(

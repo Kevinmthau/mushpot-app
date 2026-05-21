@@ -35,7 +35,7 @@ export function getConfiguredAppOrigin() {
     process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "",
   );
 
-  return normalizeHttpOrigin(configuredAppUrl) ?? configuredAppUrl;
+  return normalizeHttpOrigin(configuredAppUrl) ?? "";
 }
 
 function firstForwardedValue(value: string | null) {
