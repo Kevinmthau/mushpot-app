@@ -11,6 +11,27 @@ import {
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const DEFAULT_ERROR_MESSAGE = "Unable to send magic link. Please try again.";
+const RATE_LIMIT_ERROR_MESSAGE =
+  "Too many sign-in emails were requested. Wait a while, then try again. If you already have a recent email, use the newest link.";
+
+function getMagicLinkErrorMessage(error: {
+  message?: string;
+  code?: string;
+  status?: number;
+}) {
+  const message = error.message?.trim() ?? "";
+  const code = error.code?.trim() ?? "";
+
+  if (
+    error.status === 429 ||
+    code === "over_email_send_rate_limit" ||
+    message.toLowerCase().includes("rate limit")
+  ) {
+    return RATE_LIMIT_ERROR_MESSAGE;
+  }
+
+  return message || DEFAULT_ERROR_MESSAGE;
+}
 
 export async function requestMagicLinkAction(formData: FormData) {
   const nextPath = normalizeInternalPathFormValue(formData.get("nextPath"));
@@ -46,7 +67,7 @@ export async function requestMagicLinkAction(formData: FormData) {
   });
 
   if (error) {
-    const message = error.message?.trim() || DEFAULT_ERROR_MESSAGE;
+    const message = getMagicLinkErrorMessage(error);
     redirect(
       buildAuthRedirectPath(nextPath, {
         error: message.slice(0, 200),
