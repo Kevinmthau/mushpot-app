@@ -90,6 +90,17 @@ describe("getRequestOriginFromHeaders", () => {
       ),
     ).toBe("https://app.example.com");
   });
+
+  it("normalizes default ports out of request origins", () => {
+    expect(
+      getRequestOriginFromHeaders(
+        headers({
+          "x-forwarded-host": "app.example.com:443",
+          "x-forwarded-proto": "https",
+        }),
+      ),
+    ).toBe("https://app.example.com");
+  });
 });
 
 describe("resolveAppOriginFromHeaders", () => {
@@ -107,17 +118,36 @@ describe("resolveAppOriginFromHeaders", () => {
     ).toBe("https://mushpot.app");
   });
 
-  it("uses the request origin for non-localhost requests", () => {
+  it("prefers the configured origin for untrusted non-localhost requests", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://mushpot.app";
     expect(resolveAppOriginFromHeaders(headers({ host: "real.com" }))).toBe(
-      "https://real.com",
+      "https://mushpot.app",
     );
+  });
+
+  it("uses a normalized matching request origin when an app origin is configured", () => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://mushpot.app";
+    expect(
+      resolveAppOriginFromHeaders(
+        headers({
+          "x-forwarded-host": "mushpot.app:443",
+          "x-forwarded-proto": "https",
+        }),
+      ),
+    ).toBe("https://mushpot.app");
   });
 
   it("falls back to the configured origin when there is no request origin", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://mushpot.app";
     expect(resolveAppOriginFromHeaders(headers({}))).toBe(
       "https://mushpot.app",
+    );
+  });
+
+  it("uses the request origin for non-localhost requests when no app origin is configured", () => {
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    expect(resolveAppOriginFromHeaders(headers({ host: "real.com" }))).toBe(
+      "https://real.com",
     );
   });
 

@@ -1,4 +1,5 @@
 const LOCALHOST_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
+const HTTP_PROTOCOLS = new Set(["http:", "https:"]);
 
 type HeaderReader = {
   get(name: string): string | null;
@@ -30,11 +31,29 @@ export function normalizeInternalPathFormValue(value: FormDataEntryValue | null)
 }
 
 export function getConfiguredAppOrigin() {
-  return stripTrailingSlashes(process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "");
+  const configuredAppUrl = stripTrailingSlashes(
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "",
+  );
+
+  return normalizeHttpOrigin(configuredAppUrl) ?? configuredAppUrl;
 }
 
 function firstForwardedValue(value: string | null) {
   return value?.split(",")[0]?.trim() ?? "";
+}
+
+function normalizeHttpOrigin(value: string) {
+  try {
+    const url = new URL(value);
+
+    if (!HTTP_PROTOCOLS.has(url.protocol)) {
+      return null;
+    }
+
+    return url.origin;
+  } catch {
+    return null;
+  }
 }
 
 export function getRequestOriginFromHeaders(headersList: HeaderReader) {
@@ -51,25 +70,24 @@ export function getRequestOriginFromHeaders(headersList: HeaderReader) {
   const forwardedProto = firstForwardedValue(headersList.get("x-forwarded-proto"));
   const protocol = forwardedProto || (isLocalhost ? "http" : "https");
 
-  return `${protocol}://${host}`;
+  return normalizeHttpOrigin(`${protocol}://${host}`);
 }
 
 export function resolveAppOriginFromHeaders(headersList: HeaderReader) {
   const configuredAppOrigin = getConfiguredAppOrigin();
   const requestOrigin = getRequestOriginFromHeaders(headersList);
-  let requestHostname = "";
-  if (requestOrigin) {
-    try {
-      requestHostname = new URL(requestOrigin).hostname;
-    } catch {
-      requestHostname = "";
-    }
-  }
-  const isLocalhost = LOCALHOST_HOSTNAMES.has(requestHostname);
 
-  return isLocalhost && configuredAppOrigin
-    ? configuredAppOrigin
-    : requestOrigin ?? configuredAppOrigin;
+  if (!requestOrigin) {
+    return configuredAppOrigin || null;
+  }
+
+  if (!configuredAppOrigin) {
+    return requestOrigin;
+  }
+
+  return requestOrigin === configuredAppOrigin
+    ? requestOrigin
+    : configuredAppOrigin;
 }
 
 type AuthRedirectParams = {
