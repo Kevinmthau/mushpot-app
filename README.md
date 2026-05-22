@@ -4,7 +4,7 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 
 ## Current Feature Set
 
-- Email magic-link sign-in with PKCE confirmation at `/auth/confirm`
+- Email magic-link sign-in with a scanner-resistant `/auth/verify` step and PKCE/token confirmation
 - Authenticated document list with instant document creation
 - Markdown editor with title editing, debounced autosave, reading-time display, clone, and delete
 - Image upload by drag/drop or paste into Markdown documents via a public Supabase Storage bucket
@@ -25,7 +25,8 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 ## Routes
 
 - `/auth`: request a magic link
-- `/auth/confirm`: exchange the PKCE auth code for a session
+- `/auth/verify`: user-confirmed email link verification
+- `/auth/confirm`: exchange the PKCE auth code or token hash for a session
 - `/auth/callback`: client-side fallback completion page
 - `/`: authenticated document list
 - `/doc/[id]`: authenticated document editor
@@ -35,7 +36,7 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 ## Repository Layout
 
 - `app/(private)`: authenticated document list and editor routes
-- `app/auth`: auth page, server action, PKCE confirm route, fallback callback page
+- `app/auth`: auth page, server action, verify page, PKCE/token confirm route, fallback callback page
 - `app/s/[id]/[token]`: shared document page and Open Graph image route
 - `components/auth`: auth form UI
 - `components/documents`: document list and create flow
@@ -78,18 +79,40 @@ Notes:
 ## Supabase Setup
 
 1. Create a Supabase project.
-2. In Supabase Auth URL settings, set your Site URL and add full `/auth/confirm` URLs to the allowed redirect list.
-   Local example: `http://localhost:3000/auth/confirm`
-3. Apply the SQL migrations in `supabase/migrations/`:
+2. In Supabase Auth URL settings, set your Site URL and add full `/auth/verify` and `/auth/confirm` URLs to the allowed redirect list.
+   Local examples: `http://localhost:3000/auth/verify`, `http://localhost:3000/auth/confirm`
+3. Configure a custom SMTP server for Supabase Auth magic-link email delivery:
+   - In Resend, verify the sending domain and create an API key for SMTP.
+   - In Supabase Dashboard, open Authentication email settings and enable custom SMTP.
+   - Use host `smtp.resend.com`, port `465`, username `resend`, and the Resend API key as the password.
+   - Use a verified-domain sender address, such as `no-reply@yourdomain.com`, with sender name `Mushpot`.
+   - Do not store the Resend API key in this repository or in the Next.js app environment.
+   - After saving, review Supabase Auth email rate limits before public launch.
+4. Update the Supabase Auth Confirm signup and Magic Link templates so scanners do not consume one-time links before the user opens them:
+
+```html
+<h2>Open Mushpot</h2>
+<p>Continue to finish signing in.</p>
+<p>
+  <a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email">Open Mushpot</a>
+</p>
+```
+
+   The app always sends `emailRedirectTo` as `/auth/verify?next=...`, so the `&token_hash=...` suffix is expected.
+5. Apply the SQL migrations in `supabase/migrations/`:
    - `20260303164000_create_documents.sql`
    - `20260304102000_create_document_images_bucket.sql`
-4. Deploy the public Edge Function used for shared-document reads:
+6. Deploy the public Edge Function used for shared-document reads:
 
 ```bash
 supabase functions deploy get-shared-doc --no-verify-jwt
 ```
 
 For local Edge Function serving, provide `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the function runtime.
+
+### Auth Email Verification
+
+After custom SMTP and the custom email templates are enabled, verify the production auth flow with an email address outside the Supabase project team. Request a link from `/auth`, confirm it arrives from the configured Resend sender, open the email link, press Continue on `/auth/verify`, and confirm the app signs in. Check Resend delivery logs and Supabase Auth logs if the email is delayed or rejected.
 
 ## Development
 
@@ -120,7 +143,7 @@ sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
 ## Behavior Notes
 
 - Private routes are protected in `proxy.ts`.
-- `/auth/confirm` only redirects to internal app paths from the `next` query param.
+- `/auth/verify` and `/auth/confirm` only redirect to internal app paths from the `next` query param.
 - The app favors local cached document data first, then reconciles with Supabase in the background.
 - Dirty cached documents are retried on startup, when the app regains focus, and when the browser comes back online.
 - Share links are bearer URLs: anyone with the full `/s/[id]/[token]` URL can read that document until the token is rotated or sharing is disabled.

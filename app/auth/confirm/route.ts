@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import type { EmailOtpType } from "@supabase/supabase-js";
 
 import {
   normalizeInternalPath,
@@ -9,11 +10,13 @@ import {
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const code = searchParams.get("code");
+  const tokenHash = searchParams.get("token_hash");
+  const type = searchParams.get("type") as EmailOtpType | null;
   const next = normalizeInternalPath(searchParams.get("next"));
   const appOrigin =
     resolveAppOriginFromHeaders(request.headers) ?? request.nextUrl.origin;
 
-  if (!code) {
+  if (!code && (!tokenHash || !type)) {
     const errorUrl = new URL("/auth", appOrigin);
     errorUrl.searchParams.set("next", next);
     errorUrl.searchParams.set("error", "Missing authentication code.");
@@ -43,7 +46,12 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { error } = code
+    ? await supabase.auth.exchangeCodeForSession(code)
+    : await supabase.auth.verifyOtp({
+        token_hash: tokenHash!,
+        type: type!,
+      });
 
   if (error) {
     console.error("[auth/confirm] exchangeCodeForSession failed:", error.message);
