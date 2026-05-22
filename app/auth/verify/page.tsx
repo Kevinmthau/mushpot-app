@@ -1,5 +1,6 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { verifyEmailLinkAction } from "@/app/auth/verify/actions";
 import { normalizeInternalPath } from "@/lib/app-url";
@@ -17,25 +18,34 @@ const EMAIL_OTP_TYPES = new Set<EmailOtpType>([
 
 type VerifyPageProps = {
   searchParams: Promise<{
+    code?: string;
     next?: string;
     token_hash?: string;
     type?: string;
   }>;
 };
 
-function normalizeEmailOtpType(value: string | undefined) {
+function normalizeEmailOtpType(
+  value: string | undefined,
+  defaultType: EmailOtpType | null = null,
+) {
   if (!value) {
-    return null;
+    return defaultType;
   }
 
   return EMAIL_OTP_TYPES.has(value as EmailOtpType) ? value : null;
 }
 
 export default async function VerifyPage({ searchParams }: VerifyPageProps) {
-  const { next, token_hash: tokenHash, type: rawType } = await searchParams;
+  const { code, next, token_hash: tokenHash, type: rawType } = await searchParams;
   const nextPath = normalizeInternalPath(next);
-  const type = normalizeEmailOtpType(rawType);
+  const type = normalizeEmailOtpType(rawType, tokenHash ? "email" : null);
   const canVerify = Boolean(tokenHash && type);
+
+  if (code) {
+    const confirmParams = new URLSearchParams({ code, next: nextPath });
+    redirect(`/auth/confirm?${confirmParams.toString()}`);
+  }
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-[460px] items-center px-4 py-10 sm:px-6 sm:py-20">
