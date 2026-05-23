@@ -150,6 +150,46 @@ describe("service worker private navigation", () => {
     ).toBe("network shell");
   });
 
+  it("returns the private network response when caching fails", async () => {
+    const context = loadServiceWorker(() =>
+      Promise.resolve(new Response("network shell", { status: 200 })),
+    );
+    const cache = await context.caches.open("mushpot-nav-v9");
+    vi.spyOn(cache, "put").mockRejectedValueOnce(new Error("quota"));
+
+    const response = await context.navigationNetworkFirst(
+      new Request("https://mushpot.app/doc/abc"),
+      buildNavigationEvent(),
+    );
+
+    expect(await response.text()).toBe("network shell");
+  });
+
+  it("returns a private auth redirect when cache clearing fails", async () => {
+    const context = loadServiceWorker(() =>
+      Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { Location: "/auth?next=%2Fdoc%2Fabc" },
+        }),
+      ),
+    );
+    const cache = await context.caches.open("mushpot-nav-v9");
+    await cache.put(
+      "https://mushpot.app/doc/abc",
+      new Response("cached private shell", { status: 200 }),
+    );
+    vi.spyOn(cache, "delete").mockRejectedValueOnce(new Error("storage"));
+
+    const response = await context.navigationNetworkFirst(
+      new Request("https://mushpot.app/doc/abc"),
+      buildNavigationEvent(),
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/auth?next=%2Fdoc%2Fabc");
+  });
+
   it("does not use a cached private shell when validation cannot complete", async () => {
     const context = loadServiceWorker(() => Promise.reject(new Error("offline")));
     const cache = await context.caches.open("mushpot-nav-v9");
@@ -164,5 +204,22 @@ describe("service worker private navigation", () => {
     );
 
     expect(await response.text()).toBe("offline");
+  });
+});
+
+describe("service worker cacheable navigation", () => {
+  it("returns the network response when navigation caching fails", async () => {
+    const context = loadServiceWorker(() =>
+      Promise.resolve(new Response("auth shell", { status: 200 })),
+    );
+    const cache = await context.caches.open("mushpot-nav-v9");
+    vi.spyOn(cache, "put").mockRejectedValueOnce(new Error("quota"));
+
+    const response = await context.navigationNetworkFirst(
+      new Request("https://mushpot.app/auth"),
+      buildNavigationEvent(),
+    );
+
+    expect(await response.text()).toBe("auth shell");
   });
 });

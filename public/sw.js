@@ -72,8 +72,12 @@ function getNavigationCacheKey(request) {
 }
 
 async function putNavigationResponse(cache, cacheKey, response) {
-  if (response.ok && !response.redirected) {
-    await cache.put(cacheKey, response.clone());
+  try {
+    if (response.ok && !response.redirected) {
+      await cache.put(cacheKey, response.clone());
+    }
+  } catch {
+    // Navigation cache writes are best-effort; never hide a network response.
   }
 }
 
@@ -102,11 +106,15 @@ async function trimPrivateDocShells(cache) {
 async function fetchPrivateNavigation(request, cache, cacheKey) {
   const networkResponse = await fetch(request);
 
-  if (networkResponse.ok && !networkResponse.redirected) {
-    await cache.put(cacheKey, networkResponse.clone());
-    await trimPrivateDocShells(cache);
-  } else {
-    await cache.delete(cacheKey);
+  try {
+    if (networkResponse.ok && !networkResponse.redirected) {
+      await cache.put(cacheKey, networkResponse.clone());
+      await trimPrivateDocShells(cache);
+    } else {
+      await cache.delete(cacheKey);
+    }
+  } catch {
+    // Private shell cache maintenance is best-effort after fetch succeeds.
   }
 
   return networkResponse;
