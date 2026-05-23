@@ -180,6 +180,12 @@ describe("buildAuthRedirectPath", () => {
     expect(buildAuthRedirectPath("/doc/1")).toBe("/auth?next=%2Fdoc%2F1");
   });
 
+  it("preserves query params in the encoded next path", () => {
+    expect(buildAuthRedirectPath("/doc/1?view=preview")).toBe(
+      "/auth?next=%2Fdoc%2F1%3Fview%3Dpreview",
+    );
+  });
+
   it("normalizes unsafe next paths before encoding", () => {
     expect(buildAuthRedirectPath("//evil.com", { sent: "1" })).toBe(
       "/auth?next=%2F&sent=1",

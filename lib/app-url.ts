@@ -5,6 +5,8 @@ type HeaderReader = {
   get(name: string): string | null;
 };
 
+export const PRIVATE_NEXT_PATH_HEADER = "x-mushpot-private-next-path";
+
 export function stripTrailingSlashes(value: string) {
   return value.replace(/\/+$/, "");
 }

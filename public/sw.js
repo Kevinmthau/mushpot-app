@@ -1,5 +1,5 @@
 const STATIC_CACHE_NAME = "mushpot-static-v5";
-const NAV_CACHE_NAME = "mushpot-nav-v8";
+const NAV_CACHE_NAME = "mushpot-nav-v9";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
@@ -95,19 +95,24 @@ async function trimPrivateDocShells(cache) {
   );
 }
 
-async function revalidateNavigation(request, cache, cacheKey) {
+/**
+ * Private route shells include authenticated session state, so they can only
+ * be reused after a fresh network response validates the current request.
+ */
+async function fetchPrivateNavigation(request, cache, cacheKey) {
   const networkResponse = await fetch(request);
-  await putNavigationResponse(cache, cacheKey, networkResponse);
-  await trimPrivateDocShells(cache);
+
+  if (networkResponse.ok && !networkResponse.redirected) {
+    await cache.put(cacheKey, networkResponse.clone());
+    await trimPrivateDocShells(cache);
+  } else {
+    await cache.delete(cacheKey);
+  }
+
   return networkResponse;
 }
 
-/**
- * Private routes use cached App Router shells as containers while document data
- * comes from IndexedDB + Supabase on the client. Returning a warm shell
- * immediately removes a full HTML network roundtrip from mobile startup.
- */
-async function navigationNetworkFirst(request, event) {
+async function navigationNetworkFirst(request) {
   const pathname = new URL(request.url).pathname;
   const allowNavigationCache =
     pathname === "/auth" || pathname.startsWith("/s/");
@@ -119,18 +124,8 @@ async function navigationNetworkFirst(request, event) {
   const cacheKey = cache ? getNavigationCacheKey(request) : null;
 
   try {
-    if (isPrivateRoute && cache) {
-      const cachedResponse = await cache.match(cacheKey);
-
-      if (cachedResponse) {
-        event.waitUntil(
-          revalidateNavigation(request, cache, cacheKey).catch(() => undefined),
-        );
-        return cachedResponse;
-      }
-
-      const networkResponse = await revalidateNavigation(request, cache, cacheKey);
-      return networkResponse;
+    if (isPrivateRoute && cache && cacheKey) {
+      return await fetchPrivateNavigation(request, cache, cacheKey);
     }
 
     const networkResponse = await fetch(request);
@@ -140,7 +135,7 @@ async function navigationNetworkFirst(request, event) {
     }
     return networkResponse;
   } catch {
-    if (cache) {
+    if (!isPrivateRoute && cache && cacheKey) {
       const cachedResponse = await cache.match(cacheKey);
       if (cachedResponse) {
         return cachedResponse;
@@ -178,7 +173,7 @@ self.addEventListener("fetch", (event) => {
   // Cache only full navigation shells here; App Router RSC/data payloads are
   // intentionally left to the browser/network path below.
   if (request.mode === "navigate") {
-    event.respondWith(navigationNetworkFirst(request, event));
+    event.respondWith(navigationNetworkFirst(request));
     return;
   }
 
