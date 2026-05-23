@@ -1,5 +1,5 @@
 const STATIC_CACHE_NAME = "mushpot-static-v5";
-const NAV_CACHE_NAME = "mushpot-nav-v7";
+const NAV_CACHE_NAME = "mushpot-nav-v8";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
@@ -62,19 +62,52 @@ async function staleWhileRevalidate(request, cacheName) {
   return cachedResponse || (await networkResponsePromise) || Response.error();
 }
 
-/**
- * Network-first for navigation with a fast timeout for private routes.
- *
- * Private routes (/, /doc/*) use the App Router shell as a container while
- * real data comes from IndexedDB + Supabase on the client.  On slow mobile
- * connections the network roundtrip for the HTML shell is the main bottleneck,
- * so we race the network against a 2 s timeout and fall back to a cached
- * shell if the network is too slow.  The client-side code will still fetch
- * fresh data independently.
- */
-const NAV_TIMEOUT_MS = 2000;
+const PRIVATE_DOC_SHELL_LIMIT = 12;
 
-async function navigationNetworkFirst(request) {
+function getNavigationCacheKey(request) {
+  const url = new URL(request.url);
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+async function putNavigationResponse(cache, cacheKey, response) {
+  if (response.ok && !response.redirected) {
+    await cache.put(cacheKey, response.clone());
+  }
+}
+
+async function trimPrivateDocShells(cache) {
+  const requests = await cache.keys();
+  const docRequests = requests.filter((request) => {
+    const pathname = new URL(request.url).pathname;
+    return pathname.startsWith("/doc/");
+  });
+
+  if (docRequests.length <= PRIVATE_DOC_SHELL_LIMIT) {
+    return;
+  }
+
+  await Promise.all(
+    docRequests
+      .slice(0, docRequests.length - PRIVATE_DOC_SHELL_LIMIT)
+      .map((request) => cache.delete(request)),
+  );
+}
+
+async function revalidateNavigation(request, cache, cacheKey) {
+  const networkResponse = await fetch(request);
+  await putNavigationResponse(cache, cacheKey, networkResponse);
+  await trimPrivateDocShells(cache);
+  return networkResponse;
+}
+
+/**
+ * Private routes use cached App Router shells as containers while document data
+ * comes from IndexedDB + Supabase on the client. Returning a warm shell
+ * immediately removes a full HTML network roundtrip from mobile startup.
+ */
+async function navigationNetworkFirst(request, event) {
   const pathname = new URL(request.url).pathname;
   const allowNavigationCache =
     pathname === "/auth" || pathname.startsWith("/s/");
@@ -83,41 +116,32 @@ async function navigationNetworkFirst(request) {
 
   const cacheName = (allowNavigationCache || isPrivateRoute) ? NAV_CACHE_NAME : null;
   const cache = cacheName ? await caches.open(cacheName) : null;
+  const cacheKey = cache ? getNavigationCacheKey(request) : null;
 
   try {
-    let networkResponse;
-
     if (isPrivateRoute && cache) {
-      // Race the network against a timeout so cached shells load instantly
-      // on slow mobile connections.
-      const cachedResponse = await cache.match(request);
+      const cachedResponse = await cache.match(cacheKey);
 
       if (cachedResponse) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), NAV_TIMEOUT_MS);
-
-        try {
-          networkResponse = await fetch(request, { signal: controller.signal });
-          clearTimeout(timeout);
-        } catch {
-          clearTimeout(timeout);
-          // Network too slow or offline – serve cached shell immediately
-          return cachedResponse;
-        }
-      } else {
-        networkResponse = await fetch(request);
+        event.waitUntil(
+          revalidateNavigation(request, cache, cacheKey).catch(() => undefined),
+        );
+        return cachedResponse;
       }
-    } else {
-      networkResponse = await fetch(request);
+
+      const networkResponse = await revalidateNavigation(request, cache, cacheKey);
+      return networkResponse;
     }
 
-    if (cache && networkResponse.ok) {
-      cache.put(request, networkResponse.clone());
+    const networkResponse = await fetch(request);
+
+    if (cache && cacheKey) {
+      await putNavigationResponse(cache, cacheKey, networkResponse);
     }
     return networkResponse;
   } catch {
     if (cache) {
-      const cachedResponse = await cache.match(request);
+      const cachedResponse = await cache.match(cacheKey);
       if (cachedResponse) {
         return cachedResponse;
       }
@@ -127,6 +151,14 @@ async function navigationNetworkFirst(request) {
     return fallback || Response.error();
   }
 }
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type !== "CLEAR_PRIVATE_NAV_CACHE") {
+    return;
+  }
+
+  event.waitUntil(caches.delete(NAV_CACHE_NAME));
+});
 
 // ---------------------------------------------------------------------------
 // Fetch handler
@@ -143,10 +175,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Keep navigation network-first so route payloads stay in sync with the
-  // current deployment.
+  // Cache only full navigation shells here; App Router RSC/data payloads are
+  // intentionally left to the browser/network path below.
   if (request.mode === "navigate") {
-    event.respondWith(navigationNetworkFirst(request));
+    event.respondWith(navigationNetworkFirst(request, event));
     return;
   }
 

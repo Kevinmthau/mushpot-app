@@ -4,27 +4,30 @@ import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 import { DocumentListClient } from "@/components/documents/document-list-client";
+import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import { useDocumentList } from "@/components/documents/use-document-list";
 import PullToRefresh from "@/components/pull-to-refresh";
 import { clearLastActiveOwner } from "@/lib/doc-cache";
+import { clearPrivateNavigationCache } from "@/lib/private-navigation-cache";
 
-type DocumentsPageClientProps = {
-  initialUserId: string;
-};
-
-export function DocumentsPageClient({
-  initialUserId,
-}: DocumentsPageClientProps) {
+export function DocumentsPageClient() {
   const router = useRouter();
-  const { documents, error, refreshDocuments } = useDocumentList(initialUserId);
+  const { clearUserId, userId } = usePrivateSession();
+  const { documents, error, refreshDocuments } = useDocumentList(userId);
 
   const handleSignOut = useCallback(async () => {
     const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
     const supabase = await getSupabaseBrowserClient();
     await supabase.auth.signOut();
     void clearLastActiveOwner();
+    void clearPrivateNavigationCache();
+    clearUserId();
     router.replace("/auth");
-  }, [router]);
+  }, [clearUserId, router]);
+
+  if (!userId) {
+    return null;
+  }
 
   return (
     <PullToRefresh onRefresh={refreshDocuments}>
@@ -46,7 +49,7 @@ export function DocumentsPageClient({
             {error}
           </section>
         ) : (
-          <DocumentListClient documents={documents} userId={initialUserId} />
+          <DocumentListClient documents={documents} userId={userId} />
         )}
       </main>
     </PullToRefresh>

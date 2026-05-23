@@ -5,6 +5,7 @@ import Link from "next/link";
 import { EditorClient } from "@/components/editor/editor-lazy";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import { useEditorDocument } from "@/components/editor/use-editor-document";
+import { usePrivateSession } from "@/components/pwa/private-session-provider";
 
 import { EditorPageLoading } from "./editor-loading";
 
@@ -13,8 +14,13 @@ type DocumentPageClientProps = {
 };
 
 export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
+  const { userId } = usePrivateSession();
   const { document, error, hasResolvedRemoteState, notFound } =
-    useEditorDocument(documentId);
+    useEditorDocument(documentId, userId);
+
+  if (!userId) {
+    return null;
+  }
 
   if (error || notFound) {
     return (

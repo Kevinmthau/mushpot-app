@@ -18,6 +18,8 @@ export type CachedDocument = {
   _localUpdatedAt?: number;
   /** True when local changes haven't been persisted to the server yet */
   _dirty?: boolean;
+  /** Numeric IndexedDB key for dirty-document lookups. */
+  _dirtyKey?: 1;
 };
 
 export type CachedDocumentListItem = {
@@ -27,7 +29,7 @@ export type CachedDocumentListItem = {
 };
 
 const DB_NAME = "mushpot";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DOCS_STORE = "documents";
 const META_STORE = "meta";
 const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
@@ -48,6 +50,60 @@ function waitForTransaction(tx: IDBTransaction): Promise<void> {
   });
 }
 
+function ensureDocumentIndexes(store: IDBObjectStore) {
+  if (!store.indexNames.contains("updated_at")) {
+    store.createIndex("updated_at", "updated_at");
+  }
+  if (!store.indexNames.contains("owner")) {
+    store.createIndex("owner", "owner");
+  }
+  if (!store.indexNames.contains("owner_updated_at")) {
+    store.createIndex("owner_updated_at", ["owner", "updated_at"]);
+  }
+  if (!store.indexNames.contains("dirty")) {
+    store.createIndex("dirty", "_dirtyKey");
+  }
+}
+
+function getOwnerUpdatedAtRange(owner: string) {
+  return IDBKeyRange.bound([owner, ""], [owner, "\uffff"]);
+}
+
+function normalizeCachedDocumentForStorage(doc: CachedDocument): CachedDocument {
+  if (doc._dirty) {
+    return {
+      ...doc,
+      _dirtyKey: 1,
+    };
+  }
+
+  const cleanDoc = { ...doc };
+  delete cleanDoc._dirtyKey;
+  return cleanDoc;
+}
+
+function normalizeExistingDirtyKeys(store: IDBObjectStore) {
+  const request = store.openCursor();
+
+  request.onsuccess = () => {
+    const cursor = request.result;
+    if (!cursor) {
+      return;
+    }
+
+    const document = cursor.value as CachedDocument;
+    const normalizedDocument = normalizeCachedDocumentForStorage(document);
+    if (normalizedDocument._dirtyKey !== document._dirtyKey) {
+      const updateRequest = cursor.update(normalizedDocument);
+      updateRequest.onsuccess = () => cursor.continue();
+      updateRequest.onerror = () => cursor.continue();
+      return;
+    }
+
+    cursor.continue();
+  };
+}
+
 function openDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
 
@@ -58,8 +114,11 @@ function openDB(): Promise<IDBDatabase> {
       const db = request.result;
       if (!db.objectStoreNames.contains(DOCS_STORE)) {
         const store = db.createObjectStore(DOCS_STORE, { keyPath: "id" });
-        store.createIndex("updated_at", "updated_at");
-        store.createIndex("owner", "owner");
+        ensureDocumentIndexes(store);
+      } else {
+        const store = request.transaction!.objectStore(DOCS_STORE);
+        ensureDocumentIndexes(store);
+        normalizeExistingDirtyKeys(store);
       }
       if (!db.objectStoreNames.contains(META_STORE)) {
         db.createObjectStore(META_STORE, { keyPath: "key" });
@@ -107,17 +166,33 @@ export async function getCachedDocumentListForOwner(
   try {
     const db = await openDB();
     const tx = db.transaction(DOCS_STORE, "readonly");
-    const documents = await requestToPromise<CachedDocument[]>(
-      tx.objectStore(DOCS_STORE).index("owner").getAll(owner),
-    );
+    const store = tx.objectStore(DOCS_STORE);
+    const index = store.index("owner_updated_at");
+    const documents: CachedDocumentListItem[] = [];
 
-    return documents
-      .map((document) => ({
-        id: document.id,
-        title: document.title,
-        updated_at: document.updated_at,
-      }))
-      .sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+    await new Promise<void>((resolve, reject) => {
+      const request = index.openCursor(getOwnerUpdatedAtRange(owner), "prev");
+
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+
+        const document = cursor.value as CachedDocument;
+        documents.push({
+          id: document.id,
+          title: document.title,
+          updated_at: document.updated_at,
+        });
+        cursor.continue();
+      };
+
+      request.onerror = () => reject(request.error);
+    });
+
+    return documents;
   } catch {
     return [];
   }
@@ -147,7 +222,7 @@ export async function putCachedDocument(doc: CachedDocument): Promise<void> {
   try {
     const db = await openDB();
     const tx = db.transaction(DOCS_STORE, "readwrite");
-    tx.objectStore(DOCS_STORE).put(doc);
+    tx.objectStore(DOCS_STORE).put(normalizeCachedDocumentForStorage(doc));
     await waitForTransaction(tx);
   } catch {
     // Silently ignore – cache is best-effort
@@ -224,9 +299,9 @@ export async function getDirtyDocuments(): Promise<CachedDocument[]> {
     const db = await openDB();
     const tx = db.transaction(DOCS_STORE, "readonly");
     const documents = await requestToPromise<CachedDocument[]>(
-      tx.objectStore(DOCS_STORE).getAll(),
+      tx.objectStore(DOCS_STORE).index("dirty").getAll(1),
     );
-    return documents.filter((document) => document._dirty);
+    return documents;
   } catch {
     return [];
   }
@@ -249,10 +324,10 @@ export async function syncDocumentList(
     const tx = db.transaction(DOCS_STORE, "readwrite");
     const store = tx.objectStore(DOCS_STORE);
 
-    // Get all existing docs to check for dirty state
-    const existing = await requestToPromise<CachedDocument[]>(store.getAll());
-
-    const existingForOwner = existing.filter((doc) => doc.owner === owner);
+    const existingForOwner = await requestToPromise<CachedDocument[]>(
+      store.index("owner").getAll(owner),
+    );
+    const existingById = new Map(existingForOwner.map((doc) => [doc.id, doc]));
     const dirtyIds = new Set(existingForOwner.filter((d) => d._dirty).map((d) => d.id));
     const serverIds = new Set(serverDocs.map((d) => d.id));
 
@@ -266,25 +341,29 @@ export async function syncDocumentList(
     // Update non-dirty docs with server metadata
     for (const serverDoc of serverDocs) {
       if (!dirtyIds.has(serverDoc.id)) {
-        const existingDoc = existingForOwner.find((d) => d.id === serverDoc.id);
+        const existingDoc = existingById.get(serverDoc.id);
         if (existingDoc) {
           // Update metadata but keep full content if present
-          store.put({
-            ...existingDoc,
-            title: serverDoc.title,
-            updated_at: serverDoc.updated_at,
-          });
+          store.put(
+            normalizeCachedDocumentForStorage({
+              ...existingDoc,
+              title: serverDoc.title,
+              updated_at: serverDoc.updated_at,
+            }),
+          );
         } else {
           // New doc from server – store list metadata (content loaded on demand)
-          store.put({
-            id: serverDoc.id,
-            owner,
-            title: serverDoc.title,
-            content: "",
-            updated_at: serverDoc.updated_at,
-            share_enabled: false,
-            share_token: null,
-          });
+          store.put(
+            normalizeCachedDocumentForStorage({
+              id: serverDoc.id,
+              owner,
+              title: serverDoc.title,
+              content: "",
+              updated_at: serverDoc.updated_at,
+              share_enabled: false,
+              share_token: null,
+            }),
+          );
         }
       }
     }

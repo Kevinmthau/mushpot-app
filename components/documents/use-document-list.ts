@@ -15,7 +15,7 @@ type DocumentListState = {
   refreshDocuments: () => Promise<void>;
 };
 
-export function useDocumentList(userId: string): DocumentListState {
+export function useDocumentList(userId: string | null): DocumentListState {
   const [documents, setDocuments] = useState<DocumentListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
@@ -30,6 +30,11 @@ export function useDocumentList(userId: string): DocumentListState {
   }
 
   const refreshDocuments = useCallback(async () => {
+    if (!userId) {
+      setDocuments([]);
+      return;
+    }
+
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
 
@@ -70,6 +75,12 @@ export function useDocumentList(userId: string): DocumentListState {
   }, [userId]);
 
   useEffect(() => {
+    if (!userId) {
+      setDocuments([]);
+      setError(null);
+      return;
+    }
+
     let isActive = true;
 
     void setLastActiveOwner(userId);

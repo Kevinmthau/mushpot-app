@@ -3,7 +3,9 @@
 import { useEffect, useEffectEvent } from "react";
 import { useRouter, usePathname } from "next/navigation";
 
+import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import { clearLastActiveOwner, setLastActiveOwner } from "@/lib/doc-cache";
+import { clearPrivateNavigationCache } from "@/lib/private-navigation-cache";
 
 /**
  * Subscribes to Supabase auth state changes so the PWA detects
@@ -14,6 +16,7 @@ import { clearLastActiveOwner, setLastActiveOwner } from "@/lib/doc-cache";
 export function AuthPersistence() {
   const router = useRouter();
   const pathname = usePathname();
+  const { clearUserId, setUserId } = usePrivateSession();
   const redirectToAuth = useEffectEvent(() => {
     router.replace(`/auth?next=${encodeURIComponent(pathname)}`);
   });
@@ -35,12 +38,15 @@ export function AuthPersistence() {
       } = supabase.auth.onAuthStateChange((event, session) => {
         if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
           if (session?.user?.id) {
+            setUserId(session.user.id);
             void setLastActiveOwner(session.user.id);
           }
         }
 
         if (event === "SIGNED_OUT") {
+          clearUserId();
           void clearLastActiveOwner();
+          void clearPrivateNavigationCache();
           redirectToAuth();
         }
       });
@@ -58,9 +64,12 @@ export function AuthPersistence() {
       }
 
       if (session?.user?.id) {
+        setUserId(session.user.id);
         void setLastActiveOwner(session.user.id);
       } else {
+        clearUserId();
         void clearLastActiveOwner();
+        void clearPrivateNavigationCache();
         redirectToAuth();
       }
     })();
@@ -69,7 +78,7 @@ export function AuthPersistence() {
       isActive = false;
       unsubscribe?.();
     };
-  }, []);
+  }, [clearUserId, setUserId]);
 
   return null;
 }

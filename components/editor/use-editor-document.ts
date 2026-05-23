@@ -1,12 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import type { EditorDocument } from "@/components/editor/editor-types";
 import {
   getCachedDocumentForOwner,
-  getLastActiveOwner,
   reconcileCachedDocumentWithServer,
   setLastActiveOwner,
   type CachedDocument,
@@ -31,8 +29,10 @@ const INITIAL_DOCUMENT_STATE: EditorDocumentState = {
   notFound: false,
 };
 
-export function useEditorDocument(documentId: string): EditorDocumentState {
-  const router = useRouter();
+export function useEditorDocument(
+  documentId: string,
+  userId: string | null,
+): EditorDocumentState {
   const [state, setState] = useState<EditorDocumentState>(INITIAL_DOCUMENT_STATE);
 
   useEffect(() => {
@@ -52,36 +52,11 @@ export function useEditorDocument(documentId: string): EditorDocumentState {
 
     void (async () => {
       let cachedDocument: CachedDocument | null = null;
-      let cachedOwner: string | null = null;
       let hasValidatedCachedDocument = false;
 
       try {
         const supabaseModulePromise = import("@/lib/supabase/client");
 
-        cachedOwner = await getLastActiveOwner();
-
-        if (!isActive) {
-          return;
-        }
-
-        if (cachedOwner) {
-          cachedDocument = await getCachedDocumentForOwner(documentId, cachedOwner);
-          if (!isActive) {
-            return;
-          }
-        }
-
-        const { getSupabaseBrowserClient } = await supabaseModulePromise;
-        const supabase = await getSupabaseBrowserClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!isActive) {
-          return;
-        }
-
-        const userId = session?.user?.id ?? null;
         if (!userId) {
           cachedDocument = null;
           setState((current) => ({
@@ -89,38 +64,24 @@ export function useEditorDocument(documentId: string): EditorDocumentState {
             document: null,
             hasResolvedRemoteState: true,
           }));
-          router.replace(`/auth?next=/doc/${documentId}`);
           return;
         }
 
         void setLastActiveOwner(userId);
 
-        if (cachedOwner !== userId) {
-          cachedDocument = null;
-          setState((current) => ({
-            ...current,
-            document: current.document?.owner === userId ? current.document : null,
-          }));
-        } else if (cachedDocument) {
+        cachedDocument = await getCachedDocumentForOwner(documentId, userId);
+
+        if (!isActive) {
+          return;
+        }
+
+        if (cachedDocument) {
           hasValidatedCachedDocument = true;
           setDocumentIfChanged(toEditorDocument(cachedDocument));
         }
 
-        if (cachedOwner !== userId || !cachedDocument) {
-          const ownerScopedCachedDocument = await getCachedDocumentForOwner(
-            documentId,
-            userId,
-          );
-          if (!isActive) {
-            return;
-          }
-
-          if (ownerScopedCachedDocument) {
-            cachedDocument = ownerScopedCachedDocument;
-            hasValidatedCachedDocument = true;
-            setDocumentIfChanged(toEditorDocument(ownerScopedCachedDocument));
-          }
-        }
+        const { getSupabaseBrowserClient } = await supabaseModulePromise;
+        const supabase = await getSupabaseBrowserClient();
 
         const { data: serverDocument, error: fetchError } = await supabase
           .from("documents")
@@ -178,7 +139,7 @@ export function useEditorDocument(documentId: string): EditorDocumentState {
     return () => {
       isActive = false;
     };
-  }, [documentId, router]);
+  }, [documentId, userId]);
 
   return state;
 }

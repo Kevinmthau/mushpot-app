@@ -74,6 +74,10 @@ export function useDocumentDraft(
   const didEditSinceHydrationRef = useRef(false);
   const latestTitleRef = useRef(initialDocument.title);
   const latestContentRef = useRef<Text | string>(initialDocument.content);
+  const latestContentTextRef = useRef(initialDocument.content);
+  const latestSerializedContentSourceRef = useRef<Text | string>(
+    initialDocument.content,
+  );
   const latestUpdatedAtRef = useRef(initialDocument.updated_at);
   const shareEnabledRef = useRef(initialDocument.share_enabled);
   const shareTokenRef = useRef(initialDocument.share_token);
@@ -111,6 +115,8 @@ export function useDocumentDraft(
     setIsDeleting(false);
     latestTitleRef.current = initialDocument.title;
     latestContentRef.current = initialDocument.content;
+    latestContentTextRef.current = initialDocument.content;
+    latestSerializedContentSourceRef.current = initialDocument.content;
     latestUpdatedAtRef.current = initialDocument.updated_at;
     shareEnabledRef.current = initialDocument.share_enabled;
     shareTokenRef.current = initialDocument.share_token;
@@ -131,7 +137,16 @@ export function useDocumentDraft(
   }, [shareEnabled, shareToken]);
 
   const getLatestContent = useCallback(() => {
-    return readDocumentText(latestContentRef.current);
+    const latestContent = latestContentRef.current;
+
+    if (latestSerializedContentSourceRef.current === latestContent) {
+      return latestContentTextRef.current;
+    }
+
+    const latestContentText = readDocumentText(latestContent);
+    latestSerializedContentSourceRef.current = latestContent;
+    latestContentTextRef.current = latestContentText;
+    return latestContentText;
   }, []);
 
   const getLatestTitle = useCallback(() => {
@@ -288,6 +303,10 @@ export function useDocumentDraft(
   );
 
   useEffect(() => {
+    if (!didEditSinceHydrationRef.current) {
+      return;
+    }
+
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current);
     }
@@ -384,17 +403,17 @@ export function useDocumentDraft(
     [getLatestContent, saveDraft, scheduleLocalCacheWrite, scheduleStatsSync],
   );
 
-  const updateShareState = useCallback((
-    enabled: boolean,
-    token: string | null,
-    updatedAt: string,
-  ) => {
-    shareEnabledRef.current = enabled;
-    shareTokenRef.current = token;
-    applyUpdatedAt(updatedAt);
-    setShareEnabled(enabled);
-    setShareToken(token);
-  }, [applyUpdatedAt]);
+  const updateShareState = useCallback(
+    (enabled: boolean, token: string | null, updatedAt: string) => {
+      shareEnabledRef.current = enabled;
+      shareTokenRef.current = token;
+      applyUpdatedAt(updatedAt);
+      setShareEnabled(enabled);
+      setShareToken(token);
+      writeLocalCacheSnapshot();
+    },
+    [applyUpdatedAt, writeLocalCacheSnapshot],
+  );
 
   const markDeleting = useCallback(() => {
     isDeletingRef.current = true;
