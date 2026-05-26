@@ -377,13 +377,17 @@ export function useDocumentDraft(
 
   const handleTitleChange = useCallback((nextTitle: string) => {
     didEditSinceHydrationRef.current = true;
+    latestTitleRef.current = nextTitle;
     setTitle(nextTitle);
   }, []);
 
   const handleTitleBlur = useCallback(() => {
-    if (!latestTitleRef.current.trim()) {
-      setTitle("Untitled");
+    if (latestTitleRef.current.trim()) {
+      return;
     }
+
+    latestTitleRef.current = "Untitled";
+    setTitle("Untitled");
   }, []);
 
   const handleEditorChange = useCallback(

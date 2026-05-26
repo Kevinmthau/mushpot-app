@@ -2,8 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { type Text } from "@codemirror/state";
-import Link from "next/link";
-import type { ComponentType, MouseEvent, ChangeEvent } from "react";
+import type {
+  ChangeEvent,
+  ComponentType,
+  MouseEvent,
+} from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -68,6 +71,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [uploadingMediaCount, setUploadingMediaCount] = useState(0);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const isNavigatingHomeRef = useRef(false);
   const {
     formattedUpdated,
     flushLatestDraft,
@@ -152,16 +156,27 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     void handleDeleteDocument();
   }, [handleDeleteDocument]);
 
+  const navigateToDocuments = useCallback(() => {
+    if (isDeleting || isNavigatingHomeRef.current) {
+      return;
+    }
+
+    isNavigatingHomeRef.current = true;
+    titleInputRef.current?.blur();
+    flushLatestDraft();
+    router.push("/");
+  }, [flushLatestDraft, isDeleting, router]);
+
   const handleDocumentsClick = useCallback(
-    (event: MouseEvent<HTMLAnchorElement>) => {
-      if (isDeleting) {
+    (event: MouseEvent<HTMLButtonElement>) => {
+      if (isNavigatingHomeRef.current) {
         event.preventDefault();
         return;
       }
 
-      flushLatestDraft();
+      navigateToDocuments();
     },
-    [flushLatestDraft, isDeleting],
+    [navigateToDocuments],
   );
 
   return (
@@ -179,16 +194,16 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
         />
 
         <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
-          <Link
-            href="/"
-            prefetch={false}
+          <button
+            type="button"
             onClick={handleDocumentsClick}
+            disabled={isDeleting}
             aria-label="Back to documents"
             title="Back to documents"
-            className="-mx-1 -my-1 px-1 py-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)]"
+            className="-mx-1 -my-1 px-1 py-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {readingTime} min
-          </Link>
+          </button>
           <span>•</span>
           <span>{formattedUpdated}</span>
           {uploadingMediaCount > 0 ? (
