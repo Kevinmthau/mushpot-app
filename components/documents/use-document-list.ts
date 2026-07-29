@@ -16,15 +16,28 @@ type DocumentListState = {
   refreshDocuments: () => Promise<void>;
 };
 
+type OwnedDocumentListState = {
+  documents: DocumentListItem[];
+  error: string | null;
+  owner: string | null;
+};
+
 export function useDocumentList(userId: string | null): DocumentListState {
-  const [documents, setDocuments] = useState<DocumentListItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<OwnedDocumentListState>({
+    documents: [],
+    error: null,
+    owner: null,
+  });
   const requestIdRef = useRef(0);
   const hasDocumentsRef = useRef(false);
   const supabaseModuleRef =
     useRef<Promise<typeof import("@/lib/supabase/client")> | null>(null);
 
-  hasDocumentsRef.current = documents.length > 0;
+  const isStateOwnedByCurrentUser = state.owner === userId;
+  const visibleDocuments = isStateOwnedByCurrentUser ? state.documents : [];
+  const visibleError = isStateOwnedByCurrentUser ? state.error : null;
+
+  hasDocumentsRef.current = visibleDocuments.length > 0;
 
   if (!supabaseModuleRef.current) {
     supabaseModuleRef.current = import("@/lib/supabase/client");
@@ -32,7 +45,11 @@ export function useDocumentList(userId: string | null): DocumentListState {
 
   const refreshDocuments = useCallback(async () => {
     if (!userId) {
-      setDocuments([]);
+      setState({
+        documents: [],
+        error: null,
+        owner: null,
+      });
       return;
     }
 
@@ -40,7 +57,11 @@ export function useDocumentList(userId: string | null): DocumentListState {
     requestIdRef.current = requestId;
     const cacheWriteToken = getDocumentCacheWriteToken(userId);
 
-    setError(null);
+    setState((current) =>
+      current.owner === userId
+        ? { ...current, error: null }
+        : { documents: [], error: null, owner: userId },
+    );
 
     try {
       const { getSupabaseBrowserClient } = await supabaseModuleRef.current!;
@@ -58,13 +79,21 @@ export function useDocumentList(userId: string | null): DocumentListState {
 
       if (fetchError) {
         if (!hasDocumentsRef.current) {
-          setError(fetchError.message);
+          setState((current) =>
+            current.owner === userId
+              ? { ...current, error: fetchError.message }
+              : current,
+          );
         }
         return;
       }
 
       const nextDocuments = data ?? [];
-      setDocuments(nextDocuments);
+      setState({
+        documents: nextDocuments,
+        error: null,
+        owner: userId,
+      });
       void syncDocumentList(nextDocuments, userId, cacheWriteToken);
     } catch {
       if (requestId !== requestIdRef.current) {
@@ -72,19 +101,34 @@ export function useDocumentList(userId: string | null): DocumentListState {
       }
 
       if (!hasDocumentsRef.current) {
-        setError("Unable to load documents. Please check your connection.");
+        setState((current) =>
+          current.owner === userId
+            ? {
+                ...current,
+                error: "Unable to load documents. Please check your connection.",
+              }
+            : current,
+        );
       }
     }
   }, [userId]);
 
   useEffect(() => {
     if (!userId) {
-      setDocuments([]);
-      setError(null);
+      setState({
+        documents: [],
+        error: null,
+        owner: null,
+      });
       return;
     }
 
     let isActive = true;
+    setState({
+      documents: [],
+      error: null,
+      owner: userId,
+    });
 
     void (async () => {
       await activateDocumentCacheForOwner(userId);
@@ -99,7 +143,11 @@ export function useDocumentList(userId: string | null): DocumentListState {
         cacheReadToken,
       );
       if (isActive && cachedDocuments.length > 0) {
-        setDocuments(cachedDocuments);
+        setState({
+          documents: cachedDocuments,
+          error: null,
+          owner: userId,
+        });
       }
 
       if (isActive) {
@@ -114,8 +162,8 @@ export function useDocumentList(userId: string | null): DocumentListState {
   }, [userId, refreshDocuments]);
 
   return {
-    documents,
-    error,
+    documents: visibleDocuments,
+    error: visibleError,
     refreshDocuments,
   };
 }

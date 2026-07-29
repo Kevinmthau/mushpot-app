@@ -8,6 +8,7 @@ import {
   activateDocumentCacheForOwner,
   deactivateDocumentCacheForOwner,
 } from "@/lib/doc-cache";
+import { subscribeToAuthLifecycleEvents } from "@/lib/auth-lifecycle-events";
 import { clearPrivateNavigationCache } from "@/lib/private-navigation-cache";
 
 type AuthPersistenceActions = {
@@ -25,9 +26,11 @@ export type AuthPersistenceLifecycle = {
     error: unknown,
     startVersion: number,
   ) => void;
+  beginExplicitSignOut: (owner: string) => void;
   captureVersion: () => number;
   dispose: () => void;
   handleAuthEvent: (event: string, owner: string | null) => void;
+  recoverSession: (owner: string) => void;
 };
 
 /**
@@ -42,6 +45,7 @@ export function createAuthPersistenceLifecycle(
 ): AuthPersistenceLifecycle {
   let activeOwner = initialOwner;
   let disposed = false;
+  let explicitSignOutOwner: string | null = null;
   let version = 0;
 
   const activateOwner = (nextOwner: string) => {
@@ -50,18 +54,46 @@ export function createAuthPersistenceLifecycle(
     }
 
     version += 1;
+    const transitionVersion = version;
     const previousOwner = activeOwner;
-    activeOwner = nextOwner;
-    actions.setUserId(nextOwner);
 
-    if (previousOwner && previousOwner !== nextOwner) {
-      void Promise.allSettled([
-        actions.deactivateOwner(previousOwner),
-        actions.clearNavigationCache(),
-      ]);
+    if (previousOwner === nextOwner) {
+      activeOwner = nextOwner;
+      actions.setUserId(nextOwner);
+      void actions.activateOwner(nextOwner);
+      return;
     }
 
-    void actions.activateOwner(nextOwner);
+    // Hide the previous owner's React state before any asynchronous cleanup.
+    // The next owner is exposed only after the old cache/navigation state is
+    // deactivated and the new cache generation is active.
+    activeOwner = null;
+    actions.clearUserId();
+
+    void (async () => {
+      if (previousOwner) {
+        await Promise.allSettled([
+          actions.deactivateOwner(previousOwner),
+          actions.clearNavigationCache(),
+        ]);
+      }
+
+      if (disposed || version !== transitionVersion) {
+        return;
+      }
+
+      await actions.activateOwner(nextOwner);
+
+      if (disposed || version !== transitionVersion) {
+        // A sign-out can arrive while activation is in flight. Undo that
+        // activation so an unexposed owner never leaves an enabled cache.
+        await actions.deactivateOwner(nextOwner);
+        return;
+      }
+
+      activeOwner = nextOwner;
+      actions.setUserId(nextOwner);
+    })();
   };
 
   const deactivateActiveOwner = () => {
@@ -84,7 +116,8 @@ export function createAuthPersistenceLifecycle(
       if (
         !disposed &&
         version === transitionVersion &&
-        activeOwner === null
+        activeOwner === null &&
+        explicitSignOutOwner !== signedOutOwner
       ) {
         actions.redirectToAuth();
       }
@@ -104,6 +137,14 @@ export function createAuthPersistenceLifecycle(
         deactivateActiveOwner();
       }
     },
+    beginExplicitSignOut(owner) {
+      if (disposed) {
+        return;
+      }
+
+      explicitSignOutOwner = owner;
+      version += 1;
+    },
     captureVersion() {
       return version;
     },
@@ -116,9 +157,15 @@ export function createAuthPersistenceLifecycle(
         return;
       }
 
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+      if (
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN" ||
+        event === "TOKEN_REFRESHED"
+      ) {
         if (owner) {
           activateOwner(owner);
+        } else if (event === "INITIAL_SESSION") {
+          deactivateActiveOwner();
         }
         return;
       }
@@ -126,6 +173,14 @@ export function createAuthPersistenceLifecycle(
       if (event === "SIGNED_OUT") {
         deactivateActiveOwner();
       }
+    },
+    recoverSession(owner) {
+      if (disposed) {
+        return;
+      }
+
+      explicitSignOutOwner = null;
+      activateOwner(owner);
     },
   };
 }
@@ -154,6 +209,14 @@ export function AuthPersistence() {
       deactivateOwner: deactivateDocumentCacheForOwner,
       redirectToAuth,
       setUserId,
+    });
+    const unsubscribeFromLifecycleEvents = subscribeToAuthLifecycleEvents({
+      onExplicitSignOutStarted: (owner) => {
+        lifecycle.beginExplicitSignOut(owner);
+      },
+      onSessionRecovered: (owner) => {
+        lifecycle.recoverSession(owner);
+      },
     });
 
     void (async () => {
@@ -198,6 +261,7 @@ export function AuthPersistence() {
     return () => {
       isActive = false;
       lifecycle.dispose();
+      unsubscribeFromLifecycleEvents();
       unsubscribe?.();
     };
   }, [clearUserId, setUserId]);

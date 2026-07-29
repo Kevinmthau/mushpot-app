@@ -843,34 +843,30 @@ export async function getDirtyDocuments(
   token = getDocumentCacheWriteToken(owner),
 ): Promise<CachedCompleteDocument[]> {
   if (!owner || !token || token.owner !== owner) {
-    return [];
+    throw new Error("The document cache is not active for this owner.");
   }
 
-  try {
-    const db = await openDB();
-    const tx = db.transaction([DOCS_STORE, META_STORE], "readonly");
-    const transactionDone = waitForTransaction(tx);
-    const [ownerState, documents] = await Promise.all([
-      requestToPromise<DocumentCacheOwnerState | undefined>(
-        tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
-      ),
-      requestToPromise<CachedDocumentRecord[]>(
-        tx.objectStore(DOCS_STORE).index("owner").getAll(owner),
-      ),
-    ]);
-    await transactionDone;
+  const db = await openDB();
+  const tx = db.transaction([DOCS_STORE, META_STORE], "readonly");
+  const transactionDone = waitForTransaction(tx);
+  const [ownerState, documents] = await Promise.all([
+    requestToPromise<DocumentCacheOwnerState | undefined>(
+      tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
+    ),
+    requestToPromise<CachedDocumentRecord[]>(
+      tx.objectStore(DOCS_STORE).index("owner").getAll(owner),
+    ),
+  ]);
+  await transactionDone;
 
-    if (!isTokenAuthorized(ownerState, token)) {
-      return [];
-    }
-
-    return documents.filter(
-      (document): document is CachedCompleteDocument =>
-        isCompleteDocument(document) && document._dirty === true,
-    );
-  } catch {
-    return [];
+  if (!isTokenAuthorized(ownerState, token)) {
+    throw new Error("The document cache changed while drafts were being read.");
   }
+
+  return documents.filter(
+    (document): document is CachedCompleteDocument =>
+      isCompleteDocument(document) && document._dirty === true,
+  );
 }
 
 /**

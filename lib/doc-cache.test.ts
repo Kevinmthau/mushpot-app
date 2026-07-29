@@ -352,6 +352,9 @@ describe("owner-scoped document cache", () => {
     expect(
       await cache.deleteCachedDocument("dirty", OWNER, staleToken),
     ).toBe(false);
+    await expect(
+      cache.getDirtyDocuments(OWNER, staleToken),
+    ).rejects.toThrow("document cache changed");
     expect(
       await cache.getCachedDocumentForOwner("dirty", OWNER, currentToken),
     ).not.toBeNull();

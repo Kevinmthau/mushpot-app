@@ -23,32 +23,46 @@ type EditorDocumentState = {
   notFound: boolean;
 };
 
-const INITIAL_DOCUMENT_STATE: EditorDocumentState = {
+type OwnedEditorDocumentState = EditorDocumentState & {
+  owner: string | null;
+};
+
+const INITIAL_DOCUMENT_STATE: OwnedEditorDocumentState = {
   document: null,
   error: null,
   hasResolvedRemoteState: false,
   notFound: false,
+  owner: null,
 };
 
 export function useEditorDocument(
   documentId: string,
   userId: string | null,
 ): EditorDocumentState {
-  const [state, setState] = useState<EditorDocumentState>(INITIAL_DOCUMENT_STATE);
+  const [state, setState] =
+    useState<OwnedEditorDocumentState>(INITIAL_DOCUMENT_STATE);
 
   useEffect(() => {
     let isActive = true;
 
-    setState(INITIAL_DOCUMENT_STATE);
+    setState({
+      ...INITIAL_DOCUMENT_STATE,
+      owner: userId,
+    });
 
     const setDocumentIfChanged = (nextDocument: EditorDocument) => {
-      setState((current) => ({
-        ...current,
-        document:
-          current.document && areEditorDocumentsEqual(current.document, nextDocument)
-            ? current.document
-            : nextDocument,
-      }));
+      setState((current) =>
+        current.owner === userId
+          ? {
+              ...current,
+              document:
+                current.document &&
+                areEditorDocumentsEqual(current.document, nextDocument)
+                  ? current.document
+                  : nextDocument,
+            }
+          : current,
+      );
     };
 
     void (async () => {
@@ -64,6 +78,7 @@ export function useEditorDocument(
             ...current,
             document: null,
             hasResolvedRemoteState: true,
+            owner: null,
           }));
           return;
         }
@@ -106,18 +121,30 @@ export function useEditorDocument(
           return;
         }
 
-        setState((current) => ({ ...current, hasResolvedRemoteState: true }));
+        setState((current) =>
+          current.owner === userId
+            ? { ...current, hasResolvedRemoteState: true }
+            : current,
+        );
 
         if (fetchError) {
           if (!hasValidatedCachedDocument) {
-            setState((current) => ({ ...current, error: fetchError.message }));
+            setState((current) =>
+              current.owner === userId
+                ? { ...current, error: fetchError.message }
+                : current,
+            );
           }
           return;
         }
 
         if (!serverDocument) {
           if (!hasValidatedCachedDocument) {
-            setState((current) => ({ ...current, notFound: true }));
+            setState((current) =>
+              current.owner === userId
+                ? { ...current, notFound: true }
+                : current,
+            );
           }
           return;
         }
@@ -140,14 +167,18 @@ export function useEditorDocument(
           return;
         }
 
-        setState((current) => ({
-          ...current,
-          document: hasValidatedCachedDocument ? current.document : null,
-          error: hasValidatedCachedDocument
-            ? current.error
-            : "Unable to load document. Please check your connection.",
-          hasResolvedRemoteState: true,
-        }));
+        setState((current) =>
+          current.owner === userId
+            ? {
+                ...current,
+                document: hasValidatedCachedDocument ? current.document : null,
+                error: hasValidatedCachedDocument
+                  ? current.error
+                  : "Unable to load document. Please check your connection.",
+                hasResolvedRemoteState: true,
+              }
+            : current,
+        );
       }
     })();
 
@@ -155,6 +186,10 @@ export function useEditorDocument(
       isActive = false;
     };
   }, [documentId, userId]);
+
+  if (state.owner !== userId) {
+    return INITIAL_DOCUMENT_STATE;
+  }
 
   return state;
 }

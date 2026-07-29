@@ -9,13 +9,22 @@ import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import PullToRefresh from "@/components/pull-to-refresh";
 import {
   activateDocumentCacheForOwner,
+  deactivateDocumentCacheForOwner,
   purgeDocumentCacheForOwner,
 } from "@/lib/doc-cache";
+import {
+  announceAuthSessionRecovered,
+  announceExplicitSignOutStarted,
+} from "@/lib/auth-lifecycle-events";
 import { flushDirtyDocuments } from "@/lib/document-sync";
 import { clearPrivateNavigationCache } from "@/lib/private-navigation-cache";
 
 type CurrentDeviceSignOutOptions = {
   clearNavigationCache: () => Promise<void>;
+  getSessionOwner: () => Promise<{
+    error: unknown | null;
+    owner: string | null;
+  }>;
   owner: string;
   purgeOwnerCache: (owner: string) => Promise<void>;
   signOut: (
@@ -23,36 +32,106 @@ type CurrentDeviceSignOutOptions = {
   ) => Promise<{ error: unknown | null }>;
 };
 
+export type CurrentDeviceSignOutResult =
+  | {
+      error: Error | null;
+      status: "signed-out";
+    }
+  | {
+      error: Error;
+      status: "still-signed-in";
+    }
+  | {
+      error: Error;
+      status: "indeterminate";
+    }
+  | {
+      error: Error;
+      owner: string;
+      status: "session-changed";
+    };
+
+function toSignOutError(error: unknown) {
+  return error instanceof Error ? error : new Error("Unable to sign out.");
+}
+
 /**
  * Signs out only the current device and performs destructive cleanup only
- * after Supabase confirms success.
+ * after the local session is confirmed absent. Supabase Auth can remove the
+ * local session and still return an API error, so an error result must be
+ * followed by a fresh session read rather than treated as "still signed in."
  */
 export async function completeCurrentDeviceSignOut({
   clearNavigationCache,
+  getSessionOwner,
   owner,
   purgeOwnerCache,
   signOut,
-}: CurrentDeviceSignOutOptions): Promise<void> {
-  const { error } = await signOut({ scope: "local" });
-  if (error) {
-    throw error instanceof Error ? error : new Error("Unable to sign out.");
+}: CurrentDeviceSignOutOptions): Promise<CurrentDeviceSignOutResult> {
+  let signOutError: Error | null = null;
+  let replacementOwner: string | null = null;
+
+  try {
+    const { error } = await signOut({ scope: "local" });
+    signOutError = error ? toSignOutError(error) : null;
+  } catch (error) {
+    signOutError = toSignOutError(error);
+  }
+
+  if (signOutError) {
+    try {
+      const sessionResult = await getSessionOwner();
+      if (sessionResult.error) {
+        return {
+          error: toSignOutError(sessionResult.error),
+          status: "indeterminate",
+        };
+      }
+
+      if (sessionResult.owner === owner) {
+        return {
+          error: signOutError,
+          status: "still-signed-in",
+        };
+      }
+
+      replacementOwner = sessionResult.owner;
+    } catch (error) {
+      return {
+        error: toSignOutError(error),
+        status: "indeterminate",
+      };
+    }
   }
 
   await Promise.all([
     purgeOwnerCache(owner),
     clearNavigationCache(),
   ]);
+
+  if (signOutError && replacementOwner) {
+    return {
+      error: signOutError,
+      owner: replacementOwner,
+      status: "session-changed",
+    };
+  }
+
+  return {
+    error: signOutError,
+    status: "signed-out",
+  };
 }
 
 type SignOutPhase = "idle" | "flushing" | "confirm-discard" | "signing-out";
 
 export function DocumentsPageClient() {
   const router = useRouter();
-  const { clearUserId, userId } = usePrivateSession();
+  const { clearUserId, setUserId, userId } = usePrivateSession();
   const { documents, error, refreshDocuments } = useDocumentList(userId);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [signOutPhase, setSignOutPhase] = useState<SignOutPhase>("idle");
-  const [unsavedDraftCount, setUnsavedDraftCount] = useState(0);
+  const [unsavedDraftCount, setUnsavedDraftCount] = useState<number | null>(0);
 
   const finishSignOut = useCallback(async () => {
     if (!userId) {
@@ -65,18 +144,51 @@ export function DocumentsPageClient() {
     try {
       const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
       const supabase = await getSupabaseBrowserClient();
-      await completeCurrentDeviceSignOut({
+      announceExplicitSignOutStarted(userId);
+      const result = await completeCurrentDeviceSignOut({
         clearNavigationCache: clearPrivateNavigationCache,
+        getSessionOwner: async () => {
+          const {
+            data: { session },
+            error,
+          } = await supabase.auth.getSession();
+          return {
+            error,
+            owner: session?.user.id ?? null,
+          };
+        },
         owner: userId,
         purgeOwnerCache: purgeDocumentCacheForOwner,
         signOut: (options) => supabase.auth.signOut(options),
       });
+
+      if (result.status === "still-signed-in") {
+        announceAuthSessionRecovered(userId);
+        await activateDocumentCacheForOwner(userId);
+        setUserId(userId);
+        setSignOutError(result.error.message);
+        setSignOutPhase("idle");
+        return;
+      }
+
+      if (result.status === "indeterminate") {
+        await deactivateDocumentCacheForOwner(userId);
+      }
+
+      if (result.status === "session-changed") {
+        announceAuthSessionRecovered(result.owner);
+        await activateDocumentCacheForOwner(result.owner);
+        setUserId(result.owner);
+        setSignOutError(
+          "The signed-in account changed before sign-out completed. Please try again.",
+        );
+        setSignOutPhase("idle");
+        return;
+      }
+
       clearUserId();
       router.replace("/auth");
     } catch (signOutFailure) {
-      // SIGNED_OUT can deactivate the cache while signOut is resolving. If
-      // Supabase reports failure, restore access for the still-active owner.
-      await activateDocumentCacheForOwner(userId);
       setSignOutError(
         signOutFailure instanceof Error
           ? signOutFailure.message
@@ -84,7 +196,7 @@ export function DocumentsPageClient() {
       );
       setSignOutPhase("idle");
     }
-  }, [clearUserId, router, userId]);
+  }, [clearUserId, router, setUserId, userId]);
 
   const handleSignOut = useCallback(async () => {
     if (!userId || signOutPhase !== "idle") {
@@ -96,8 +208,10 @@ export function DocumentsPageClient() {
 
     try {
       const result = await flushDirtyDocuments(userId);
-      if (result.remaining > 0) {
-        setUnsavedDraftCount(result.remaining);
+      if (result.status === "unavailable" || result.remaining > 0) {
+        setUnsavedDraftCount(
+          result.status === "complete" ? result.remaining : null,
+        );
         setSignOutPhase("confirm-discard");
         return;
       }
@@ -181,10 +295,19 @@ export function DocumentsPageClient() {
               id="discard-drafts-description"
               className="mt-3 text-sm leading-6 text-[var(--muted)]"
             >
-              {unsavedDraftCount}{" "}
-              {unsavedDraftCount === 1 ? "draft is" : "drafts are"} still stored
-              only on this device. Discarding will permanently remove{" "}
-              {unsavedDraftCount === 1 ? "it" : "them"}.
+              {unsavedDraftCount === null ? (
+                <>
+                  Local drafts could not be checked. Discarding may permanently
+                  remove changes stored only on this device.
+                </>
+              ) : (
+                <>
+                  {unsavedDraftCount}{" "}
+                  {unsavedDraftCount === 1 ? "draft is" : "drafts are"} still
+                  stored only on this device. Discarding will permanently remove{" "}
+                  {unsavedDraftCount === 1 ? "it" : "them"}.
+                </>
+              )}
             </p>
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button

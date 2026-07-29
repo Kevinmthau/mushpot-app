@@ -259,6 +259,7 @@ export function useDocumentDraft(
             content: contentToSave,
             share_enabled: shareEnabledToSave,
             share_token: shareTokenToSave,
+            updated_at: latestUpdatedAtRef.current,
           });
 
           if (!result.ok || !result.updatedAt) {

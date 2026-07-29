@@ -68,17 +68,79 @@ describe("auth persistence lifecycle", () => {
     expect(actions.deactivateOwner).not.toHaveBeenCalled();
   });
 
-  it("deactivates the previous owner before exposing a different owner", async () => {
+  it("handles INITIAL_SESSION as the authoritative initial auth event", async () => {
     const actions = createActions();
+    const lifecycle = createAuthPersistenceLifecycle("owner-a", actions);
+    const staleSessionCheckVersion = lifecycle.captureVersion();
+
+    lifecycle.handleAuthEvent("INITIAL_SESSION", "owner-a");
+    lifecycle.applySessionCheck(null, null, staleSessionCheckVersion);
+    await flushPromises();
+
+    expect(actions.setUserId).toHaveBeenCalledWith("owner-a");
+    expect(actions.activateOwner).toHaveBeenCalledWith("owner-a");
+    expect(actions.clearUserId).not.toHaveBeenCalled();
+    expect(actions.deactivateOwner).not.toHaveBeenCalled();
+  });
+
+  it("treats an empty INITIAL_SESSION as signed out", async () => {
+    const actions = createActions();
+    const lifecycle = createAuthPersistenceLifecycle("owner-a", actions);
+
+    lifecycle.handleAuthEvent("INITIAL_SESSION", null);
+    await flushPromises();
+
+    expect(actions.clearUserId).toHaveBeenCalledOnce();
+    expect(actions.deactivateOwner).toHaveBeenCalledWith("owner-a");
+    expect(actions.redirectToAuth).toHaveBeenCalledOnce();
+  });
+
+  it("hides and deactivates the previous owner before exposing a different owner", async () => {
+    let finishDeactivation: (() => void) | undefined;
+    const actions = createActions();
+    actions.deactivateOwner.mockReturnValueOnce(
+      new Promise<undefined>((resolve) => {
+        finishDeactivation = () => resolve(undefined);
+      }),
+    );
+    const lifecycle = createAuthPersistenceLifecycle("owner-a", actions);
+
+    lifecycle.handleAuthEvent("SIGNED_IN", "owner-b");
+
+    expect(actions.clearUserId).toHaveBeenCalledOnce();
+    expect(actions.deactivateOwner).toHaveBeenCalledWith("owner-a");
+    expect(actions.setUserId).not.toHaveBeenCalledWith("owner-b");
+    expect(actions.activateOwner).not.toHaveBeenCalledWith("owner-b");
+
+    finishDeactivation?.();
+    await flushPromises();
+
+    expect(actions.clearNavigationCache).toHaveBeenCalledOnce();
+    expect(actions.setUserId).toHaveBeenCalledWith("owner-b");
+    expect(actions.activateOwner).toHaveBeenCalledWith("owner-b");
+  });
+
+  it("undoes a next-owner activation when sign-out wins the race", async () => {
+    let finishActivation: (() => void) | undefined;
+    const actions = createActions();
+    actions.activateOwner.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishActivation = () => resolve(undefined);
+        }),
+    );
     const lifecycle = createAuthPersistenceLifecycle("owner-a", actions);
 
     lifecycle.handleAuthEvent("SIGNED_IN", "owner-b");
     await flushPromises();
-
-    expect(actions.deactivateOwner).toHaveBeenCalledWith("owner-a");
-    expect(actions.clearNavigationCache).toHaveBeenCalledOnce();
-    expect(actions.setUserId).toHaveBeenCalledWith("owner-b");
     expect(actions.activateOwner).toHaveBeenCalledWith("owner-b");
+
+    lifecycle.handleAuthEvent("SIGNED_OUT", null);
+    finishActivation?.();
+    await flushPromises();
+
+    expect(actions.setUserId).not.toHaveBeenCalledWith("owner-b");
+    expect(actions.deactivateOwner).toHaveBeenCalledWith("owner-b");
   });
 
   it("does not redirect for a stale sign-out followed by reauthentication", async () => {
