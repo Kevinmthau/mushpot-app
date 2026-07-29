@@ -41,6 +41,7 @@ export function CodeMirrorEditor({
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const restoreFocusRef = useRef(false);
   const onChangeRef = useRef(onChange);
   const onReadyRef = useRef(onReady);
   const editorApiRef = useRef<CodeMirrorEditorApi>({
@@ -106,9 +107,17 @@ export function CodeMirrorEditor({
     });
 
     viewRef.current = view;
+    if (restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      view.focus();
+    }
     onReadyRef.current?.(editorApiRef.current);
 
     return () => {
+      // React Strict Mode and extension changes can recreate the EditorView.
+      // Carry focus to the replacement so a title-to-body transfer is not
+      // lost when the first ready editor is immediately torn down.
+      restoreFocusRef.current = view.hasFocus;
       onReadyRef.current?.(null);
       view.destroy();
       if (viewRef.current === view) {
