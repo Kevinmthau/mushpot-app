@@ -100,8 +100,6 @@ async function updateBucket(
   isPublic: boolean,
 ) {
   const { error } = await client.storage.updateBucket(state.id, {
-    allowedMimeTypes: state.allowedMimeTypes,
-    fileSizeLimit: state.fileSizeLimit,
     public: isPublic,
   });
   if (error) {
