@@ -75,14 +75,11 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 # Optional but recommended when localhost or proxies should redirect to a canonical app URL.
 NEXT_PUBLIC_APP_URL=http://localhost:3000
-# Required in production. Optional in local development when CAPTCHA is disabled.
-NEXT_PUBLIC_TURNSTILE_SITE_KEY=...
 ```
 
 Notes:
 
 - `NEXT_PUBLIC_APP_URL` is used for auth redirect generation and shared-link origins.
-- `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is Cloudflare Turnstile's public site key. Production sign-in fails closed when it is missing; local development can omit it.
 - `npm run build` does not require Supabase env vars, but running authenticated pages does.
 - `SUPABASE_SERVICE_ROLE_KEY` is not used by the Next.js app directly. It is required by the Supabase Edge Function runtime and production media administration tools.
 - Set the Edge Function secret `ALLOWED_ORIGINS` to the comma-separated app origins that may invoke `get-shared-doc` from a browser. Server-to-server calls do not send an `Origin` header.
@@ -100,13 +97,9 @@ Notes:
    - Use a verified-domain sender address, such as `no-reply@yourdomain.com`, with sender name `Mushpot`.
    - Do not store the Resend API key in this repository or in the Next.js app environment.
    - After saving, review Supabase Auth email rate limits before public launch.
-4. Configure CAPTCHA protection for magic-link requests:
-   - Create a Cloudflare Turnstile widget and allow the production app hostname. Add `localhost` when testing the widget locally.
-   - Put the widget's public site key in `NEXT_PUBLIC_TURNSTILE_SITE_KEY` for the deployed Next.js app.
-   - In Supabase Dashboard, open **Authentication > Bot and Abuse Protection**, enable CAPTCHA, select Cloudflare Turnstile, and save the widget's secret key there.
-   - Keep the Turnstile secret out of this repository and out of all `NEXT_PUBLIC_` environment variables.
-   - Local development may omit the site key to disable CAPTCHA. Production deliberately rejects magic-link requests when the site key is missing.
-5. Update the Supabase Auth Confirm signup and Magic Link templates so scanners do not consume one-time links before the user opens them:
+   - Keep Supabase Auth CAPTCHA protection disabled unless the app is updated
+     with a supported challenge provider and frontend token flow.
+4. Update the Supabase Auth Confirm signup and Magic Link templates so scanners do not consume one-time links before the user opens them:
 
 ```html
 <h2>Open Mushpot</h2>
@@ -117,10 +110,10 @@ Notes:
 ```
 
    The app always sends `emailRedirectTo` as `/auth/verify?next=...`, so the `&token_hash=...` suffix is expected.
-6. Apply every SQL migration in `supabase/migrations/` in chronological order.
+5. Apply every SQL migration in `supabase/migrations/` in chronological order.
    The private-media migration is additive: it does not make either Storage
    bucket private and starts the rollout in the `backfill` phase.
-7. Deploy the Edge Functions. Their JWT behavior is tracked in
+6. Deploy the Edge Functions. Their JWT behavior is tracked in
    `supabase/config.toml`, so do not add ad hoc deployment flags:
 
 ```bash
@@ -128,7 +121,7 @@ supabase functions deploy get-shared-doc
 supabase functions deploy document-media-maintenance
 ```
 
-8. Follow `supabase/admin/README.md` to configure the maintenance secret and
+7. Follow `supabase/admin/README.md` to configure the maintenance secret and
    schedule, inventory/backfill existing document media, perform the short
    final write freeze, and switch the buckets through the Storage API.
 

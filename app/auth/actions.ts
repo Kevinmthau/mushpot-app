@@ -8,12 +8,6 @@ import {
   normalizeInternalPathFormValue,
   resolveAppOriginFromHeaders,
 } from "@/lib/app-url";
-import {
-  CAPTCHA_CONFIGURATION_ERROR_MESSAGE,
-  CAPTCHA_REQUIRED_ERROR_MESSAGE,
-  getCaptchaConfiguration,
-  normalizeCaptchaToken,
-} from "@/lib/auth-captcha";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const DEFAULT_ERROR_MESSAGE = "Unable to send magic link. Please try again.";
@@ -42,24 +36,6 @@ function getMagicLinkErrorMessage(error: {
 export async function requestMagicLinkAction(formData: FormData) {
   const nextPath = normalizeInternalPathFormValue(formData.get("nextPath"));
   const emailValue = formData.get("email");
-  const captchaToken = normalizeCaptchaToken(formData.get("captchaToken"));
-  const captchaConfiguration = getCaptchaConfiguration();
-
-  if (captchaConfiguration.configurationError) {
-    redirect(
-      buildAuthRedirectPath(nextPath, {
-        error: CAPTCHA_CONFIGURATION_ERROR_MESSAGE,
-      }),
-    );
-  }
-
-  if (captchaConfiguration.required && !captchaToken) {
-    redirect(
-      buildAuthRedirectPath(nextPath, {
-        error: CAPTCHA_REQUIRED_ERROR_MESSAGE,
-      }),
-    );
-  }
 
   if (typeof emailValue !== "string" || emailValue.trim().length === 0) {
     redirect(
@@ -87,7 +63,6 @@ export async function requestMagicLinkAction(formData: FormData) {
     email,
     options: {
       emailRedirectTo,
-      ...(captchaToken ? { captchaToken } : {}),
     },
   });
 

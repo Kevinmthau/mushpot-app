@@ -28,7 +28,6 @@
     "@codemirror/state": "^6.5.4",
     "@codemirror/view": "^6.39.16",
     "@lezer/common": "^1.5.2",
-    "@marsidev/react-turnstile": "^1.5.3",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.111.0",
     "nanoid": "^5.1.6",

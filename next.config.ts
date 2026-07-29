@@ -8,7 +8,7 @@ const contentSecurityPolicy = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
-  `script-src 'self' 'unsafe-inline'${isDevelopment ? " 'unsafe-eval'" : ""} https://challenges.cloudflare.com`,
+  `script-src 'self' 'unsafe-inline'${isDevelopment ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
@@ -16,7 +16,7 @@ const contentSecurityPolicy = [
   `connect-src 'self' https: wss:${isDevelopment ? " ws:" : ""}`,
   "worker-src 'self' blob:",
   "manifest-src 'self'",
-  "frame-src https://challenges.cloudflare.com",
+  "frame-src 'none'",
 ].join("; ");
 
 const securityHeaders = [
