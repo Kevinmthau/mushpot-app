@@ -34,13 +34,17 @@ type DocumentRow = {
   updated_at: string;
 };
 
+type LeaseRefreshResult = "error" | "missing" | "success";
+
 function createSupabaseMock({
   copy,
+  refreshResults = [],
 }: {
   copy?: (
     sourcePath: string,
     destinationPath: string,
   ) => Promise<{ error: { message: string } | null }>;
+  refreshResults?: LeaseRefreshResult[];
 } = {}) {
   const rows: DocumentRow[] = [];
   const inserts: Array<Record<string, unknown>> = [];
@@ -50,6 +54,7 @@ function createSupabaseMock({
   const copyMock = vi.fn(
     copy ?? (async () => ({ error: null })),
   );
+  let refreshAttempt = 0;
 
   function createQuery() {
     let action: "delete" | "insert" | "update" = "update";
@@ -97,6 +102,26 @@ function createSupabaseMock({
 
       updates.push(values);
       updateFilters.push(new Map(filters));
+      const isLeaseRefresh =
+        Object.keys(values).length === 1 &&
+        typeof values.clone_lease_expires_at === "string";
+      if (isLeaseRefresh) {
+        const refreshResult =
+          refreshResults[refreshAttempt] ?? "success";
+        refreshAttempt += 1;
+
+        if (refreshResult === "error") {
+          return {
+            data: null,
+            error: { message: "temporary lease refresh failure" },
+          };
+        }
+
+        if (refreshResult === "missing") {
+          return { data: null, error: null };
+        }
+      }
+
       for (const row of matches) {
         Object.assign(row, values);
       }
@@ -150,6 +175,9 @@ function createSupabaseMock({
     inserts,
     rows,
     supabase,
+    get refreshAttemptCount() {
+      return refreshAttempt;
+    },
     updateFilters,
     updates,
   };
@@ -238,6 +266,100 @@ describe("performDocumentClone", () => {
       clone_status: null,
       title: "Photos (copy)",
     });
+  });
+
+  it("retries transient heartbeat errors while the confirmed lease remains valid", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T16:00:00.000Z"));
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
+    let finishCopy: ((value: { error: null }) => void) | undefined;
+    const copy = vi.fn(
+      () =>
+        new Promise<{ error: null }>((resolve) => {
+          finishCopy = resolve;
+        }),
+    );
+    const mock = createSupabaseMock({
+      copy,
+      refreshResults: ["success", "error", "success"],
+    });
+
+    const clonePromise = performDocumentClone({
+      content:
+        `![photo](/m/document-images/${OWNER_ID}/` +
+        `${SOURCE_DOCUMENT_ID}/photo.png)`,
+      leaseToken: LEASE_TOKEN,
+      owner: OWNER_ID,
+      supabase: mock.supabase,
+      title: "Photos",
+    });
+
+    await vi.waitFor(() => expect(mock.copyMock).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(CLONE_HEARTBEAT_INTERVAL_MS * 2);
+    expect(mock.refreshAttemptCount).toBeGreaterThanOrEqual(3);
+
+    finishCopy?.({ error: null });
+    await expect(clonePromise).resolves.toMatchObject({
+      clone_status: null,
+      title: "Photos (copy)",
+    });
+  });
+
+  it("treats a token/status miss as terminal lease loss", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
+    const { deletes, rows, supabase } = createSupabaseMock({
+      refreshResults: ["missing"],
+    });
+
+    await expect(
+      performDocumentClone({
+        content: "No media",
+        leaseToken: LEASE_TOKEN,
+        owner: OWNER_ID,
+        supabase,
+        title: "Notes",
+      }),
+    ).rejects.toThrow("clone lease expired");
+
+    expect(rows).toEqual([]);
+    expect(deletes).toHaveLength(1);
+  });
+
+  it("stops retrying transient errors when the last confirmed lease expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T16:00:00.000Z"));
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
+    let finishCopy: ((value: { error: null }) => void) | undefined;
+    const copy = vi.fn(
+      () =>
+        new Promise<{ error: null }>((resolve) => {
+          finishCopy = resolve;
+        }),
+    );
+    const mock = createSupabaseMock({
+      copy,
+      refreshResults: [
+        "success",
+        ...Array.from({ length: 10 }, () => "error" as const),
+      ],
+    });
+
+    const clonePromise = performDocumentClone({
+      content:
+        `![photo](/m/document-images/${OWNER_ID}/` +
+        `${SOURCE_DOCUMENT_ID}/photo.png)`,
+      leaseToken: LEASE_TOKEN,
+      owner: OWNER_ID,
+      supabase: mock.supabase,
+      title: "Photos",
+    });
+
+    await vi.waitFor(() => expect(mock.copyMock).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(CLONE_LEASE_DURATION_MS);
+    finishCopy?.({ error: null });
+
+    await expect(clonePromise).rejects.toThrow("clone lease expired");
+    expect(mock.rows).toEqual([]);
   });
 
   it("deletes a failed pending clone by status and lease token", async () => {

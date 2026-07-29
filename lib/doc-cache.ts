@@ -58,9 +58,19 @@ const META_STORE = "meta";
 const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
 const OWNER_CACHE_STATE_KEY_PREFIX = "document-cache-owner-state:";
 const LAST_SYNC_KEY_PREFIX = "document-cache-last-sync:";
+const DOCUMENT_DELETION_TOMBSTONE_KEY_PREFIX =
+  "document-cache-deletion-tombstone:";
 
 type DocumentCacheOwnerState = {
   enabled: boolean;
+  generation: number;
+  key: string;
+  owner: string;
+};
+
+type DocumentCacheDeletionTombstone = {
+  deletedAt: string;
+  documentId: string;
   generation: number;
   key: string;
   owner: string;
@@ -116,6 +126,35 @@ function getOwnerCacheStateKey(owner: string) {
 
 function getOwnerLastSyncKey(owner: string) {
   return `${LAST_SYNC_KEY_PREFIX}${owner}`;
+}
+
+function getOwnerDocumentDeletionTombstonePrefix(owner: string) {
+  return `${DOCUMENT_DELETION_TOMBSTONE_KEY_PREFIX}${encodeURIComponent(owner)}:`;
+}
+
+function getDocumentDeletionTombstoneKey(owner: string, documentId: string) {
+  return `${getOwnerDocumentDeletionTombstonePrefix(owner)}${
+    encodeURIComponent(documentId)
+  }`;
+}
+
+function getOwnerDocumentDeletionTombstoneRange(owner: string) {
+  const prefix = getOwnerDocumentDeletionTombstonePrefix(owner);
+  return IDBKeyRange.bound(prefix, `${prefix}\uffff`);
+}
+
+function isDocumentCacheDeletionTombstone(
+  value: DocumentCacheDeletionTombstone | undefined,
+  owner: string,
+  documentId: string,
+  generation: number,
+): value is DocumentCacheDeletionTombstone {
+  return (
+    value?.key === getDocumentDeletionTombstoneKey(owner, documentId) &&
+    value.owner === owner &&
+    value.documentId === documentId &&
+    value.generation === generation
+  );
 }
 
 function beginOwnerStateOperation(owner: string) {
@@ -359,17 +398,29 @@ export async function getCachedDocumentRecordForOwner(
     const db = await openDB();
     const tx = db.transaction([DOCS_STORE, META_STORE], "readonly");
     const transactionDone = waitForTransaction(tx);
-    const [ownerState, document] = await Promise.all([
+    const [ownerState, document, deletionTombstone] = await Promise.all([
       requestToPromise<DocumentCacheOwnerState | undefined>(
         tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
       ),
       requestToPromise<CachedDocumentRecord | undefined>(
         tx.objectStore(DOCS_STORE).get(id),
       ),
+      requestToPromise<DocumentCacheDeletionTombstone | undefined>(
+        tx.objectStore(META_STORE).get(
+          getDocumentDeletionTombstoneKey(owner, id),
+        ),
+      ),
     ]);
     await transactionDone;
 
-    return isTokenAuthorized(ownerState, token) && document?.owner === owner
+    return isTokenAuthorized(ownerState, token) &&
+        !isDocumentCacheDeletionTombstone(
+          deletionTombstone,
+          owner,
+          id,
+          token.generation,
+        ) &&
+        document?.owner === owner
       ? document
       : null;
   } catch {
@@ -411,8 +462,14 @@ export async function getCachedDocumentListForOwner(
     const db = await openDB();
     const tx = db.transaction([DOCS_STORE, META_STORE], "readonly");
     const transactionDone = waitForTransaction(tx);
+    const metaStore = tx.objectStore(META_STORE);
     const stateRequest = requestToPromise<DocumentCacheOwnerState | undefined>(
-      tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
+      metaStore.get(getOwnerCacheStateKey(owner)),
+    );
+    const tombstonesRequest = requestToPromise<
+      DocumentCacheDeletionTombstone[]
+    >(
+      metaStore.getAll(getOwnerDocumentDeletionTombstoneRange(owner)),
     );
     const documents: CachedDocumentListItem[] = [];
 
@@ -440,9 +497,28 @@ export async function getCachedDocumentListForOwner(
       request.onerror = () => reject(request.error);
     });
 
-    const [ownerState] = await Promise.all([stateRequest, cursorDone]);
+    const [ownerState, deletionTombstones] = await Promise.all([
+      stateRequest,
+      tombstonesRequest,
+      cursorDone,
+    ]);
     await transactionDone;
-    return isTokenAuthorized(ownerState, token) ? documents : [];
+    if (!isTokenAuthorized(ownerState, token)) {
+      return [];
+    }
+
+    const deletedDocumentIds = new Set(
+      deletionTombstones
+        .filter(
+          (tombstone) =>
+            tombstone.owner === owner &&
+            tombstone.generation === token.generation,
+        )
+        .map((tombstone) => tombstone.documentId),
+    );
+    return documents.filter(
+      (document) => !deletedDocumentIds.has(document.id),
+    );
   } catch {
     return [];
   }
@@ -487,18 +563,30 @@ export async function putCachedDocument(
     const tx = db.transaction([DOCS_STORE, META_STORE], "readwrite");
     const transactionDone = waitForTransaction(tx);
     const documentStore = tx.objectStore(DOCS_STORE);
-    const [ownerState, existingDocument] = await Promise.all([
+    const metaStore = tx.objectStore(META_STORE);
+    const [ownerState, existingDocument, deletionTombstone] = await Promise.all([
       requestToPromise<DocumentCacheOwnerState | undefined>(
-        tx.objectStore(META_STORE).get(getOwnerCacheStateKey(document.owner)),
+        metaStore.get(getOwnerCacheStateKey(document.owner)),
       ),
       requestToPromise<CachedDocumentRecord | undefined>(
         documentStore.get(document.id),
+      ),
+      requestToPromise<DocumentCacheDeletionTombstone | undefined>(
+        metaStore.get(
+          getDocumentDeletionTombstoneKey(document.owner, document.id),
+        ),
       ),
     ]);
     const authorized = isTokenAuthorized(ownerState, token);
     const incomingDocument = toStoredCompleteDocument(document);
     const stored =
       authorized &&
+      !isDocumentCacheDeletionTombstone(
+        deletionTombstone,
+        document.owner,
+        document.id,
+        token.generation,
+      ) &&
       !shouldPreserveExistingDocument(existingDocument, incomingDocument);
 
     if (stored) {
@@ -512,7 +600,11 @@ export async function putCachedDocument(
   }
 }
 
-/** Deletes only when the owner has a current authorized generation. */
+/**
+ * Atomically tombstones and removes an owner/document cache row. The tombstone
+ * blocks delayed save completions and stale list responses for the remainder
+ * of the owner generation.
+ */
 export async function deleteCachedDocument(
   id: string,
   owner: string,
@@ -527,16 +619,27 @@ export async function deleteCachedDocument(
     const tx = db.transaction([DOCS_STORE, META_STORE], "readwrite");
     const transactionDone = waitForTransaction(tx);
     const store = tx.objectStore(DOCS_STORE);
+    const metaStore = tx.objectStore(META_STORE);
     const [ownerState, document] = await Promise.all([
       requestToPromise<DocumentCacheOwnerState | undefined>(
-        tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
+        metaStore.get(getOwnerCacheStateKey(owner)),
       ),
       requestToPromise<CachedDocumentRecord | undefined>(store.get(id)),
     ]);
     const authorized =
-      document?.owner === owner && isTokenAuthorized(ownerState, token);
+      isTokenAuthorized(ownerState, token) &&
+      (!document || document.owner === owner);
     if (authorized) {
-      store.delete(id);
+      metaStore.put({
+        deletedAt: new Date().toISOString(),
+        documentId: id,
+        generation: token.generation,
+        key: getDocumentDeletionTombstoneKey(owner, id),
+        owner,
+      } satisfies DocumentCacheDeletionTombstone);
+      if (document) {
+        store.delete(id);
+      }
     }
 
     await transactionDone;
@@ -568,17 +671,21 @@ async function disableDocumentCacheForOwner(
       const transactionDone = waitForTransaction(tx);
       const documentStore = tx.objectStore(DOCS_STORE);
       const metaStore = tx.objectStore(META_STORE);
-      const [ownerState, documents, lastActiveOwner] = await Promise.all([
-        requestToPromise<DocumentCacheOwnerState | undefined>(
-          metaStore.get(getOwnerCacheStateKey(owner)),
-        ),
-        requestToPromise<CachedDocumentRecord[]>(
-          documentStore.index("owner").getAll(owner),
-        ),
-        requestToPromise<{ value?: string } | undefined>(
-          metaStore.get(LAST_ACTIVE_OWNER_KEY),
-        ),
-      ]);
+      const [ownerState, documents, lastActiveOwner, tombstoneKeys] =
+        await Promise.all([
+          requestToPromise<DocumentCacheOwnerState | undefined>(
+            metaStore.get(getOwnerCacheStateKey(owner)),
+          ),
+          requestToPromise<CachedDocumentRecord[]>(
+            documentStore.index("owner").getAll(owner),
+          ),
+          requestToPromise<{ value?: string } | undefined>(
+            metaStore.get(LAST_ACTIVE_OWNER_KEY),
+          ),
+          requestToPromise<IDBValidKey[]>(
+            metaStore.getAllKeys(getOwnerDocumentDeletionTombstoneRange(owner)),
+          ),
+        ]);
 
       metaStore.put({
         enabled: false,
@@ -589,6 +696,10 @@ async function disableDocumentCacheForOwner(
 
       if (lastActiveOwner?.value === owner) {
         metaStore.delete(LAST_ACTIVE_OWNER_KEY);
+      }
+
+      for (const tombstoneKey of tombstoneKeys) {
+        metaStore.delete(tombstoneKey);
       }
 
       for (const document of documents) {
@@ -781,17 +892,32 @@ export async function syncDocumentList(
     const transactionDone = waitForTransaction(tx);
     const documentStore = tx.objectStore(DOCS_STORE);
     const metaStore = tx.objectStore(META_STORE);
-    const ownerState = await requestToPromise<DocumentCacheOwnerState | undefined>(
-      metaStore.get(getOwnerCacheStateKey(owner)),
-    );
+    const [ownerState, existingForOwner, deletionTombstones] =
+      await Promise.all([
+        requestToPromise<DocumentCacheOwnerState | undefined>(
+          metaStore.get(getOwnerCacheStateKey(owner)),
+        ),
+        requestToPromise<CachedDocumentRecord[]>(
+          documentStore.index("owner").getAll(owner),
+        ),
+        requestToPromise<DocumentCacheDeletionTombstone[]>(
+          metaStore.getAll(getOwnerDocumentDeletionTombstoneRange(owner)),
+        ),
+      ]);
 
     if (!isTokenAuthorized(ownerState, token)) {
       await transactionDone;
       return;
     }
 
-    const existingForOwner = await requestToPromise<CachedDocumentRecord[]>(
-      documentStore.index("owner").getAll(owner),
+    const deletedDocumentIds = new Set(
+      deletionTombstones
+        .filter(
+          (tombstone) =>
+            tombstone.owner === owner &&
+            tombstone.generation === token.generation,
+        )
+        .map((tombstone) => tombstone.documentId),
     );
     const existingById = new Map(
       existingForOwner.map((document) => [document.id, document]),
@@ -809,13 +935,19 @@ export async function syncDocumentList(
     );
 
     for (const document of existingForOwner) {
-      if (!serverIds.has(document.id) && !dirtyIds.has(document.id)) {
+      if (
+        deletedDocumentIds.has(document.id) ||
+        (!serverIds.has(document.id) && !dirtyIds.has(document.id))
+      ) {
         documentStore.delete(document.id);
       }
     }
 
     for (const serverDocument of serverDocuments) {
-      if (dirtyIds.has(serverDocument.id)) {
+      if (
+        dirtyIds.has(serverDocument.id) ||
+        deletedDocumentIds.has(serverDocument.id)
+      ) {
         continue;
       }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 import { deleteCachedDocument } from "@/lib/doc-cache";
@@ -12,6 +12,14 @@ type UseDocumentDeleteParams = {
   isDeleting: boolean;
   onDeleteStart: () => void;
   onDeleteError: () => void;
+};
+
+type DeleteDocumentAndCacheDependencies = {
+  deleteCachedDocument?: (
+    documentId: string,
+    owner: string,
+  ) => Promise<boolean>;
+  getSupabaseClient?: () => Promise<SupabaseBrowserClient>;
 };
 
 export async function deleteDocument(
@@ -35,6 +43,22 @@ export async function deleteDocument(
   }
 }
 
+export async function deleteDocumentAndCache(
+  owner: string,
+  documentId: string,
+  {
+    deleteCachedDocument: deleteCached = deleteCachedDocument,
+    getSupabaseClient = async () => {
+      const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
+      return getSupabaseBrowserClient();
+    },
+  }: DeleteDocumentAndCacheDependencies = {},
+) {
+  const supabase = await getSupabaseClient();
+  await deleteDocument(supabase, owner, documentId);
+  await deleteCached(documentId, owner);
+}
+
 export function useDocumentDelete({
   documentId,
   owner,
@@ -43,15 +67,9 @@ export function useDocumentDelete({
   onDeleteError,
 }: UseDocumentDeleteParams) {
   const router = useRouter();
-  const isDeletingRef = useRef(isDeleting);
-  isDeletingRef.current = isDeleting;
-  const onDeleteStartRef = useRef(onDeleteStart);
-  onDeleteStartRef.current = onDeleteStart;
-  const onDeleteErrorRef = useRef(onDeleteError);
-  onDeleteErrorRef.current = onDeleteError;
 
   return useCallback(async () => {
-    if (isDeletingRef.current) {
+    if (isDeleting) {
       return;
     }
 
@@ -62,15 +80,12 @@ export function useDocumentDelete({
       return;
     }
 
-    onDeleteStartRef.current();
-
-    const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
-    const supabase = await getSupabaseBrowserClient();
+    onDeleteStart();
 
     try {
-      await deleteDocument(supabase, owner, documentId);
+      await deleteDocumentAndCache(owner, documentId);
     } catch (error) {
-      onDeleteErrorRef.current();
+      onDeleteError();
       window.alert(
         error instanceof Error
           ? error.message
@@ -79,7 +94,13 @@ export function useDocumentDelete({
       return;
     }
 
-    void deleteCachedDocument(documentId, owner);
     router.replace("/");
-  }, [documentId, owner, router]);
+  }, [
+    documentId,
+    isDeleting,
+    onDeleteError,
+    onDeleteStart,
+    owner,
+    router,
+  ]);
 }

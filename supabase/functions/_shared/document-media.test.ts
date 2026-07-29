@@ -106,13 +106,47 @@ describe("sharedDocumentContentReferencesMedia", () => {
   });
 
   it("does not authorize an unreferenced object from the same owner", () => {
-    const referencedPath = `${OWNER_ID}/${OTHER_DOCUMENT_ID}/photo.png`;
-    const requestedPath = `${OWNER_ID}/${OTHER_DOCUMENT_ID}/private.png`;
+    const referencedPath = `${OWNER_ID}/${DOCUMENT_ID}/photo.png`;
+    const requestedPath = `${OWNER_ID}/${DOCUMENT_ID}/private.png`;
 
     expect(
       sharedDocumentContentReferencesMedia(
         `![legacy clone](/m/document-images/${referencedPath})`,
         { bucket: "document-images", path: requestedPath },
+        OPTIONS,
+      ),
+    ).toBe(false);
+  });
+
+  it("requires an exact same-document bucket and path reference", () => {
+    const imagePath = `${OWNER_ID}/${DOCUMENT_ID}/photo.png`;
+    const videoPath = `${OWNER_ID}/${DOCUMENT_ID}/clip.mp4`;
+    const content = [
+      `![photo](/m/document-images/${imagePath})`,
+      `![clip](/m/document-videos/${videoPath})`,
+    ].join("\n");
+
+    expect(
+      sharedDocumentContentReferencesMedia(
+        content,
+        { bucket: "document-images", path: imagePath },
+        OPTIONS,
+      ),
+    ).toBe(true);
+    expect(
+      sharedDocumentContentReferencesMedia(
+        content,
+        { bucket: "document-videos", path: imagePath },
+        OPTIONS,
+      ),
+    ).toBe(false);
+    expect(
+      sharedDocumentContentReferencesMedia(
+        content,
+        {
+          bucket: "document-images",
+          path: `${OWNER_ID}/${DOCUMENT_ID}/private.png`,
+        },
         OPTIONS,
       ),
     ).toBe(false);

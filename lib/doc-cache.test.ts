@@ -199,6 +199,84 @@ describe("owner-scoped document cache", () => {
     );
   });
 
+  it("tombstones a deletion against delayed writes and stale list responses", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(buildDocument());
+    const deletionGeneration = cache.getDocumentCacheWriteToken(OWNER);
+
+    expect(
+      await cache.deleteCachedDocument(
+        "document-a",
+        OWNER,
+        deletionGeneration,
+      ),
+    ).toBe(true);
+    expect(
+      await cache.putCachedDocument(
+        buildDocument({
+          content: "Delayed save completion",
+          _dirty: false,
+        }),
+        deletionGeneration,
+      ),
+    ).toBe(false);
+
+    await cache.syncDocumentList(
+      [
+        {
+          id: "document-a",
+          title: "Stale server row",
+          updated_at: "2026-07-20T12:00:00.000Z",
+        },
+      ],
+      OWNER,
+      deletionGeneration,
+    );
+
+    expect(
+      await cache.getCachedDocumentRecordForOwner(
+        "document-a",
+        OWNER,
+        deletionGeneration,
+      ),
+    ).toBeNull();
+    expect(
+      await cache.getCachedDocumentListForOwner(OWNER, deletionGeneration),
+    ).toEqual([]);
+  });
+
+  it("scopes deletion tombstones to the active owner generation", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const deletedGeneration = cache.getDocumentCacheWriteToken(OWNER);
+
+    expect(
+      await cache.deleteCachedDocument(
+        "document-a",
+        OWNER,
+        deletedGeneration,
+      ),
+    ).toBe(true);
+    expect(
+      await cache.putCachedDocument(buildDocument(), deletedGeneration),
+    ).toBe(false);
+
+    await cache.deactivateDocumentCacheForOwner(OWNER);
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const currentGeneration = cache.getDocumentCacheWriteToken(OWNER);
+
+    expect(currentGeneration?.generation).not.toBe(
+      deletedGeneration?.generation,
+    );
+    expect(
+      await cache.putCachedDocument(buildDocument(), deletedGeneration),
+    ).toBe(false);
+    expect(
+      await cache.putCachedDocument(buildDocument(), currentGeneration),
+    ).toBe(true);
+  });
+
   it("deactivation hides all rows, purges clean data, and quarantines dirty drafts", async () => {
     const cache = await loadDocumentCache();
     await cache.activateDocumentCacheForOwner(OWNER);

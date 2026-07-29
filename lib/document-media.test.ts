@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildDocumentMediaUrl,
-  documentContentReferencesMediaFromDocument,
   normalizeDocumentMediaUrl,
   parseDocumentMediaRoute,
   parseDocumentMediaUrl,
@@ -142,49 +141,5 @@ describe("normalizeDocumentMediaUrl", () => {
     expect(
       normalizeDocumentMediaUrl(`${SUPABASE_URL}/other/path.png`, SUPABASE_URL),
     ).toBe(`${SUPABASE_URL}/other/path.png`);
-  });
-});
-
-describe("documentContentReferencesMediaFromDocument", () => {
-  it("detects stable and legacy media references from a source document", () => {
-    const stable =
-      `/m/document-images/${OWNER_ID}/${DOCUMENT_ID}/photo.png`;
-    const legacy =
-      `${SUPABASE_URL}/storage/v1/object/public/document-videos/` +
-      `${OWNER_ID}/${DOCUMENT_ID}/clip.mp4`;
-
-    expect(
-      documentContentReferencesMediaFromDocument(
-        `![photo](${stable})`,
-        OWNER_ID,
-        DOCUMENT_ID,
-        SUPABASE_URL,
-      ),
-    ).toBe(true);
-    expect(
-      documentContentReferencesMediaFromDocument(
-        `![clip](${legacy})`,
-        OWNER_ID,
-        DOCUMENT_ID,
-        SUPABASE_URL,
-      ),
-    ).toBe(true);
-  });
-
-  it("ignores unrelated UUIDs and malformed media candidates", () => {
-    const otherDocumentId = "33333333-3333-4333-8333-333333333333";
-    const content = [
-      `![other](/m/document-images/${OWNER_ID}/${otherDocumentId}/photo.png)`,
-      `https://example.com/${DOCUMENT_ID}/not-document-media`,
-    ].join("\n");
-
-    expect(
-      documentContentReferencesMediaFromDocument(
-        content,
-        OWNER_ID,
-        DOCUMENT_ID,
-        SUPABASE_URL,
-      ),
-    ).toBe(false);
   });
 });

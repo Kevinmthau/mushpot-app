@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { deleteDocument } from "@/components/editor/use-document-delete";
+import {
+  deleteDocument,
+  deleteDocumentAndCache,
+} from "@/components/editor/use-document-delete";
 import type { SupabaseBrowserClient } from "@/lib/supabase/client";
 
 vi.mock("next/navigation", () => ({
@@ -71,5 +74,50 @@ describe("deleteDocument", () => {
     await expect(
       deleteDocument(supabase, OWNER_ID, DOCUMENT_ID),
     ).rejects.toThrow("document writes are temporarily frozen");
+  });
+});
+
+describe("deleteDocumentAndCache", () => {
+  it("surfaces client acquisition failures before touching the cache", async () => {
+    const deleteCached = vi.fn(async () => true);
+
+    await expect(
+      deleteDocumentAndCache(OWNER_ID, DOCUMENT_ID, {
+        deleteCachedDocument: deleteCached,
+        getSupabaseClient: async () => {
+          throw new Error("client import failed");
+        },
+      }),
+    ).rejects.toThrow("client import failed");
+
+    expect(deleteCached).not.toHaveBeenCalled();
+  });
+
+  it("awaits the cache tombstone after the server delete", async () => {
+    const { supabase } = createSupabaseMock();
+    let finishCacheDelete: (() => void) | undefined;
+    const deleteCached = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishCacheDelete = () => resolve(true);
+        }),
+    );
+    let settled = false;
+
+    const deletion = deleteDocumentAndCache(OWNER_ID, DOCUMENT_ID, {
+      deleteCachedDocument: deleteCached,
+      getSupabaseClient: async () => supabase,
+    }).then(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(() =>
+      expect(deleteCached).toHaveBeenCalledWith(DOCUMENT_ID, OWNER_ID)
+    );
+    expect(settled).toBe(false);
+
+    finishCacheDelete?.();
+    await deletion;
+    expect(settled).toBe(true);
   });
 });

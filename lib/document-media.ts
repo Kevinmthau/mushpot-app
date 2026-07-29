@@ -18,8 +18,6 @@ const PUBLIC_STORAGE_PATH_PREFIXES = [
   "/storage/v1/object/public/",
   "/storage/v1/render/image/public/",
 ] as const;
-const MEDIA_URL_CANDIDATE_PATTERN =
-  /https?:\/\/[^\s<>"')]+|\/m\/[^\s<>"')]+/g;
 
 export function isDocumentMediaBucket(
   value: string,
@@ -192,27 +190,6 @@ export function parseDocumentMediaUrl(
   }
 
   return parseLegacyPublicMediaUrl(value, supabaseUrl);
-}
-
-export function documentContentReferencesMediaFromDocument(
-  content: string,
-  ownerId: string,
-  documentId: string,
-  supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL,
-) {
-  if (!isUuid(ownerId) || !isUuid(documentId)) {
-    return false;
-  }
-
-  for (const match of content.matchAll(MEDIA_URL_CANDIDATE_PATTERN)) {
-    const media = parseDocumentMediaUrl(match[0], supabaseUrl);
-
-    if (media?.ownerId === ownerId && media.documentId === documentId) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 export function normalizeDocumentMediaUrl(

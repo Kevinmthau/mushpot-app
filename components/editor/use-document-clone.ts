@@ -32,6 +32,13 @@ type PerformDocumentCloneParams = {
 export const CLONE_LEASE_DURATION_MS = 10 * 60 * 1_000;
 export const CLONE_HEARTBEAT_INTERVAL_MS = 60 * 1_000;
 
+class CloneLeaseLostError extends Error {
+  constructor() {
+    super("The clone lease expired before the document could be completed.");
+    this.name = "CloneLeaseLostError";
+  }
+}
+
 function getCloneTitle(title: string) {
   return `${title} (copy)`;
 }
@@ -60,11 +67,12 @@ async function refreshCloneLease(
     .select("id")
     .maybeSingle();
 
-  if (error || !data) {
-    throw new Error(
-      error?.message ??
-        "The clone lease expired before the document could be completed.",
-    );
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    throw new CloneLeaseLostError();
   }
 }
 
@@ -74,12 +82,13 @@ function startCloneLeaseHeartbeat(
   documentId: string,
   leaseToken: string,
 ) {
-  let failure: unknown = null;
+  let leaseDeadline = Date.now() + CLONE_LEASE_DURATION_MS;
+  let terminalFailure: unknown = null;
   let inFlight: Promise<void> | null = null;
 
   const refresh = async () => {
-    if (failure) {
-      throw failure;
+    if (terminalFailure) {
+      throw terminalFailure;
     }
 
     if (!inFlight) {
@@ -88,17 +97,31 @@ function startCloneLeaseHeartbeat(
         owner,
         documentId,
         leaseToken,
-      ).finally(() => {
-        inFlight = null;
-      });
+      )
+        .then(() => {
+          leaseDeadline = Date.now() + CLONE_LEASE_DURATION_MS;
+        })
+        .catch((error: unknown) => {
+          if (error instanceof CloneLeaseLostError) {
+            terminalFailure = error;
+            throw error;
+          }
+
+          if (Date.now() >= leaseDeadline) {
+            terminalFailure = new CloneLeaseLostError();
+            throw terminalFailure;
+          }
+
+          // A transport/server error does not prove the CAS lease was lost.
+          // Keep retrying while the last confirmed lease is conservatively
+          // valid; the completion update is also guarded by status + token.
+        })
+        .finally(() => {
+          inFlight = null;
+        });
     }
 
-    try {
-      await inFlight;
-    } catch (error) {
-      failure = error;
-      throw error;
-    }
+    await inFlight;
   };
 
   const intervalId = globalThis.setInterval(() => {
