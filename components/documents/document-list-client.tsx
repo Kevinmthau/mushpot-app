@@ -6,7 +6,10 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 
 import { preloadEditorClient } from "@/components/editor/editor-lazy";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
-import { putCachedDocument, setLastActiveOwner } from "@/lib/doc-cache";
+import {
+  getDocumentCacheWriteToken,
+  putCachedDocument,
+} from "@/lib/doc-cache";
 import {
   EDITOR_DOCUMENT_SELECT,
   getDocumentDisplayTitle,
@@ -75,6 +78,7 @@ export function DocumentListClient({
     openKeyboardForNewDocument();
 
     setIsCreating(true);
+    const cacheWriteToken = getDocumentCacheWriteToken(userId);
 
     try {
       const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
@@ -89,8 +93,7 @@ export function DocumentListClient({
         throw new Error(error?.message ?? "Unable to create document.");
       }
 
-      await putCachedDocument(toCachedDocument(data));
-      void setLastActiveOwner(data.owner);
+      await putCachedDocument(toCachedDocument(data), cacheWriteToken);
 
       setOptimisticDocumentIds((currentIds) => {
         const nextIds = new Set(currentIds);

@@ -11,6 +11,13 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const sharedDocumentRobots: Metadata["robots"] = {
+  index: false,
+  follow: false,
+  noarchive: true,
+  nocache: true,
+};
+
 type SharedDocPageProps = {
   params: Promise<{ id: string; token: string }>;
 };
@@ -27,6 +34,7 @@ export async function generateMetadata({
       title: "Shared document | Mushpot",
       description: "Open this shared document in Mushpot.",
       metadataBase: origin ? new URL(origin) : undefined,
+      robots: sharedDocumentRobots,
     };
   }
 
@@ -39,6 +47,7 @@ export async function generateMetadata({
     metadataBase: origin ? new URL(origin) : undefined,
     title: `${title} | Mushpot`,
     description,
+    robots: sharedDocumentRobots,
     alternates: {
       canonical: sharePath,
     },

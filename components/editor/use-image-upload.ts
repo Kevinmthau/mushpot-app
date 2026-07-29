@@ -20,6 +20,7 @@ import {
   type SupportedMediaKind,
 } from "@/components/editor/image-upload-utils";
 import { generateVideoPosterImage } from "@/components/editor/video-poster-utils";
+import { buildDocumentMediaUrl } from "@/lib/document-media";
 import { buildVideoPosterTitle } from "@/lib/markdown/video-poster";
 import {
   getSupabaseBrowserClient,
@@ -148,7 +149,7 @@ async function uploadMediaWithResumableUpload({
         bucketName: bucket,
         objectName: path,
         contentType: contentType || file.type || "application/octet-stream",
-        cacheControl: "3600",
+        cacheControl: "300",
       },
       onError(error) {
         reject(error);
@@ -209,6 +210,7 @@ async function uploadMediaToStorage({
   }
 
   const { error } = await supabase.storage.from(bucket).upload(path, file, {
+    cacheControl: "300",
     contentType,
     upsert: false,
   });
@@ -242,10 +244,7 @@ async function uploadVideoPosterImage({
       path,
       supabase,
     });
-    const { data } = supabase.storage
-      .from(DOCUMENT_IMAGE_BUCKET)
-      .getPublicUrl(uploadedPath);
-    return data.publicUrl;
+    return buildDocumentMediaUrl(DOCUMENT_IMAGE_BUCKET, uploadedPath);
   } catch (error) {
     console.error("Video poster upload failed", error);
     return null;
@@ -410,7 +409,7 @@ export function useMediaUploadInsertion({
               return;
             }
 
-            const { data } = supabase.storage.from(bucket).getPublicUrl(uploadedPath);
+            const mediaUrl = buildDocumentMediaUrl(bucket, uploadedPath);
 
             let posterTitle: string | undefined;
             const posterImage = await posterImagePromise;
@@ -436,7 +435,7 @@ export function useMediaUploadInsertion({
               view,
               insertPosition,
               sanitizeMediaAltText(file.name, mediaKind),
-              data.publicUrl,
+              mediaUrl,
               posterTitle,
             );
             view.dispatch({

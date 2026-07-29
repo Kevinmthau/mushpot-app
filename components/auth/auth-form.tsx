@@ -1,13 +1,30 @@
+"use client";
+
+import { Turnstile } from "@marsidev/react-turnstile";
+import { useState } from "react";
+
 import { requestMagicLinkAction } from "@/app/auth/actions";
 import { AuthSubmitButton } from "@/components/auth/auth-submit-button";
+import { CAPTCHA_CONFIGURATION_ERROR_MESSAGE } from "@/lib/auth-captcha";
 
 type AuthFormProps = {
   nextPath: string;
   message: string | null;
   error: string | null;
+  turnstileSiteKey: string | null;
+  captchaConfigurationError: boolean;
 };
 
-export function AuthForm({ nextPath, message, error }: AuthFormProps) {
+export function AuthForm({
+  nextPath,
+  message,
+  error,
+  turnstileSiteKey,
+  captchaConfigurationError,
+}: AuthFormProps) {
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaError, setCaptchaError] = useState(false);
+
   return (
     <form
       action={requestMagicLinkAction}
@@ -21,6 +38,7 @@ export function AuthForm({ nextPath, message, error }: AuthFormProps) {
       </p>
 
       <input type="hidden" name="nextPath" value={nextPath} />
+      <input type="hidden" name="captchaToken" value={captchaToken} />
 
       <label className="mt-5 block text-sm text-[var(--muted)] sm:mt-6" htmlFor="email">
         Email address
@@ -35,10 +53,54 @@ export function AuthForm({ nextPath, message, error }: AuthFormProps) {
         placeholder="you@example.com"
       />
 
-      <AuthSubmitButton />
+      {turnstileSiteKey ? (
+        <div className="mt-6">
+          <Turnstile
+            siteKey={turnstileSiteKey}
+            onSuccess={(token) => {
+              setCaptchaToken(token);
+              setCaptchaError(false);
+            }}
+            onExpire={() => setCaptchaToken("")}
+            onTimeout={() => setCaptchaToken("")}
+            onError={() => {
+              setCaptchaToken("");
+              setCaptchaError(true);
+            }}
+            onUnsupported={() => {
+              setCaptchaToken("");
+              setCaptchaError(true);
+            }}
+            options={{
+              action: "request_magic_link",
+              responseField: false,
+              size: "flexible",
+              theme: "light",
+            }}
+          />
+          {captchaError ? (
+            <p className="mt-2 text-sm text-[#9b2d34]" role="alert">
+              The security check could not load. Check your connection and try
+              again.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      <AuthSubmitButton
+        disabled={
+          captchaConfigurationError ||
+          (turnstileSiteKey !== null && captchaToken.length === 0)
+        }
+      />
 
       {message ? <p className="mt-4 text-sm text-[#2e6558]">{message}</p> : null}
       {error ? <p className="mt-4 text-sm text-[#9b2d34]">{error}</p> : null}
+      {captchaConfigurationError && !error ? (
+        <p className="mt-4 text-sm text-[#9b2d34]" role="alert">
+          {CAPTCHA_CONFIGURATION_ERROR_MESSAGE}
+        </p>
+      ) : null}
     </form>
   );
 }

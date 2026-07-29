@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  activateDocumentCacheForOwner,
+  getDocumentCacheWriteToken,
   getCachedDocumentListForOwner,
-  setLastActiveOwner,
   syncDocumentList,
 } from "@/lib/doc-cache";
 import { DOCUMENT_LIST_SELECT, type DocumentListItem } from "@/lib/documents";
@@ -37,6 +38,7 @@ export function useDocumentList(userId: string | null): DocumentListState {
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
+    const cacheWriteToken = getDocumentCacheWriteToken(userId);
 
     setError(null);
 
@@ -62,7 +64,7 @@ export function useDocumentList(userId: string | null): DocumentListState {
 
       const nextDocuments = data ?? [];
       setDocuments(nextDocuments);
-      void syncDocumentList(nextDocuments, userId);
+      void syncDocumentList(nextDocuments, userId, cacheWriteToken);
     } catch {
       if (requestId !== requestIdRef.current) {
         return;
@@ -83,17 +85,22 @@ export function useDocumentList(userId: string | null): DocumentListState {
 
     let isActive = true;
 
-    void setLastActiveOwner(userId);
+    void (async () => {
+      await activateDocumentCacheForOwner(userId);
 
-    void getCachedDocumentListForOwner(userId).then((cachedDocuments) => {
-      if (!isActive || cachedDocuments.length === 0) {
+      if (!isActive) {
         return;
       }
 
-      setDocuments(cachedDocuments);
-    });
+      const cachedDocuments = await getCachedDocumentListForOwner(userId);
+      if (isActive && cachedDocuments.length > 0) {
+        setDocuments(cachedDocuments);
+      }
 
-    void refreshDocuments();
+      if (isActive) {
+        void refreshDocuments();
+      }
+    })();
 
     return () => {
       isActive = false;

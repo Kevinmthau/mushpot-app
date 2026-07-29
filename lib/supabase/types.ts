@@ -17,6 +17,7 @@ export type Database = {
           content: string;
           share_enabled: boolean;
           share_token: string | null;
+          clone_status: "pending" | "recovering" | null;
           created_at: string;
           updated_at: string;
         };
@@ -27,6 +28,7 @@ export type Database = {
           content?: string;
           share_enabled?: boolean;
           share_token?: string | null;
+          clone_status?: "pending" | "recovering" | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -37,6 +39,7 @@ export type Database = {
           content?: string;
           share_enabled?: boolean;
           share_token?: string | null;
+          clone_status?: "pending" | "recovering" | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -50,12 +53,41 @@ export type Database = {
           },
         ];
       };
+      document_media_cleanup_jobs: {
+        Row: {
+          document_id: string;
+          owner: string;
+          created_at: string;
+        };
+        Insert: {
+          document_id: string;
+          owner: string;
+          created_at?: string;
+        };
+        Update: {
+          document_id?: string;
+          owner?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "document_media_cleanup_jobs_owner_fkey";
+            columns: ["owner"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      delete_document_with_media_cleanup_job: {
+        Args: { p_document_id: string };
+        Returns: string | null;
+      };
     };
     Enums: {
       [_ in never]: never;

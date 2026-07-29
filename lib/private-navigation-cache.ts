@@ -11,6 +11,8 @@ export async function clearPrivateNavigationCache() {
         .map((cacheName) => window.caches.delete(cacheName)),
     );
 
+    // The active worker also removes legacy static-cache generations while
+    // retaining its current precache, including the offline fallback.
     navigator.serviceWorker?.controller?.postMessage({
       type: "CLEAR_PRIVATE_NAV_CACHE",
     });

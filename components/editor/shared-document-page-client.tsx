@@ -103,7 +103,7 @@ function SharedMarkdownImage({
         controls
         playsInline
         poster={poster ?? undefined}
-        preload="metadata"
+        preload="none"
         src={poster ? src : appendFirstFrameFragment(src)}
         style={style}
       />

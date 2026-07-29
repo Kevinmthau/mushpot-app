@@ -33,8 +33,24 @@ const DB_VERSION = 2;
 const DOCS_STORE = "documents";
 const META_STORE = "meta";
 const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
+const OWNER_CACHE_STATE_KEY_PREFIX = "document-cache-owner-state:";
+
+type DocumentCacheOwnerState = {
+  enabled: boolean;
+  generation: number;
+  key: string;
+  owner: string;
+};
+
+export type DocumentCacheWriteToken = Readonly<{
+  generation: number;
+  owner: string;
+}>;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+const activeOwnerGenerations = new Map<string, number>();
+const ownerStateOperationIds = new Map<string, number>();
+const ownerStateMutationQueues = new Map<string, Promise<void>>();
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -67,6 +83,82 @@ function ensureDocumentIndexes(store: IDBObjectStore) {
 
 function getOwnerUpdatedAtRange(owner: string) {
   return IDBKeyRange.bound([owner, ""], [owner, "\uffff"]);
+}
+
+function getOwnerCacheStateKey(owner: string) {
+  return `${OWNER_CACHE_STATE_KEY_PREFIX}${owner}`;
+}
+
+function beginOwnerStateOperation(owner: string) {
+  const operationId = (ownerStateOperationIds.get(owner) ?? 0) + 1;
+  ownerStateOperationIds.set(owner, operationId);
+  return operationId;
+}
+
+function isCurrentOwnerStateOperation(owner: string, operationId: number) {
+  return (ownerStateOperationIds.get(owner) ?? 0) === operationId;
+}
+
+async function runOwnerStateMutation(
+  owner: string,
+  mutation: () => Promise<void>,
+) {
+  const previousMutation = ownerStateMutationQueues.get(owner);
+  const currentMutation = (previousMutation ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(mutation);
+  ownerStateMutationQueues.set(owner, currentMutation);
+
+  try {
+    await currentMutation;
+  } finally {
+    if (ownerStateMutationQueues.get(owner) === currentMutation) {
+      ownerStateMutationQueues.delete(owner);
+    }
+  }
+}
+
+function isDocumentCacheOwnerState(
+  value: DocumentCacheOwnerState | undefined,
+  owner: string,
+): value is DocumentCacheOwnerState {
+  return (
+    value?.key === getOwnerCacheStateKey(owner) &&
+    value.owner === owner &&
+    Number.isSafeInteger(value.generation) &&
+    value.generation >= 0 &&
+    typeof value.enabled === "boolean"
+  );
+}
+
+function getNextOwnerGeneration(
+  state: DocumentCacheOwnerState | undefined,
+  owner: string,
+) {
+  return isDocumentCacheOwnerState(state, owner) ? state.generation + 1 : 1;
+}
+
+function isWriteTokenAuthorized(
+  state: DocumentCacheOwnerState | undefined,
+  token: DocumentCacheWriteToken,
+) {
+  return (
+    isDocumentCacheOwnerState(state, token.owner) &&
+    state.enabled &&
+    state.generation === token.generation
+  );
+}
+
+export function getDocumentCacheWriteToken(
+  owner: string,
+): DocumentCacheWriteToken | null {
+  const generation = activeOwnerGenerations.get(owner);
+
+  if (generation === undefined) {
+    return null;
+  }
+
+  return { generation, owner };
 }
 
 function normalizeCachedDocumentForStorage(doc: CachedDocument): CachedDocument {
@@ -200,6 +292,7 @@ export async function getCachedDocumentListForOwner(
 
 export async function reconcileCachedDocumentWithServer(
   serverDocument: CachedDocument,
+  writeToken = getDocumentCacheWriteToken(serverDocument.owner),
 ): Promise<CachedDocument> {
   const cachedDocument = await getCachedDocumentForOwner(
     serverDocument.id,
@@ -214,16 +307,31 @@ export async function reconcileCachedDocumentWithServer(
     ...serverDocument,
     _dirty: false,
   };
-  await putCachedDocument(nextDocument);
+  await putCachedDocument(nextDocument, writeToken);
   return nextDocument;
 }
 
-export async function putCachedDocument(doc: CachedDocument): Promise<void> {
+export async function putCachedDocument(
+  doc: CachedDocument,
+  writeToken = getDocumentCacheWriteToken(doc.owner),
+): Promise<void> {
+  if (!writeToken || writeToken.owner !== doc.owner) {
+    return;
+  }
+
   try {
     const db = await openDB();
-    const tx = db.transaction(DOCS_STORE, "readwrite");
-    tx.objectStore(DOCS_STORE).put(normalizeCachedDocumentForStorage(doc));
-    await waitForTransaction(tx);
+    const tx = db.transaction([DOCS_STORE, META_STORE], "readwrite");
+    const transactionDone = waitForTransaction(tx);
+    const ownerState = await requestToPromise<DocumentCacheOwnerState | undefined>(
+      tx.objectStore(META_STORE).get(getOwnerCacheStateKey(doc.owner)),
+    );
+
+    if (isWriteTokenAuthorized(ownerState, writeToken)) {
+      tx.objectStore(DOCS_STORE).put(normalizeCachedDocumentForStorage(doc));
+    }
+
+    await transactionDone;
   } catch {
     // Silently ignore – cache is best-effort
   }
@@ -237,6 +345,56 @@ export async function deleteCachedDocument(id: string): Promise<void> {
     await waitForTransaction(tx);
   } catch {
     // Silently ignore
+  }
+}
+
+export async function clearCachedDocumentsForOwner(owner: string): Promise<void> {
+  if (!owner) {
+    return;
+  }
+
+  const operationId = beginOwnerStateOperation(owner);
+  activeOwnerGenerations.delete(owner);
+
+  try {
+    await runOwnerStateMutation(owner, async () => {
+      const db = await openDB();
+      const tx = db.transaction([DOCS_STORE, META_STORE], "readwrite");
+      const transactionDone = waitForTransaction(tx);
+      const documentStore = tx.objectStore(DOCS_STORE);
+      const metaStore = tx.objectStore(META_STORE);
+      const [ownerState, documentKeys, lastActiveOwner] = await Promise.all([
+        requestToPromise<DocumentCacheOwnerState | undefined>(
+          metaStore.get(getOwnerCacheStateKey(owner)),
+        ),
+        requestToPromise<IDBValidKey[]>(
+          documentStore.index("owner").getAllKeys(owner),
+        ),
+        requestToPromise<{ value?: string } | undefined>(
+          metaStore.get(LAST_ACTIVE_OWNER_KEY),
+        ),
+      ]);
+
+      metaStore.put({
+        enabled: false,
+        generation: getNextOwnerGeneration(ownerState, owner),
+        key: getOwnerCacheStateKey(owner),
+        owner,
+      } satisfies DocumentCacheOwnerState);
+
+      if (lastActiveOwner?.value === owner) {
+        metaStore.delete(LAST_ACTIVE_OWNER_KEY);
+      }
+
+      documentKeys.forEach((key) => documentStore.delete(key));
+      await transactionDone;
+    });
+  } catch {
+    // Silently ignore – cache cleanup is best-effort
+  } finally {
+    if (isCurrentOwnerStateOperation(owner, operationId)) {
+      activeOwnerGenerations.delete(owner);
+    }
   }
 }
 
@@ -268,6 +426,49 @@ export async function getMeta(key: string): Promise<string | null> {
   }
 }
 
+export async function activateDocumentCacheForOwner(owner: string): Promise<void> {
+  if (!owner) {
+    return;
+  }
+
+  // Repeated authenticated activation calls share the current invalidation
+  // epoch. Only a purge advances it and makes earlier activation work stale.
+  const operationId = ownerStateOperationIds.get(owner) ?? 0;
+
+  try {
+    await runOwnerStateMutation(owner, async () => {
+      const db = await openDB();
+      const tx = db.transaction(META_STORE, "readwrite");
+      const transactionDone = waitForTransaction(tx);
+      const metaStore = tx.objectStore(META_STORE);
+      const existingState = await requestToPromise<
+        DocumentCacheOwnerState | undefined
+      >(metaStore.get(getOwnerCacheStateKey(owner)));
+      const generation =
+        isDocumentCacheOwnerState(existingState, owner) && existingState.enabled
+          ? existingState.generation
+          : getNextOwnerGeneration(existingState, owner);
+
+      metaStore.put({
+        enabled: true,
+        generation,
+        key: getOwnerCacheStateKey(owner),
+        owner,
+      } satisfies DocumentCacheOwnerState);
+      metaStore.put({ key: LAST_ACTIVE_OWNER_KEY, value: owner });
+      await transactionDone;
+
+      if (isCurrentOwnerStateOperation(owner, operationId)) {
+        activeOwnerGenerations.set(owner, generation);
+      }
+    });
+  } catch {
+    if (isCurrentOwnerStateOperation(owner, operationId)) {
+      activeOwnerGenerations.delete(owner);
+    }
+  }
+}
+
 export function setLastActiveOwner(owner: string): Promise<void> {
   return setMeta(LAST_ACTIVE_OWNER_KEY, owner);
 }
@@ -292,16 +493,20 @@ export async function clearLastActiveOwner(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns all documents that have unsaved local changes.
+ * Returns documents owned by the current user that have unsaved local changes.
  */
-export async function getDirtyDocuments(): Promise<CachedDocument[]> {
+export async function getDirtyDocuments(owner: string): Promise<CachedDocument[]> {
+  if (!owner) {
+    return [];
+  }
+
   try {
     const db = await openDB();
     const tx = db.transaction(DOCS_STORE, "readonly");
     const documents = await requestToPromise<CachedDocument[]>(
-      tx.objectStore(DOCS_STORE).index("dirty").getAll(1),
+      tx.objectStore(DOCS_STORE).index("owner").getAll(owner),
     );
-    return documents;
+    return documents.filter((document) => document._dirty);
   } catch {
     return [];
   }
@@ -318,11 +523,25 @@ export async function getDirtyDocuments(): Promise<CachedDocument[]> {
 export async function syncDocumentList(
   serverDocs: CachedDocumentListItem[],
   owner: string,
+  writeToken = getDocumentCacheWriteToken(owner),
 ): Promise<void> {
+  if (!writeToken || writeToken.owner !== owner) {
+    return;
+  }
+
   try {
     const db = await openDB();
-    const tx = db.transaction(DOCS_STORE, "readwrite");
+    const tx = db.transaction([DOCS_STORE, META_STORE], "readwrite");
+    const transactionDone = waitForTransaction(tx);
     const store = tx.objectStore(DOCS_STORE);
+    const ownerState = await requestToPromise<DocumentCacheOwnerState | undefined>(
+      tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
+    );
+
+    if (!isWriteTokenAuthorized(ownerState, writeToken)) {
+      await transactionDone;
+      return;
+    }
 
     const existingForOwner = await requestToPromise<CachedDocument[]>(
       store.index("owner").getAll(owner),
@@ -368,7 +587,7 @@ export async function syncDocumentList(
       }
     }
 
-    await waitForTransaction(tx);
+    await transactionDone;
 
     await setMeta("lastSyncAt", new Date().toISOString());
   } catch {

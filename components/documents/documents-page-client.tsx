@@ -7,7 +7,10 @@ import { DocumentListClient } from "@/components/documents/document-list-client"
 import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import { useDocumentList } from "@/components/documents/use-document-list";
 import PullToRefresh from "@/components/pull-to-refresh";
-import { clearLastActiveOwner } from "@/lib/doc-cache";
+import {
+  clearCachedDocumentsForOwner,
+  clearLastActiveOwner,
+} from "@/lib/doc-cache";
 import { clearPrivateNavigationCache } from "@/lib/private-navigation-cache";
 
 export function DocumentsPageClient() {
@@ -16,14 +19,22 @@ export function DocumentsPageClient() {
   const { documents, error, refreshDocuments } = useDocumentList(userId);
 
   const handleSignOut = useCallback(async () => {
-    const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
-    const supabase = await getSupabaseBrowserClient();
-    await supabase.auth.signOut();
-    void clearLastActiveOwner();
-    void clearPrivateNavigationCache();
+    const cacheCleanup = Promise.all([
+      userId ? clearCachedDocumentsForOwner(userId) : Promise.resolve(),
+      clearLastActiveOwner(),
+      clearPrivateNavigationCache(),
+    ]);
     clearUserId();
-    router.replace("/auth");
-  }, [clearUserId, router]);
+
+    try {
+      const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
+      const supabase = await getSupabaseBrowserClient();
+      await supabase.auth.signOut();
+    } finally {
+      await cacheCleanup;
+      router.replace("/auth");
+    }
+  }, [clearUserId, router, userId]);
 
   if (!userId) {
     return null;

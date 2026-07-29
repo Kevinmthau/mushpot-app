@@ -1,7 +1,9 @@
 import {
+  getDocumentCacheWriteToken,
   getDirtyDocuments,
   putCachedDocument,
   type CachedDocument,
+  type DocumentCacheWriteToken,
 } from "@/lib/doc-cache";
 
 export type PersistableDocumentSnapshot = Pick<
@@ -23,6 +25,8 @@ export function normalizeDocumentTitle(title: string) {
 
 export async function persistDocumentSnapshot(
   snapshot: PersistableDocumentSnapshot,
+  cacheWriteToken: DocumentCacheWriteToken | null =
+    getDocumentCacheWriteToken(snapshot.owner),
 ): Promise<PersistDocumentResult> {
   const persistedTitle = normalizeDocumentTitle(snapshot.title);
   const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
@@ -45,13 +49,16 @@ export async function persistDocumentSnapshot(
     if (!error && data?.updated_at) {
       const updatedAt = data.updated_at;
 
-      void putCachedDocument({
-        ...snapshot,
-        title: persistedTitle,
-        updated_at: updatedAt,
-        _dirty: false,
-        _localUpdatedAt: Date.now(),
-      });
+      void putCachedDocument(
+        {
+          ...snapshot,
+          title: persistedTitle,
+          updated_at: updatedAt,
+          _dirty: false,
+          _localUpdatedAt: Date.now(),
+        },
+        cacheWriteToken,
+      );
 
       return {
         ok: true,
@@ -78,10 +85,19 @@ export async function persistDocumentSnapshot(
   };
 }
 
-export async function flushDirtyDocuments() {
-  const dirtyDocuments = await getDirtyDocuments();
+export async function flushDirtyDocuments(owner: string) {
+  const cacheWriteToken = getDocumentCacheWriteToken(owner);
+  if (!cacheWriteToken) {
+    return;
+  }
+
+  const dirtyDocuments = (await getDirtyDocuments(owner)).filter(
+    (document) => document.owner === owner,
+  );
 
   await Promise.allSettled(
-    dirtyDocuments.map((document) => persistDocumentSnapshot(document)),
+    dirtyDocuments.map((document) =>
+      persistDocumentSnapshot(document, cacheWriteToken),
+    ),
   );
 }

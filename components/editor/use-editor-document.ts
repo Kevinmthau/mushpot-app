@@ -4,9 +4,10 @@ import { useEffect, useState } from "react";
 
 import type { EditorDocument } from "@/components/editor/editor-types";
 import {
+  activateDocumentCacheForOwner,
+  getDocumentCacheWriteToken,
   getCachedDocumentForOwner,
   reconcileCachedDocumentWithServer,
-  setLastActiveOwner,
   type CachedDocument,
 } from "@/lib/doc-cache";
 import {
@@ -67,7 +68,13 @@ export function useEditorDocument(
           return;
         }
 
-        void setLastActiveOwner(userId);
+        await activateDocumentCacheForOwner(userId);
+
+        if (!isActive) {
+          return;
+        }
+
+        const cacheWriteToken = getDocumentCacheWriteToken(userId);
 
         cachedDocument = await getCachedDocumentForOwner(documentId, userId);
 
@@ -110,10 +117,13 @@ export function useEditorDocument(
           return;
         }
 
-        const reconciled = await reconcileCachedDocumentWithServer({
-          ...serverDocument,
-          _dirty: false,
-        });
+        const reconciled = await reconcileCachedDocumentWithServer(
+          {
+            ...serverDocument,
+            _dirty: false,
+          },
+          cacheWriteToken,
+        );
 
         if (!isActive) {
           return;
