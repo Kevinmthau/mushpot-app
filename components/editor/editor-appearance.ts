@@ -13,6 +13,7 @@ import {
 } from "@codemirror/view";
 
 import { isSupportedVideoUrl } from "@/components/editor/image-upload-utils";
+import { normalizeDocumentMediaUrl } from "@/lib/document-media";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
 import {
   appendFirstFrameFragment,
@@ -232,9 +233,11 @@ function parseMarkdownImage(
 
   return {
     altText: altText || "image",
-    poster: parseVideoPosterFromTitle(title),
+    poster: normalizeDocumentMediaUrl(
+      parseVideoPosterFromTitle(title) ?? "",
+    ) || null,
     replaceTo,
-    url,
+    url: normalizeDocumentMediaUrl(url),
     width: parsedWidthToken?.width ?? null,
   };
 }

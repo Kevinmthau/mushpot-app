@@ -16,7 +16,8 @@ export type EditorDocument = Pick<
   | "updated_at"
   | "share_enabled"
   | "share_token"
->;
+> &
+  Pick<CachedDocument, "_dirty" | "_localUpdatedAt">;
 
 export function getDocumentDisplayTitle(title: string) {
   return title || "Untitled";
@@ -30,7 +31,7 @@ export function toCachedDocument(document: EditorDocument): CachedDocument {
 }
 
 export function toEditorDocument(document: EditorDocument): EditorDocument {
-  return {
+  const editorDocument: EditorDocument = {
     id: document.id,
     owner: document.owner,
     title: document.title,
@@ -39,6 +40,15 @@ export function toEditorDocument(document: EditorDocument): EditorDocument {
     share_enabled: document.share_enabled,
     share_token: document.share_token,
   };
+
+  if (document._dirty !== undefined) {
+    editorDocument._dirty = document._dirty;
+  }
+  if (document._localUpdatedAt !== undefined) {
+    editorDocument._localUpdatedAt = document._localUpdatedAt;
+  }
+
+  return editorDocument;
 }
 
 export function areEditorDocumentsEqual(
@@ -52,6 +62,8 @@ export function areEditorDocumentsEqual(
     left.content === right.content &&
     left.updated_at === right.updated_at &&
     left.share_enabled === right.share_enabled &&
-    left.share_token === right.share_token
+    left.share_token === right.share_token &&
+    left._dirty === right._dirty &&
+    left._localUpdatedAt === right._localUpdatedAt
   );
 }

@@ -7,7 +7,7 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - Email magic-link sign-in with a scanner-resistant `/auth/verify` step and PKCE/token confirmation
 - Authenticated document list with instant document creation
 - Markdown editor with title editing, debounced autosave, reading-time display, clone, and delete
-- Image upload by drag/drop or paste into Markdown documents via a public Supabase Storage bucket
+- Image and video upload by drag/drop or paste into private Supabase Storage buckets
 - Secret bearer share links with enable, copy, rotate, and disable controls
 - Public shared document pages with generated Open Graph images
 - IndexedDB-backed document cache plus background retry sync for unsaved local edits
@@ -30,14 +30,16 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - `/auth/callback`: client-side fallback completion page
 - `/`: authenticated document list
 - `/doc/[id]`: authenticated document editor
+- `/m/[bucket]/[...path]`: authenticated redirect to short-lived document-media URLs
 - `/s/[id]/[token]`: public shared document
+- `/s/[id]/[token]/m/[bucket]/[...path]`: share-validated redirect to short-lived document-media URLs
 - `/s/[id]/[token]/opengraph-image`: generated social preview image for shared docs
 
 ## Repository Layout
 
 - `app/(private)`: authenticated document list and editor routes
 - `app/auth`: auth page, server action, verify page, PKCE/token confirm route, fallback callback page
-- `app/s/[id]/[token]`: shared document page and Open Graph image route
+- `app/s/[id]/[token]`: shared document page, media redirect, and Open Graph image route
 - `components/auth`: auth form UI
 - `components/documents`: document list and create flow
 - `components/editor`: editor, share modal, image upload, clone/delete hooks, shared-doc renderer
@@ -45,6 +47,8 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - `lib/`: Supabase clients, document cache, sync helpers, shared-document helpers, markdown utilities
 - `supabase/migrations`: database and storage setup
 - `supabase/functions/get-shared-doc`: share-token validation and public shared-doc fetch
+- `supabase/functions/document-media-maintenance`: scheduled private-media cleanup and interrupted-clone recovery
+- `supabase/admin`: production media inventory, backfill, bucket cutover, and cron runbooks
 - `public`: manifest, service worker, offline page, and app icons
 - `proxy.ts`: route protection and auth-cookie/session refresh handling
 
@@ -57,7 +61,10 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - `components/documents/use-document-list.ts` owns the cache-first document list load and background Supabase refresh.
 - `components/editor/use-editor-document.ts` owns cache-first editor document loading, session validation, and Supabase reconciliation.
 - `components/editor/use-document-draft.ts` owns local draft state, debounced IndexedDB writes, autosave retries, and share-state timestamp merging.
-- `lib/doc-cache.ts` is best-effort IndexedDB storage. `lib/document-sync.ts` retries dirty cached documents on startup, focus, online, and interval triggers through the PWA startup components.
+- `lib/doc-cache.ts` keeps metadata-only list entries separate from complete
+  editor snapshots. Only complete owner-scoped records may open offline;
+  `lib/document-sync.ts` retries dirty snapshots on startup, focus, online, and
+  interval triggers.
 
 ## Environment Variables
 
@@ -68,13 +75,18 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 # Optional but recommended when localhost or proxies should redirect to a canonical app URL.
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+# Required in production. Optional in local development when CAPTCHA is disabled.
+NEXT_PUBLIC_TURNSTILE_SITE_KEY=...
 ```
 
 Notes:
 
 - `NEXT_PUBLIC_APP_URL` is used for auth redirect generation and shared-link origins.
+- `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is Cloudflare Turnstile's public site key. Production sign-in fails closed when it is missing; local development can omit it.
 - `npm run build` does not require Supabase env vars, but running authenticated pages does.
-- `SUPABASE_SERVICE_ROLE_KEY` is not used by the Next.js app directly. It is required by the Supabase Edge Function runtime when serving `get-shared-doc` locally.
+- `SUPABASE_SERVICE_ROLE_KEY` is not used by the Next.js app directly. It is required by the Supabase Edge Function runtime and production media administration tools.
+- Set the Edge Function secret `ALLOWED_ORIGINS` to the comma-separated app origins that may invoke `get-shared-doc` from a browser. Server-to-server calls do not send an `Origin` header.
+- Set `MUSHPOT_MAINTENANCE_SECRET` to the same high-entropy value in Supabase Edge Function secrets and Vault. The scheduled maintenance request sends it through `x-mushpot-maintenance-secret`.
 
 ## Supabase Setup
 
@@ -88,7 +100,13 @@ Notes:
    - Use a verified-domain sender address, such as `no-reply@yourdomain.com`, with sender name `Mushpot`.
    - Do not store the Resend API key in this repository or in the Next.js app environment.
    - After saving, review Supabase Auth email rate limits before public launch.
-4. Update the Supabase Auth Confirm signup and Magic Link templates so scanners do not consume one-time links before the user opens them:
+4. Configure CAPTCHA protection for magic-link requests:
+   - Create a Cloudflare Turnstile widget and allow the production app hostname. Add `localhost` when testing the widget locally.
+   - Put the widget's public site key in `NEXT_PUBLIC_TURNSTILE_SITE_KEY` for the deployed Next.js app.
+   - In Supabase Dashboard, open **Authentication > Bot and Abuse Protection**, enable CAPTCHA, select Cloudflare Turnstile, and save the widget's secret key there.
+   - Keep the Turnstile secret out of this repository and out of all `NEXT_PUBLIC_` environment variables.
+   - Local development may omit the site key to disable CAPTCHA. Production deliberately rejects magic-link requests when the site key is missing.
+5. Update the Supabase Auth Confirm signup and Magic Link templates so scanners do not consume one-time links before the user opens them:
 
 ```html
 <h2>Open Mushpot</h2>
@@ -99,22 +117,33 @@ Notes:
 ```
 
    The app always sends `emailRedirectTo` as `/auth/verify?next=...`, so the `&token_hash=...` suffix is expected.
-5. Apply the SQL migrations in `supabase/migrations/`:
-   - `20260303164000_create_documents.sql`
-   - `20260304102000_create_document_images_bucket.sql`
-6. Deploy the public Edge Function used for shared-document reads:
+6. Apply every SQL migration in `supabase/migrations/` in chronological order.
+   The private-media migration is additive: it does not make either Storage
+   bucket private and starts the rollout in the `backfill` phase.
+7. Deploy the Edge Functions. Their JWT behavior is tracked in
+   `supabase/config.toml`, so do not add ad hoc deployment flags:
 
 ```bash
-supabase functions deploy get-shared-doc --no-verify-jwt
+supabase functions deploy get-shared-doc
+supabase functions deploy document-media-maintenance
 ```
 
-For local Edge Function serving, provide `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the function runtime.
+8. Follow `supabase/admin/README.md` to configure the maintenance secret and
+   schedule, inventory/backfill existing document media, perform the short
+   final write freeze, and switch the buckets through the Storage API.
+
+For local Edge Function serving, provide `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, and the maintenance secret to the function
+runtime.
 
 ### Auth Email Verification
 
 After custom SMTP and the custom email templates are enabled, verify the production auth flow with an email address outside the Supabase project team. Request a link from `/auth`, confirm it arrives from the configured Resend sender, open the email link, press Continue on `/auth/verify`, and confirm the app signs in. Check Resend delivery logs and Supabase Auth logs if the email is delayed or rejected.
 
 ## Development
+
+Use Node.js 22 (the repository includes `.nvmrc` and enforces the supported
+range through `package.json`):
 
 ```bash
 npm install
@@ -127,8 +156,14 @@ Quality gate before merge:
 npm run lint
 npm run typecheck
 npm run test
+npm run test:coverage
+npm run check:edge
 npm run build
 ```
+
+`npm run test:db` runs the pgTAP migration suite and requires a running local
+Supabase stack. Validate the full migration and Storage-policy flow on a
+disposable hosted project before applying it to production.
 
 Unit tests run on [Vitest](https://vitest.dev/). Tests live next to their
 sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
@@ -139,6 +174,20 @@ sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
 - `netlify.toml` is included for Netlify deployments and runs `npm run build`.
 - Any Next.js-compatible host can work as long as the public env vars are set and the `get-shared-doc` Supabase Edge Function is deployed.
 - The production service worker is registered only in production builds.
+- When the deployed domain changes, update `NEXT_PUBLIC_APP_URL`, redeploy so
+  the new origin is included in the build, and update the Supabase Auth Site
+  URL plus Redirect URLs for both `https://<domain>/auth/verify` and
+  `https://<domain>/auth/confirm`. Leaving `NEXT_PUBLIC_APP_URL` unset makes
+  the app resolve the live request origin.
+- The private-media rollout is deliberately staged. Keep buckets public while
+  applying the additive schema, deploying both Edge Functions and the app, and
+  completing the production backfill. Freeze document writes only for the
+  final pass, switch the rollout to `enforced`, smoke-test, and then run the
+  Storage API bucket cutover. The exact commands and rollback path live in
+  `supabase/admin/README.md`.
+- Do not update `storage.buckets` or `storage.objects` directly with SQL.
+  Bucket configuration, object copies, and object deletion go through the
+  Storage API.
 
 ## Behavior Notes
 
@@ -147,5 +196,14 @@ sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
 - The app favors local cached document data first, then reconciles with Supabase in the background.
 - Dirty cached documents are retried on startup, when the app regains focus, and when the browser comes back online.
 - Share links are bearer URLs: anyone with the full `/s/[id]/[token]` URL can read that document until the token is rotated or sharing is disabled.
-- Uploaded document images live in the public `document-images` bucket; bucket policies restrict who can manage them, but the file URLs themselves are publicly fetchable.
+- Uploaded media lives in private, owner-scoped `document-images` and `document-videos` buckets. Documents store stable `/m/...` paths; authenticated owner views and public share responses exchange those paths for short-lived signed Storage URLs.
+- Every document owns copies of its embedded Mushpot media. The rollout
+  backfills legacy cross-document paths, and enforced mode rejects new local
+  media paths whose owner or document segment does not match the document row.
+- Deletion queues durable media cleanup in a database trigger. Scheduled
+  service-role maintenance keeps a 24-hour tombstone, repeatedly verifies both
+  document folders are empty, and also reclaims clones whose leases expire.
+- Signed media redirects expire after five minutes. Disabling sharing prevents
+  new redirects immediately, but a URL already signed before revocation can
+  remain usable until its five-minute expiry.
 - Shared-document rendering supports GitHub Flavored Markdown and remote/public images, so third-party image hosts can receive reader requests for embedded remote assets.

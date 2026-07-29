@@ -55,6 +55,78 @@ type UseDocumentDraftResult = {
   updateShareState: (enabled: boolean, token: string | null, updatedAt: string) => void;
 };
 
+type DraftPageLifecycleOptions = {
+  clearScheduledWork: () => void;
+  isDeleting: () => boolean;
+  saveLatestDraft: () => void;
+  writeLocalCacheSnapshot: () => void;
+};
+
+export type DraftPageLifecycleHandlers = {
+  handlePageHide: () => void;
+  handleUnmount: () => void;
+  handleVisibilityChange: (visibilityState: DocumentVisibilityState) => void;
+};
+
+/**
+ * Captures the current editor refs before canceling debounced work. Calling the
+ * IndexedDB writer synchronously here queues the durable write while the page
+ * is still alive; network persistence remains a best-effort follow-up.
+ */
+export function createDraftPageLifecycleHandlers({
+  clearScheduledWork,
+  isDeleting,
+  saveLatestDraft,
+  writeLocalCacheSnapshot,
+}: DraftPageLifecycleOptions): DraftPageLifecycleHandlers {
+  const snapshotAndCancelScheduledWork = () => {
+    const canPersist = !isDeleting();
+    if (canPersist) {
+      writeLocalCacheSnapshot();
+    }
+    clearScheduledWork();
+    return canPersist;
+  };
+
+  const flushLeavingPage = () => {
+    if (snapshotAndCancelScheduledWork()) {
+      saveLatestDraft();
+    }
+  };
+
+  return {
+    handlePageHide: flushLeavingPage,
+    handleUnmount() {
+      snapshotAndCancelScheduledWork();
+    },
+    handleVisibilityChange(visibilityState) {
+      if (visibilityState === "hidden") {
+        flushLeavingPage();
+      }
+    },
+  };
+}
+
+export function hasUnsavedDocumentChanges({
+  cachedDraftIsDirty,
+  latestContent,
+  latestTitle,
+  savedContent,
+  savedTitle,
+}: {
+  cachedDraftIsDirty: boolean;
+  latestContent: string;
+  latestTitle: string;
+  savedContent: string;
+  savedTitle: string;
+}) {
+  return (
+    cachedDraftIsDirty ||
+    latestTitle !== savedTitle ||
+    latestContent !== savedContent
+  );
+}
+
 export function useDocumentDraft(
   initialDocument: EditorDocument,
 ): UseDocumentDraftResult {
@@ -72,6 +144,7 @@ export function useDocumentDraft(
   const queuedSaveRef = useRef<{ title: string; content: string } | null>(null);
   const isDeletingRef = useRef(false);
   const didEditSinceHydrationRef = useRef(false);
+  const cachedDraftIsDirtyRef = useRef(initialDocument._dirty === true);
   const latestTitleRef = useRef(initialDocument.title);
   const latestContentRef = useRef<Text | string>(initialDocument.content);
   const latestContentTextRef = useRef(initialDocument.content);
@@ -121,6 +194,7 @@ export function useDocumentDraft(
     shareEnabledRef.current = initialDocument.share_enabled;
     shareTokenRef.current = initialDocument.share_token;
     isDeletingRef.current = false;
+    cachedDraftIsDirtyRef.current = initialDocument._dirty === true;
     lastSavedRef.current = {
       title: initialDocument.title,
       content: initialDocument.content,
@@ -176,9 +250,13 @@ export function useDocumentDraft(
 
     const latestContent = getLatestContent();
     const latestTitle = latestTitleRef.current;
-    const isDirty =
-      latestTitle !== lastSavedRef.current.title ||
-      latestContent !== lastSavedRef.current.content;
+    const isDirty = hasUnsavedDocumentChanges({
+      cachedDraftIsDirty: cachedDraftIsDirtyRef.current,
+      latestContent,
+      latestTitle,
+      savedContent: lastSavedRef.current.content,
+      savedTitle: lastSavedRef.current.title,
+    });
     const doc: CachedDocument = {
       id: initialDocument.id,
       owner: initialDocument.owner,
@@ -226,6 +304,7 @@ export function useDocumentDraft(
       }
 
       if (
+        !cachedDraftIsDirtyRef.current &&
         nextTitle === lastSavedRef.current.title &&
         nextContent === lastSavedRef.current.content
       ) {
@@ -259,6 +338,7 @@ export function useDocumentDraft(
             content: contentToSave,
             share_enabled: shareEnabledToSave,
             share_token: shareTokenToSave,
+            updated_at: latestUpdatedAtRef.current,
           });
 
           if (!result.ok || !result.updatedAt) {
@@ -269,6 +349,7 @@ export function useDocumentDraft(
             title: titleToSave,
             content: contentToSave,
           };
+          cachedDraftIsDirtyRef.current = false;
           const resolvedUpdatedAt = applyUpdatedAt(result.updatedAt);
 
           if (
@@ -318,44 +399,58 @@ export function useDocumentDraft(
   }, [getLatestContent, saveDraft, title]);
 
   useEffect(() => {
+    if (!didEditSinceHydrationRef.current) {
+      return;
+    }
+
     scheduleLocalCacheWrite();
   }, [scheduleLocalCacheWrite, title, shareEnabled, shareToken]);
 
   useEffect(() => {
-    const flushPendingDraft = () => {
-      if (document.visibilityState !== "hidden") {
-        return;
-      }
-
+    const saveLatestDraft = () => {
       const latestTitle = latestTitleRef.current;
       const latestContent = getLatestContent();
-      const isDirty =
-        latestTitle !== lastSavedRef.current.title ||
-        latestContent !== lastSavedRef.current.content;
+      const isDirty = hasUnsavedDocumentChanges({
+        cachedDraftIsDirty: cachedDraftIsDirtyRef.current,
+        latestContent,
+        latestTitle,
+        savedContent: lastSavedRef.current.content,
+        savedTitle: lastSavedRef.current.title,
+      });
 
       if (!isDirty) {
         return;
       }
 
-      if (saveTimeoutRef.current !== null) {
-        window.clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = null;
-      }
-
       void saveDraft(latestTitle, latestContent);
     };
-
-    document.addEventListener("visibilitychange", flushPendingDraft);
-    return () => {
-      document.removeEventListener("visibilitychange", flushPendingDraft);
+    const lifecycleHandlers = createDraftPageLifecycleHandlers({
+      clearScheduledWork,
+      isDeleting: () => isDeletingRef.current,
+      saveLatestDraft,
+      writeLocalCacheSnapshot: () => {
+        if (didEditSinceHydrationRef.current) {
+          writeLocalCacheSnapshot();
+        }
+      },
+    });
+    const handleVisibilityChange = () => {
+      lifecycleHandlers.handleVisibilityChange(document.visibilityState);
     };
-  }, [getLatestContent, saveDraft]);
 
-  useEffect(() => {
+    window.addEventListener("pagehide", lifecycleHandlers.handlePageHide);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
-      clearScheduledWork();
+      window.removeEventListener("pagehide", lifecycleHandlers.handlePageHide);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      lifecycleHandlers.handleUnmount();
     };
-  }, [clearScheduledWork]);
+  }, [
+    clearScheduledWork,
+    getLatestContent,
+    saveDraft,
+    writeLocalCacheSnapshot,
+  ]);
 
   const readingTime = useMemo(() => {
     return getReadingTimeFromText(deferredContent);

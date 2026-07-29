@@ -18,18 +18,17 @@ export default async function PrivateLayout({
 }>) {
   const headersList = await headers();
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const { data, error } = await supabase.auth.getClaims();
+  const userId = data?.claims.sub;
 
-  if (!session?.user?.id) {
+  if (error || !userId) {
     redirect(
       buildAuthRedirectPath(headersList.get(PRIVATE_NEXT_PATH_HEADER) ?? "/"),
     );
   }
 
   return (
-    <PrivateSessionProvider initialUserId={session.user.id}>
+    <PrivateSessionProvider initialUserId={userId}>
       {children}
       <PrivateStartupSlot />
     </PrivateSessionProvider>

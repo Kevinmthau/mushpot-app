@@ -20,6 +20,7 @@ import {
   type SupportedMediaKind,
 } from "@/components/editor/image-upload-utils";
 import { generateVideoPosterImage } from "@/components/editor/video-poster-utils";
+import { buildDocumentMediaUrl } from "@/lib/document-media";
 import { buildVideoPosterTitle } from "@/lib/markdown/video-poster";
 import {
   getSupabaseBrowserClient,
@@ -148,7 +149,7 @@ async function uploadMediaWithResumableUpload({
         bucketName: bucket,
         objectName: path,
         contentType: contentType || file.type || "application/octet-stream",
-        cacheControl: "3600",
+        cacheControl: "300",
       },
       onError(error) {
         reject(error);
@@ -209,6 +210,7 @@ async function uploadMediaToStorage({
   }
 
   const { error } = await supabase.storage.from(bucket).upload(path, file, {
+    cacheControl: "300",
     contentType,
     upsert: false,
   });
@@ -242,13 +244,57 @@ async function uploadVideoPosterImage({
       path,
       supabase,
     });
-    const { data } = supabase.storage
-      .from(DOCUMENT_IMAGE_BUCKET)
-      .getPublicUrl(uploadedPath);
-    return data.publicUrl;
+    return buildDocumentMediaUrl(DOCUMENT_IMAGE_BUCKET, uploadedPath);
   } catch (error) {
     console.error("Video poster upload failed", error);
     return null;
+  }
+}
+
+export function isolateVideoPosterImagePromise(
+  posterImagePromise: Promise<File | null>,
+) {
+  return posterImagePromise.catch((error) => {
+    // Attach the rejection handler as soon as extraction starts. Waiting until
+    // after the video upload would leave this promise abandoned when the upload
+    // fails or the editor unmounts first.
+    console.error("Video poster generation failed", error);
+    return null;
+  });
+}
+
+export async function resolveVideoPosterTitle({
+  documentId,
+  owner,
+  posterImagePromise,
+  randomId,
+  supabase,
+}: {
+  documentId: string;
+  owner: string;
+  posterImagePromise: Promise<File | null>;
+  randomId: string;
+  supabase: SupabaseBrowserClient;
+}) {
+  try {
+    const posterImage = await posterImagePromise;
+    if (!posterImage) {
+      return undefined;
+    }
+
+    const posterUrl = await uploadVideoPosterImage({
+      documentId,
+      owner,
+      poster: posterImage,
+      randomId,
+      supabase,
+    });
+    return posterUrl ? buildVideoPosterTitle(posterUrl) : undefined;
+  } catch (error) {
+    // Poster extraction is best-effort. A rejected extraction promise must
+    // never turn an already uploaded video into a reported upload failure.
+    console.error("Video poster generation failed", error);
+    return undefined;
   }
 }
 
@@ -395,7 +441,7 @@ export function useMediaUploadInsertion({
 
             const posterImagePromise =
               mediaKind === "video"
-                ? generateVideoPosterImage(file)
+                ? isolateVideoPosterImagePromise(generateVideoPosterImage(file))
                 : Promise.resolve(null);
 
             const uploadedPath = await uploadMediaToStorage({
@@ -410,22 +456,15 @@ export function useMediaUploadInsertion({
               return;
             }
 
-            const { data } = supabase.storage.from(bucket).getPublicUrl(uploadedPath);
+            const mediaUrl = buildDocumentMediaUrl(bucket, uploadedPath);
 
-            let posterTitle: string | undefined;
-            const posterImage = await posterImagePromise;
-            if (posterImage) {
-              const posterUrl = await uploadVideoPosterImage({
-                documentId,
-                owner,
-                poster: posterImage,
-                randomId,
-                supabase,
-              });
-              if (posterUrl) {
-                posterTitle = buildVideoPosterTitle(posterUrl);
-              }
-            }
+            const posterTitle = await resolveVideoPosterTitle({
+              documentId,
+              owner,
+              posterImagePromise,
+              randomId,
+              supabase,
+            });
 
             if (!mountedRef.current) {
               return;
@@ -436,7 +475,7 @@ export function useMediaUploadInsertion({
               view,
               insertPosition,
               sanitizeMediaAltText(file.name, mediaKind),
-              data.publicUrl,
+              mediaUrl,
               posterTitle,
             );
             view.dispatch({

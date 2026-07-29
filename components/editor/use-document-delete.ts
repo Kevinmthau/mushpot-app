@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 import { deleteCachedDocument } from "@/lib/doc-cache";
+import type { SupabaseBrowserClient } from "@/lib/supabase/client";
 
 type UseDocumentDeleteParams = {
   documentId: string;
@@ -13,6 +14,51 @@ type UseDocumentDeleteParams = {
   onDeleteError: () => void;
 };
 
+type DeleteDocumentAndCacheDependencies = {
+  deleteCachedDocument?: (
+    documentId: string,
+    owner: string,
+  ) => Promise<boolean>;
+  getSupabaseClient?: () => Promise<SupabaseBrowserClient>;
+};
+
+export async function deleteDocument(
+  supabase: SupabaseBrowserClient,
+  owner: string,
+  documentId: string,
+) {
+  const { data, error } = await supabase
+    .from("documents")
+    .delete()
+    .eq("id", documentId)
+    .eq("owner", owner)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    throw new Error(
+      error?.message ||
+        "The document was not deleted. It may have already been removed or the session may have changed.",
+    );
+  }
+}
+
+export async function deleteDocumentAndCache(
+  owner: string,
+  documentId: string,
+  {
+    deleteCachedDocument: deleteCached = deleteCachedDocument,
+    getSupabaseClient = async () => {
+      const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
+      return getSupabaseBrowserClient();
+    },
+  }: DeleteDocumentAndCacheDependencies = {},
+) {
+  const supabase = await getSupabaseClient();
+  await deleteDocument(supabase, owner, documentId);
+  await deleteCached(documentId, owner);
+}
+
 export function useDocumentDelete({
   documentId,
   owner,
@@ -21,15 +67,9 @@ export function useDocumentDelete({
   onDeleteError,
 }: UseDocumentDeleteParams) {
   const router = useRouter();
-  const isDeletingRef = useRef(isDeleting);
-  isDeletingRef.current = isDeleting;
-  const onDeleteStartRef = useRef(onDeleteStart);
-  onDeleteStartRef.current = onDeleteStart;
-  const onDeleteErrorRef = useRef(onDeleteError);
-  onDeleteErrorRef.current = onDeleteError;
 
   return useCallback(async () => {
-    if (isDeletingRef.current) {
+    if (isDeleting) {
       return;
     }
 
@@ -40,24 +80,27 @@ export function useDocumentDelete({
       return;
     }
 
-    onDeleteStartRef.current();
+    onDeleteStart();
 
-    const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
-    const supabase = await getSupabaseBrowserClient();
-    const { error } = await supabase
-      .from("documents")
-      .delete()
-      .eq("id", documentId)
-      .eq("owner", owner);
-
-    if (error) {
-      onDeleteErrorRef.current();
-      window.alert(error.message || "Unable to delete document. Please try again.");
+    try {
+      await deleteDocumentAndCache(owner, documentId);
+    } catch (error) {
+      onDeleteError();
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to delete document. Please try again.",
+      );
       return;
     }
 
-    void deleteCachedDocument(documentId);
-
     router.replace("/");
-  }, [documentId, owner, router]);
+  }, [
+    documentId,
+    isDeleting,
+    onDeleteError,
+    onDeleteStart,
+    owner,
+    router,
+  ]);
 }

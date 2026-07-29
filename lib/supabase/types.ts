@@ -17,6 +17,9 @@ export type Database = {
           content: string;
           share_enabled: boolean;
           share_token: string | null;
+          clone_status: "pending" | "recovering" | null;
+          clone_lease_token: string | null;
+          clone_lease_expires_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -27,6 +30,9 @@ export type Database = {
           content?: string;
           share_enabled?: boolean;
           share_token?: string | null;
+          clone_status?: "pending" | "recovering" | null;
+          clone_lease_token?: string | null;
+          clone_lease_expires_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -37,6 +43,9 @@ export type Database = {
           content?: string;
           share_enabled?: boolean;
           share_token?: string | null;
+          clone_status?: "pending" | "recovering" | null;
+          clone_lease_token?: string | null;
+          clone_lease_expires_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -50,12 +59,125 @@ export type Database = {
           },
         ];
       };
+      document_media_cleanup_jobs: {
+        Row: {
+          id: string;
+          document_id: string;
+          owner: string;
+          attempt_count: number;
+          next_attempt_at: string;
+          lease_token: string | null;
+          lease_expires_at: string | null;
+          last_error: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          document_id: string;
+          owner: string;
+          attempt_count?: number;
+          next_attempt_at?: string;
+          lease_token?: string | null;
+          lease_expires_at?: string | null;
+          last_error?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          document_id?: string;
+          owner?: string;
+          attempt_count?: number;
+          next_attempt_at?: string;
+          lease_token?: string | null;
+          lease_expires_at?: string | null;
+          last_error?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      document_media_backfill_snapshots: {
+        Row: {
+          id: string;
+          document_id: string;
+          owner: string;
+          original_content: string;
+          original_updated_at: string;
+          copied_paths: Json;
+          created_at: string;
+          expires_at: string;
+        };
+        Insert: {
+          id?: string;
+          document_id: string;
+          owner: string;
+          original_content: string;
+          original_updated_at: string;
+          copied_paths?: Json;
+          created_at?: string;
+          expires_at?: string;
+        };
+        Update: {
+          id?: string;
+          document_id?: string;
+          owner?: string;
+          original_content?: string;
+          original_updated_at?: string;
+          copied_paths?: Json;
+          created_at?: string;
+          expires_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      claim_document_media_cleanup_jobs: {
+        Args: {
+          p_limit?: number;
+          p_lease_seconds?: number;
+        };
+        Returns: {
+          job_id: string;
+          document_id: string;
+          owner: string;
+          attempt_count: number;
+          lease_token: string;
+          created_at: string;
+        }[];
+      };
+      claim_expired_document_clones: {
+        Args: {
+          p_limit?: number;
+          p_lease_seconds?: number;
+        };
+        Returns: {
+          document_id: string;
+          owner: string;
+          lease_token: string;
+        }[];
+      };
+      get_document_media_rollout_state: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          phase: string;
+          supabase_origin: string | null;
+        }[];
+      };
+      set_document_media_rollout_state: {
+        Args: {
+          p_phase: string;
+          p_supabase_origin?: string | null;
+        };
+        Returns: {
+          phase: string;
+          supabase_origin: string | null;
+        }[];
+      };
     };
     Enums: {
       [_ in never]: never;

@@ -1,9 +1,14 @@
 import type { EditorView } from "@codemirror/view";
 
+import {
+  DOCUMENT_IMAGE_BUCKET,
+  DOCUMENT_VIDEO_BUCKET,
+} from "@/lib/document-media";
+
+export { DOCUMENT_IMAGE_BUCKET, DOCUMENT_VIDEO_BUCKET } from "@/lib/document-media";
+
 export type SupportedMediaKind = "image" | "video";
 
-export const DOCUMENT_IMAGE_BUCKET = "document-images";
-export const DOCUMENT_VIDEO_BUCKET = "document-videos";
 export const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
 export const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
 export const SUPPORTED_IMAGE_MIME_TYPES = [

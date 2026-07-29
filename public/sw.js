@@ -1,10 +1,9 @@
-const STATIC_CACHE_NAME = "mushpot-static-v5";
-const NAV_CACHE_NAME = "mushpot-nav-v9";
+const STATIC_CACHE_NAME = "mushpot-static-v9";
+const NAV_CACHE_NAME = "mushpot-nav-v12";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
   "/icons/icon-192.png",
-  "/offline.html",
 ];
 
 // Known cache names – anything else gets cleaned up on activate
@@ -52,7 +51,12 @@ async function staleWhileRevalidate(request, cacheName) {
 
   const networkResponsePromise = fetch(request)
     .then((response) => {
-      if (response.ok) {
+      const cacheControl = response.headers.get("Cache-Control")?.toLowerCase() ?? "";
+      if (
+        response.ok &&
+        !cacheControl.includes("no-store") &&
+        !cacheControl.includes("private")
+      ) {
         cache.put(request, response.clone());
       }
       return response;
@@ -62,7 +66,22 @@ async function staleWhileRevalidate(request, cacheName) {
   return cachedResponse || (await networkResponsePromise) || Response.error();
 }
 
-const PRIVATE_DOC_SHELL_LIMIT = 12;
+function shouldBypassServiceWorkerCache(pathname) {
+  return (
+    pathname === "/s" ||
+    pathname.startsWith("/s/") ||
+    pathname === "/m" ||
+    pathname.startsWith("/m/")
+  );
+}
+
+function isKnownPublicAssetPath(pathname) {
+  return (
+    pathname === "/icon.png" ||
+    pathname === "/manifest.webmanifest" ||
+    pathname.startsWith("/icons/")
+  );
+}
 
 function getNavigationCacheKey(request) {
   const url = new URL(request.url);
@@ -81,61 +100,14 @@ async function putNavigationResponse(cache, cacheKey, response) {
   }
 }
 
-async function trimPrivateDocShells(cache) {
-  const requests = await cache.keys();
-  const docRequests = requests.filter((request) => {
-    const pathname = new URL(request.url).pathname;
-    return pathname.startsWith("/doc/");
-  });
-
-  if (docRequests.length <= PRIVATE_DOC_SHELL_LIMIT) {
-    return;
-  }
-
-  await Promise.all(
-    docRequests
-      .slice(0, docRequests.length - PRIVATE_DOC_SHELL_LIMIT)
-      .map((request) => cache.delete(request)),
-  );
-}
-
-/**
- * Private route shells include authenticated session state, so they can only
- * be reused after a fresh network response validates the current request.
- */
-async function fetchPrivateNavigation(request, cache, cacheKey) {
-  const networkResponse = await fetch(request);
-
-  try {
-    if (networkResponse.ok && !networkResponse.redirected) {
-      await cache.put(cacheKey, networkResponse.clone());
-      await trimPrivateDocShells(cache);
-    } else {
-      await cache.delete(cacheKey);
-    }
-  } catch {
-    // Private shell cache maintenance is best-effort after fetch succeeds.
-  }
-
-  return networkResponse;
-}
-
 async function navigationNetworkFirst(request) {
   const pathname = new URL(request.url).pathname;
-  const allowNavigationCache =
-    pathname === "/auth" || pathname.startsWith("/s/");
-  const isPrivateRoute =
-    pathname === "/" || pathname.startsWith("/doc/");
-
-  const cacheName = (allowNavigationCache || isPrivateRoute) ? NAV_CACHE_NAME : null;
+  const allowNavigationCache = pathname === "/auth";
+  const cacheName = allowNavigationCache ? NAV_CACHE_NAME : null;
   const cache = cacheName ? await caches.open(cacheName) : null;
   const cacheKey = cache ? getNavigationCacheKey(request) : null;
 
   try {
-    if (isPrivateRoute && cache && cacheKey) {
-      return await fetchPrivateNavigation(request, cache, cacheKey);
-    }
-
     const networkResponse = await fetch(request);
 
     if (cache && cacheKey) {
@@ -143,15 +115,20 @@ async function navigationNetworkFirst(request) {
     }
     return networkResponse;
   } catch {
-    if (!isPrivateRoute && cache && cacheKey) {
+    if (cache && cacheKey) {
       const cachedResponse = await cache.match(cacheKey);
       if (cachedResponse) {
         return cachedResponse;
       }
     }
 
-    const fallback = await caches.match("/offline.html");
-    return fallback || Response.error();
+    return new Response("Mushpot is offline.", {
+      status: 503,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "text/plain; charset=utf-8",
+      },
+    });
   }
 }
 
@@ -160,7 +137,20 @@ self.addEventListener("message", (event) => {
     return;
   }
 
-  event.waitUntil(caches.delete(NAV_CACHE_NAME));
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter(
+            (key) =>
+              key.startsWith("mushpot-nav-") ||
+              (key.startsWith("mushpot-static-") &&
+                key !== STATIC_CACHE_NAME),
+          )
+          .map((key) => caches.delete(key)),
+      ),
+    ),
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -175,6 +165,13 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // Shared documents and authenticated media can be revoked. Leave every
+  // request under these route families entirely to the browser/network so
+  // neither navigation nor destination-based asset strategies can retain it.
+  if (shouldBypassServiceWorkerCache(url.pathname)) {
     return;
   }
 
@@ -203,15 +200,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Other static assets: stale-while-revalidate
-  const isStaticAsset =
-    request.destination === "style" ||
-    request.destination === "script" ||
-    request.destination === "worker" ||
-    request.destination === "font" ||
-    request.destination === "image";
-
-  if (isStaticAsset) {
+  // Only explicitly public assets may use the general static cache. Request
+  // destinations are attacker-influenced through embedded Markdown URLs and
+  // are not sufficient evidence that a same-origin response is public.
+  if (isKnownPublicAssetPath(url.pathname)) {
     event.respondWith(staleWhileRevalidate(request, STATIC_CACHE_NAME));
     return;
   }
