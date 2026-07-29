@@ -14,7 +14,10 @@ import {
   editorTheme,
   markdownLiveFormatting,
 } from "@/components/editor/editor-appearance";
-import { CodeMirrorEditor } from "@/components/editor/code-mirror-editor";
+import {
+  CodeMirrorEditor,
+  type CodeMirrorEditorApi,
+} from "@/components/editor/code-mirror-editor";
 import { useMediaUploadInsertion } from "@/components/editor/use-image-upload";
 
 // iOS Safari does not reliably honor autocapitalize="sentences" inside
@@ -75,6 +78,7 @@ type EditorWorkspaceProps = {
   documentId: string;
   initialValue: string;
   onChange: (doc: Text) => void;
+  onReady?: (api: CodeMirrorEditorApi | null) => void;
   onUploadingMediaCountChange?: (count: number) => void;
   owner: string;
   placeholder?: string;
@@ -84,6 +88,7 @@ export function EditorWorkspace({
   documentId,
   initialValue,
   onChange,
+  onReady,
   onUploadingMediaCountChange,
   owner,
   placeholder,
@@ -121,6 +126,7 @@ export function EditorWorkspace({
       documentId={documentId}
       initialValue={initialValue}
       onChange={onChange}
+      onReady={onReady}
       extensions={editorExtensions}
       placeholder={placeholder}
     />

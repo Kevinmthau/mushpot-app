@@ -5,6 +5,7 @@ import { type Text } from "@codemirror/state";
 import type {
   ChangeEvent,
   ComponentType,
+  KeyboardEvent,
   MouseEvent,
 } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -32,9 +33,14 @@ type EditorWorkspaceProps = {
   documentId: string;
   initialValue: string;
   onChange: (doc: Text) => void;
+  onReady?: (api: EditorWorkspaceApi | null) => void;
   onUploadingMediaCountChange?: (count: number) => void;
   owner: string;
   placeholder?: string;
+};
+
+type EditorWorkspaceApi = {
+  focus: () => void;
 };
 
 let editorWorkspaceModulePromise:
@@ -71,6 +77,8 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [uploadingMediaCount, setUploadingMediaCount] = useState(0);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const editorWorkspaceApiRef = useRef<EditorWorkspaceApi | null>(null);
+  const pendingEditorFocusRef = useRef(false);
   const isNavigatingHomeRef = useRef(false);
   const {
     formattedUpdated,
@@ -140,6 +148,46 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     [handleTitleChange],
   );
 
+  const handleTitleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (
+        event.key !== "Enter" ||
+        event.nativeEvent.isComposing ||
+        event.nativeEvent.keyCode === 229
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+
+      const editorApi = editorWorkspaceApiRef.current;
+      if (editorApi) {
+        pendingEditorFocusRef.current = false;
+        editorApi.focus();
+        return;
+      }
+
+      pendingEditorFocusRef.current = true;
+    },
+    [],
+  );
+
+  const handleEditorWorkspaceReady = useCallback(
+    (api: EditorWorkspaceApi | null) => {
+      editorWorkspaceApiRef.current = api;
+
+      if (!api || !pendingEditorFocusRef.current) {
+        return;
+      }
+
+      pendingEditorFocusRef.current = false;
+      if (document.activeElement === titleInputRef.current) {
+        api.focus();
+      }
+    },
+    [],
+  );
+
   const handleOpenShareModal = useCallback(() => {
     setIsShareModalOpen(true);
   }, []);
@@ -186,8 +234,10 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
           ref={titleInputRef}
           value={title}
           onChange={handleTitleInputChange}
+          onKeyDown={handleTitleKeyDown}
           onBlur={handleTitleBlur}
           placeholder="Untitled"
+          enterKeyHint="next"
           className="editor-title-input mb-4 w-full border-none bg-transparent p-0 text-[var(--ink)] outline-none"
           aria-label="Document title"
           autoCapitalize="sentences"
@@ -250,6 +300,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
             documentId={initialDocument.id}
             initialValue={initialDocument.content}
             onChange={handleEditorChange}
+            onReady={handleEditorWorkspaceReady}
             onUploadingMediaCountChange={setUploadingMediaCount}
             owner={initialDocument.owner}
             placeholder="|..."
