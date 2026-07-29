@@ -1,128 +1,203 @@
 "use client";
 
 import { useEffect, useEffectEvent, useRef } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import {
   activateDocumentCacheForOwner,
-  clearCachedDocumentsForOwner,
-  clearLastActiveOwner,
+  deactivateDocumentCacheForOwner,
 } from "@/lib/doc-cache";
 import { clearPrivateNavigationCache } from "@/lib/private-navigation-cache";
 
+type AuthPersistenceActions = {
+  activateOwner: (owner: string) => Promise<void>;
+  clearNavigationCache: () => Promise<void>;
+  clearUserId: () => void;
+  deactivateOwner: (owner: string) => Promise<void>;
+  redirectToAuth: () => void;
+  setUserId: (owner: string) => void;
+};
+
+export type AuthPersistenceLifecycle = {
+  applySessionCheck: (
+    owner: string | null,
+    error: unknown,
+    startVersion: number,
+  ) => void;
+  captureVersion: () => number;
+  dispose: () => void;
+  handleAuthEvent: (event: string, owner: string | null) => void;
+};
+
 /**
- * Subscribes to Supabase auth state changes so the PWA detects
- * session expiry / refresh even after being backgrounded on mobile.
- *
- * Mounted in the private layout so it only runs on authenticated routes.
+ * Serializes the observable consequences of auth events without awaiting
+ * inside Supabase's callback. Cache lifecycle methods perform their own
+ * owner-scoped transaction ordering, while the version prevents a stale
+ * sign-out cleanup from redirecting after a newer sign-in.
+ */
+export function createAuthPersistenceLifecycle(
+  initialOwner: string | null,
+  actions: AuthPersistenceActions,
+): AuthPersistenceLifecycle {
+  let activeOwner = initialOwner;
+  let disposed = false;
+  let version = 0;
+
+  const activateOwner = (nextOwner: string) => {
+    if (disposed) {
+      return;
+    }
+
+    version += 1;
+    const previousOwner = activeOwner;
+    activeOwner = nextOwner;
+    actions.setUserId(nextOwner);
+
+    if (previousOwner && previousOwner !== nextOwner) {
+      void Promise.allSettled([
+        actions.deactivateOwner(previousOwner),
+        actions.clearNavigationCache(),
+      ]);
+    }
+
+    void actions.activateOwner(nextOwner);
+  };
+
+  const deactivateActiveOwner = () => {
+    if (disposed) {
+      return;
+    }
+
+    version += 1;
+    const transitionVersion = version;
+    const signedOutOwner = activeOwner;
+    activeOwner = null;
+    actions.clearUserId();
+
+    const cleanupTasks: Promise<void>[] = [actions.clearNavigationCache()];
+    if (signedOutOwner) {
+      cleanupTasks.push(actions.deactivateOwner(signedOutOwner));
+    }
+
+    void Promise.allSettled(cleanupTasks).then(() => {
+      if (
+        !disposed &&
+        version === transitionVersion &&
+        activeOwner === null
+      ) {
+        actions.redirectToAuth();
+      }
+    });
+  };
+
+  return {
+    applySessionCheck(owner, error, startVersion) {
+      // A transient client/session error must not be interpreted as sign-out.
+      if (disposed || error || startVersion !== version) {
+        return;
+      }
+
+      if (owner) {
+        activateOwner(owner);
+      } else {
+        deactivateActiveOwner();
+      }
+    },
+    captureVersion() {
+      return version;
+    },
+    dispose() {
+      disposed = true;
+      version += 1;
+    },
+    handleAuthEvent(event, owner) {
+      if (disposed) {
+        return;
+      }
+
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        if (owner) {
+          activateOwner(owner);
+        }
+        return;
+      }
+
+      if (event === "SIGNED_OUT") {
+        deactivateActiveOwner();
+      }
+    },
+  };
+}
+
+/**
+ * Subscribes to Supabase auth state changes so the PWA detects session expiry
+ * or refresh after being backgrounded. Unexpected sign-out quarantines dirty
+ * drafts; only the explicit sign-out workflow performs a full purge.
  */
 export function AuthPersistence() {
   const router = useRouter();
   const pathname = usePathname();
   const { clearUserId, setUserId, userId } = usePrivateSession();
-  const activeOwnerRef = useRef(userId);
+  const initialOwnerRef = useRef(userId);
   const redirectToAuth = useEffectEvent(() => {
     router.replace(`/auth?next=${encodeURIComponent(pathname)}`);
   });
 
   useEffect(() => {
-    activeOwnerRef.current = userId;
-  }, [userId]);
-
-  useEffect(() => {
     let isActive = true;
     let unsubscribe: (() => void) | undefined;
-    let authEventVersion = 0;
+    const lifecycle = createAuthPersistenceLifecycle(initialOwnerRef.current, {
+      activateOwner: activateDocumentCacheForOwner,
+      clearNavigationCache: clearPrivateNavigationCache,
+      clearUserId,
+      deactivateOwner: deactivateDocumentCacheForOwner,
+      redirectToAuth,
+      setUserId,
+    });
 
     void (async () => {
-      const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
-      const supabase = await getSupabaseBrowserClient();
+      try {
+        const { getSupabaseBrowserClient } = await import(
+          "@/lib/supabase/client"
+        );
+        const supabase = await getSupabaseBrowserClient();
 
-      if (!isActive) {
-        return;
-      }
-
-      const {
-        data: { subscription },
-      } = supabase.auth.onAuthStateChange((event, session) => {
-        authEventVersion += 1;
-
-        if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
-          if (session?.user?.id) {
-            const nextOwner = session.user.id;
-            const previousOwner = activeOwnerRef.current;
-
-            if (previousOwner && previousOwner !== nextOwner) {
-              void clearCachedDocumentsForOwner(previousOwner);
-              void clearPrivateNavigationCache();
-            }
-
-            activeOwnerRef.current = nextOwner;
-            setUserId(nextOwner);
-            void activateDocumentCacheForOwner(nextOwner);
-          }
+        if (!isActive) {
+          return;
         }
 
-        if (event === "SIGNED_OUT") {
-          const signedOutOwner = activeOwnerRef.current;
-          activeOwnerRef.current = null;
-          clearUserId();
-          void Promise.all([
-            signedOutOwner
-              ? clearCachedDocumentsForOwner(signedOutOwner)
-              : Promise.resolve(),
-            clearLastActiveOwner(),
-            clearPrivateNavigationCache(),
-          ]).finally(redirectToAuth);
-        }
-      });
+        const {
+          data: { subscription },
+        } = supabase.auth.onAuthStateChange((event, session) => {
+          lifecycle.handleAuthEvent(event, session?.user?.id ?? null);
+        });
+        unsubscribe = () => subscription.unsubscribe();
 
-      unsubscribe = () => subscription.unsubscribe();
+        const sessionCheckVersion = lifecycle.captureVersion();
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
 
-      // On mount, also do a one-time session check to catch stale cookies
-      const sessionCheckVersion = authEventVersion;
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!isActive) {
-        unsubscribe?.();
-        return;
-      }
-
-      if (sessionCheckVersion !== authEventVersion) {
-        return;
-      }
-
-      if (session?.user?.id) {
-        const nextOwner = session.user.id;
-        const previousOwner = activeOwnerRef.current;
-
-        if (previousOwner && previousOwner !== nextOwner) {
-          void clearCachedDocumentsForOwner(previousOwner);
-          void clearPrivateNavigationCache();
+        if (!isActive) {
+          return;
         }
 
-        activeOwnerRef.current = nextOwner;
-        setUserId(nextOwner);
-        void activateDocumentCacheForOwner(nextOwner);
-      } else {
-        const signedOutOwner = activeOwnerRef.current;
-        activeOwnerRef.current = null;
-        clearUserId();
-        void Promise.all([
-          signedOutOwner
-            ? clearCachedDocumentsForOwner(signedOutOwner)
-            : Promise.resolve(),
-          clearLastActiveOwner(),
-          clearPrivateNavigationCache(),
-        ]).finally(redirectToAuth);
+        lifecycle.applySessionCheck(
+          session?.user?.id ?? null,
+          error,
+          sessionCheckVersion,
+        );
+      } catch {
+        // Import/client/session failures are transient. Keep the server-provided
+        // owner and cache state unchanged; the auth subscription can recover.
       }
     })();
 
     return () => {
       isActive = false;
+      lifecycle.dispose();
       unsubscribe?.();
     };
   }, [clearUserId, setUserId]);

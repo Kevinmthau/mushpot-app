@@ -49,6 +49,7 @@ export function useDocumentList(userId: string | null): DocumentListState {
         .from("documents")
         .select(DOCUMENT_LIST_SELECT)
         .eq("owner", userId)
+        .is("clone_status", null)
         .order("updated_at", { ascending: false });
 
       if (requestId !== requestIdRef.current) {
@@ -92,7 +93,11 @@ export function useDocumentList(userId: string | null): DocumentListState {
         return;
       }
 
-      const cachedDocuments = await getCachedDocumentListForOwner(userId);
+      const cacheReadToken = getDocumentCacheWriteToken(userId);
+      const cachedDocuments = await getCachedDocumentListForOwner(
+        userId,
+        cacheReadToken,
+      );
       if (isActive && cachedDocuments.length > 0) {
         setDocuments(cachedDocuments);
       }

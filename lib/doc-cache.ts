@@ -1,26 +1,49 @@
 /**
  * IndexedDB-based document cache for offline-first, instant-load performance.
  *
- * Documents are read from local cache first (instant), then synced with the
- * server in the background. Edits are persisted locally before being sent
- * to Supabase, so the UI is never blocked by network latency.
+ * Cache access is authorized by an owner-scoped generation stored in the same
+ * IndexedDB transaction as the document operation. Deactivating an owner
+ * advances that generation, so work started by an older authenticated session
+ * cannot read, write, or delete data after the session changes.
  */
 
-export type CachedDocument = {
+type CachedDocumentBase = {
   id: string;
   owner: string;
   title: string;
-  content: string;
   updated_at: string;
+};
+
+/**
+ * Complete editor data accepted by cache writers. `kind` remains optional at
+ * this boundary so existing document mapping helpers do not need to know about
+ * the storage representation.
+ */
+export type CachedDocument = CachedDocumentBase & {
+  kind?: "complete";
+  content: string;
   share_enabled: boolean;
   share_token: string | null;
-  /** Timestamp of last local write – used to detect dirty docs */
+  /** Timestamp of last local write – used to detect dirty docs. */
   _localUpdatedAt?: number;
-  /** True when local changes haven't been persisted to the server yet */
+  /** True when local changes have not been persisted to the server yet. */
   _dirty?: boolean;
   /** Numeric IndexedDB key for dirty-document lookups. */
   _dirtyKey?: 1;
 };
+
+export type CachedCompleteDocument = CachedDocument & {
+  kind: "complete";
+};
+
+export type CachedMetadataDocument = CachedDocumentBase & {
+  kind: "metadata";
+};
+
+/** The discriminated record shape persisted in IndexedDB v3. */
+export type CachedDocumentRecord =
+  | CachedCompleteDocument
+  | CachedMetadataDocument;
 
 export type CachedDocumentListItem = {
   id: string;
@@ -29,11 +52,12 @@ export type CachedDocumentListItem = {
 };
 
 const DB_NAME = "mushpot";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const DOCS_STORE = "documents";
 const META_STORE = "meta";
 const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
 const OWNER_CACHE_STATE_KEY_PREFIX = "document-cache-owner-state:";
+const LAST_SYNC_KEY_PREFIX = "document-cache-last-sync:";
 
 type DocumentCacheOwnerState = {
   enabled: boolean;
@@ -63,6 +87,7 @@ function waitForTransaction(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
   });
 }
 
@@ -87,6 +112,10 @@ function getOwnerUpdatedAtRange(owner: string) {
 
 function getOwnerCacheStateKey(owner: string) {
   return `${OWNER_CACHE_STATE_KEY_PREFIX}${owner}`;
+}
+
+function getOwnerLastSyncKey(owner: string) {
+  return `${LAST_SYNC_KEY_PREFIX}${owner}`;
 }
 
 function beginOwnerStateOperation(owner: string) {
@@ -138,7 +167,7 @@ function getNextOwnerGeneration(
   return isDocumentCacheOwnerState(state, owner) ? state.generation + 1 : 1;
 }
 
-function isWriteTokenAuthorized(
+function isTokenAuthorized(
   state: DocumentCacheOwnerState | undefined,
   token: DocumentCacheWriteToken,
 ) {
@@ -149,32 +178,92 @@ function isWriteTokenAuthorized(
   );
 }
 
-export function getDocumentCacheWriteToken(
-  owner: string,
-): DocumentCacheWriteToken | null {
-  const generation = activeOwnerGenerations.get(owner);
-
-  if (generation === undefined) {
-    return null;
-  }
-
-  return { generation, owner };
+function isCompleteDocument(
+  document: CachedDocumentRecord | null | undefined,
+): document is CachedCompleteDocument {
+  return document?.kind === "complete";
 }
 
-function normalizeCachedDocumentForStorage(doc: CachedDocument): CachedDocument {
-  if (doc._dirty) {
-    return {
-      ...doc,
-      _dirtyKey: 1,
-    };
-  }
-
-  const cleanDoc = { ...doc };
-  delete cleanDoc._dirtyKey;
-  return cleanDoc;
+function toMetadataDocument(
+  document: CachedDocumentBase,
+): CachedMetadataDocument {
+  return {
+    id: document.id,
+    kind: "metadata",
+    owner: document.owner,
+    title: document.title,
+    updated_at: document.updated_at,
+  };
 }
 
-function normalizeExistingDirtyKeys(store: IDBObjectStore) {
+function toStoredCompleteDocument(
+  document: CachedDocument,
+): CachedCompleteDocument {
+  const storedDocument: CachedCompleteDocument = {
+    ...document,
+    kind: "complete",
+  };
+
+  if (storedDocument._dirty) {
+    storedDocument._dirtyKey = 1;
+  } else {
+    delete storedDocument._dirtyKey;
+  }
+
+  return storedDocument;
+}
+
+function documentsHaveDifferentEditorState(
+  left: CachedCompleteDocument,
+  right: CachedCompleteDocument,
+) {
+  const leftTitle = left.title.trim() || "Untitled";
+  const rightTitle = right.title.trim() || "Untitled";
+
+  return (
+    leftTitle !== rightTitle ||
+    left.content !== right.content ||
+    left.share_enabled !== right.share_enabled ||
+    left.share_token !== right.share_token
+  );
+}
+
+function shouldPreserveExistingDocument(
+  existing: CachedDocumentRecord | undefined,
+  incoming: CachedCompleteDocument,
+) {
+  if (
+    !isCompleteDocument(existing) ||
+    !documentsHaveDifferentEditorState(existing, incoming)
+  ) {
+    return false;
+  }
+
+  // Never let a remote reconciliation or completed save replace different,
+  // unsynced local content.
+  if (!incoming._dirty && existing._dirty) {
+    return true;
+  }
+
+  // Local writes and save completions carry the timestamp of the snapshot they
+  // represent. If a newer snapshot is already cached, the older async result
+  // must not move the cache backward.
+  return (
+    existing._localUpdatedAt !== undefined &&
+    incoming._localUpdatedAt !== undefined &&
+    (existing._localUpdatedAt > incoming._localUpdatedAt ||
+      (!incoming._dirty &&
+        existing._localUpdatedAt === incoming._localUpdatedAt))
+  );
+}
+
+/**
+ * v2 did not distinguish a list placeholder from a real empty document.
+ * Preserve records that are definitely complete (dirty or non-empty) and
+ * migrate ambiguous clean empty records to metadata so they must be fetched
+ * before the editor can use them.
+ */
+function migrateExistingDocuments(store: IDBObjectStore) {
   const request = store.openCursor();
 
   request.onsuccess = () => {
@@ -183,21 +272,31 @@ function normalizeExistingDirtyKeys(store: IDBObjectStore) {
       return;
     }
 
-    const document = cursor.value as CachedDocument;
-    const normalizedDocument = normalizeCachedDocumentForStorage(document);
-    if (normalizedDocument._dirtyKey !== document._dirtyKey) {
-      const updateRequest = cursor.update(normalizedDocument);
-      updateRequest.onsuccess = () => cursor.continue();
-      updateRequest.onerror = () => cursor.continue();
-      return;
+    const existing = cursor.value as CachedDocumentRecord | CachedDocument;
+    let migrated: CachedDocumentRecord;
+
+    if (existing.kind === "metadata") {
+      migrated = toMetadataDocument(existing);
+    } else if (
+      existing.kind === "complete" ||
+      existing._dirty === true ||
+      existing.content !== ""
+    ) {
+      migrated = toStoredCompleteDocument(existing);
+    } else {
+      migrated = toMetadataDocument(existing);
     }
 
-    cursor.continue();
+    const updateRequest = cursor.update(migrated);
+    updateRequest.onsuccess = () => cursor.continue();
+    updateRequest.onerror = () => cursor.continue();
   };
 }
 
 function openDB(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise;
+  if (dbPromise) {
+    return dbPromise;
+  }
 
   dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -210,8 +309,9 @@ function openDB(): Promise<IDBDatabase> {
       } else {
         const store = request.transaction!.objectStore(DOCS_STORE);
         ensureDocumentIndexes(store);
-        normalizeExistingDirtyKeys(store);
+        migrateExistingDocuments(store);
       }
+
       if (!db.objectStoreNames.contains(META_STORE)) {
         db.createObjectStore(META_STORE, { keyPath: "key" });
       }
@@ -222,48 +322,105 @@ function openDB(): Promise<IDBDatabase> {
       dbPromise = null;
       reject(request.error);
     };
+    request.onblocked = () => {
+      dbPromise = null;
+      reject(new Error("Document cache upgrade was blocked."));
+    };
   });
 
   return dbPromise;
 }
 
+export function getDocumentCacheWriteToken(
+  owner: string,
+): DocumentCacheWriteToken | null {
+  const generation = activeOwnerGenerations.get(owner);
+  return generation === undefined ? null : { generation, owner };
+}
+
 // ---------------------------------------------------------------------------
-// Document CRUD
+// Document reads and writes
 // ---------------------------------------------------------------------------
 
-export async function getCachedDocument(id: string): Promise<CachedDocument | null> {
+/**
+ * Returns either metadata or a complete record for an active owner. The owner
+ * state and document are read in the same transaction.
+ */
+export async function getCachedDocumentRecordForOwner(
+  id: string,
+  owner: string,
+  token = getDocumentCacheWriteToken(owner),
+): Promise<CachedDocumentRecord | null> {
+  if (!token || token.owner !== owner) {
+    return null;
+  }
+
   try {
     const db = await openDB();
-    const tx = db.transaction(DOCS_STORE, "readonly");
-    const document = await requestToPromise<CachedDocument | undefined>(
-      tx.objectStore(DOCS_STORE).get(id),
-    );
-    return document ?? null;
+    const tx = db.transaction([DOCS_STORE, META_STORE], "readonly");
+    const transactionDone = waitForTransaction(tx);
+    const [ownerState, document] = await Promise.all([
+      requestToPromise<DocumentCacheOwnerState | undefined>(
+        tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
+      ),
+      requestToPromise<CachedDocumentRecord | undefined>(
+        tx.objectStore(DOCS_STORE).get(id),
+      ),
+    ]);
+    await transactionDone;
+
+    return isTokenAuthorized(ownerState, token) && document?.owner === owner
+      ? document
+      : null;
   } catch {
     return null;
   }
 }
 
+/** Backward-compatible owner-scoped record read. */
+export function getCachedDocument(
+  id: string,
+  owner: string,
+  token = getDocumentCacheWriteToken(owner),
+) {
+  return getCachedDocumentRecordForOwner(id, owner, token);
+}
+
+/**
+ * Returns only complete editor data. Metadata placeholders deliberately resolve
+ * to null so an offline list record can never overwrite real server content.
+ */
 export async function getCachedDocumentForOwner(
   id: string,
   owner: string,
-): Promise<CachedDocument | null> {
-  const cached = await getCachedDocument(id);
-  return cached?.owner === owner ? cached : null;
+  token = getDocumentCacheWriteToken(owner),
+): Promise<CachedCompleteDocument | null> {
+  const document = await getCachedDocumentRecordForOwner(id, owner, token);
+  return isCompleteDocument(document) ? document : null;
 }
 
 export async function getCachedDocumentListForOwner(
   owner: string,
+  token = getDocumentCacheWriteToken(owner),
 ): Promise<CachedDocumentListItem[]> {
+  if (!token || token.owner !== owner) {
+    return [];
+  }
+
   try {
     const db = await openDB();
-    const tx = db.transaction(DOCS_STORE, "readonly");
-    const store = tx.objectStore(DOCS_STORE);
-    const index = store.index("owner_updated_at");
+    const tx = db.transaction([DOCS_STORE, META_STORE], "readonly");
+    const transactionDone = waitForTransaction(tx);
+    const stateRequest = requestToPromise<DocumentCacheOwnerState | undefined>(
+      tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
+    );
     const documents: CachedDocumentListItem[] = [];
 
-    await new Promise<void>((resolve, reject) => {
-      const request = index.openCursor(getOwnerUpdatedAtRange(owner), "prev");
+    const cursorDone = new Promise<void>((resolve, reject) => {
+      const request = tx
+        .objectStore(DOCS_STORE)
+        .index("owner_updated_at")
+        .openCursor(getOwnerUpdatedAtRange(owner), "prev");
 
       request.onsuccess = () => {
         const cursor = request.result;
@@ -272,7 +429,7 @@ export async function getCachedDocumentListForOwner(
           return;
         }
 
-        const document = cursor.value as CachedDocument;
+        const document = cursor.value as CachedDocumentRecord;
         documents.push({
           id: document.id,
           title: document.title,
@@ -280,11 +437,12 @@ export async function getCachedDocumentListForOwner(
         });
         cursor.continue();
       };
-
       request.onerror = () => reject(request.error);
     });
 
-    return documents;
+    const [ownerState] = await Promise.all([stateRequest, cursorDone]);
+    await transactionDone;
+    return isTokenAuthorized(ownerState, token) ? documents : [];
   } catch {
     return [];
   }
@@ -292,63 +450,110 @@ export async function getCachedDocumentListForOwner(
 
 export async function reconcileCachedDocumentWithServer(
   serverDocument: CachedDocument,
-  writeToken = getDocumentCacheWriteToken(serverDocument.owner),
-): Promise<CachedDocument> {
+  token = getDocumentCacheWriteToken(serverDocument.owner),
+): Promise<CachedCompleteDocument> {
+  const nextDocument = toStoredCompleteDocument({
+    ...serverDocument,
+    _dirty: false,
+  });
+
+  if (!token || token.owner !== serverDocument.owner) {
+    return nextDocument;
+  }
+
   const cachedDocument = await getCachedDocumentForOwner(
     serverDocument.id,
     serverDocument.owner,
+    token,
   );
-
   if (cachedDocument?._dirty) {
     return cachedDocument;
   }
 
-  const nextDocument: CachedDocument = {
-    ...serverDocument,
-    _dirty: false,
-  };
-  await putCachedDocument(nextDocument, writeToken);
+  await putCachedDocument(nextDocument, token);
   return nextDocument;
 }
 
 export async function putCachedDocument(
-  doc: CachedDocument,
-  writeToken = getDocumentCacheWriteToken(doc.owner),
-): Promise<void> {
-  if (!writeToken || writeToken.owner !== doc.owner) {
-    return;
+  document: CachedDocument,
+  token = getDocumentCacheWriteToken(document.owner),
+): Promise<boolean> {
+  if (!token || token.owner !== document.owner) {
+    return false;
   }
 
   try {
     const db = await openDB();
     const tx = db.transaction([DOCS_STORE, META_STORE], "readwrite");
     const transactionDone = waitForTransaction(tx);
-    const ownerState = await requestToPromise<DocumentCacheOwnerState | undefined>(
-      tx.objectStore(META_STORE).get(getOwnerCacheStateKey(doc.owner)),
-    );
+    const documentStore = tx.objectStore(DOCS_STORE);
+    const [ownerState, existingDocument] = await Promise.all([
+      requestToPromise<DocumentCacheOwnerState | undefined>(
+        tx.objectStore(META_STORE).get(getOwnerCacheStateKey(document.owner)),
+      ),
+      requestToPromise<CachedDocumentRecord | undefined>(
+        documentStore.get(document.id),
+      ),
+    ]);
+    const authorized = isTokenAuthorized(ownerState, token);
+    const incomingDocument = toStoredCompleteDocument(document);
+    const stored =
+      authorized &&
+      !shouldPreserveExistingDocument(existingDocument, incomingDocument);
 
-    if (isWriteTokenAuthorized(ownerState, writeToken)) {
-      tx.objectStore(DOCS_STORE).put(normalizeCachedDocumentForStorage(doc));
+    if (stored) {
+      documentStore.put(incomingDocument);
     }
 
     await transactionDone;
+    return stored;
   } catch {
-    // Silently ignore – cache is best-effort
+    return false;
   }
 }
 
-export async function deleteCachedDocument(id: string): Promise<void> {
+/** Deletes only when the owner has a current authorized generation. */
+export async function deleteCachedDocument(
+  id: string,
+  owner: string,
+  token = getDocumentCacheWriteToken(owner),
+): Promise<boolean> {
+  if (!token || token.owner !== owner) {
+    return false;
+  }
+
   try {
     const db = await openDB();
-    const tx = db.transaction(DOCS_STORE, "readwrite");
-    tx.objectStore(DOCS_STORE).delete(id);
-    await waitForTransaction(tx);
+    const tx = db.transaction([DOCS_STORE, META_STORE], "readwrite");
+    const transactionDone = waitForTransaction(tx);
+    const store = tx.objectStore(DOCS_STORE);
+    const [ownerState, document] = await Promise.all([
+      requestToPromise<DocumentCacheOwnerState | undefined>(
+        tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
+      ),
+      requestToPromise<CachedDocumentRecord | undefined>(store.get(id)),
+    ]);
+    const authorized =
+      document?.owner === owner && isTokenAuthorized(ownerState, token);
+    if (authorized) {
+      store.delete(id);
+    }
+
+    await transactionDone;
+    return authorized;
   } catch {
-    // Silently ignore
+    return false;
   }
 }
 
-export async function clearCachedDocumentsForOwner(owner: string): Promise<void> {
+// ---------------------------------------------------------------------------
+// Owner lifecycle
+// ---------------------------------------------------------------------------
+
+async function disableDocumentCacheForOwner(
+  owner: string,
+  purgeDirtyDocuments: boolean,
+): Promise<void> {
   if (!owner) {
     return;
   }
@@ -363,12 +568,12 @@ export async function clearCachedDocumentsForOwner(owner: string): Promise<void>
       const transactionDone = waitForTransaction(tx);
       const documentStore = tx.objectStore(DOCS_STORE);
       const metaStore = tx.objectStore(META_STORE);
-      const [ownerState, documentKeys, lastActiveOwner] = await Promise.all([
+      const [ownerState, documents, lastActiveOwner] = await Promise.all([
         requestToPromise<DocumentCacheOwnerState | undefined>(
           metaStore.get(getOwnerCacheStateKey(owner)),
         ),
-        requestToPromise<IDBValidKey[]>(
-          documentStore.index("owner").getAllKeys(owner),
+        requestToPromise<CachedDocumentRecord[]>(
+          documentStore.index("owner").getAll(owner),
         ),
         requestToPromise<{ value?: string } | undefined>(
           metaStore.get(LAST_ACTIVE_OWNER_KEY),
@@ -386,11 +591,20 @@ export async function clearCachedDocumentsForOwner(owner: string): Promise<void>
         metaStore.delete(LAST_ACTIVE_OWNER_KEY);
       }
 
-      documentKeys.forEach((key) => documentStore.delete(key));
+      for (const document of documents) {
+        const retainDirtyDocument =
+          !purgeDirtyDocuments &&
+          isCompleteDocument(document) &&
+          document._dirty === true;
+        if (!retainDirtyDocument) {
+          documentStore.delete(document.id);
+        }
+      }
+
       await transactionDone;
     });
   } catch {
-    // Silently ignore – cache cleanup is best-effort
+    // Cache cleanup is best-effort. The in-memory generation remains disabled.
   } finally {
     if (isCurrentOwnerStateOperation(owner, operationId)) {
       activeOwnerGenerations.delete(owner);
@@ -398,32 +612,22 @@ export async function clearCachedDocumentsForOwner(owner: string): Promise<void>
   }
 }
 
-// ---------------------------------------------------------------------------
-// Meta helpers (e.g. last sync timestamp)
-// ---------------------------------------------------------------------------
-
-export async function setMeta(key: string, value: string): Promise<void> {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(META_STORE, "readwrite");
-    tx.objectStore(META_STORE).put({ key, value });
-    await waitForTransaction(tx);
-  } catch {
-    // Silently ignore
-  }
+/**
+ * Quarantines an owner's unsynced drafts while removing clean data. Reads and
+ * writes stay disabled until the same owner is authenticated again.
+ */
+export function deactivateDocumentCacheForOwner(owner: string): Promise<void> {
+  return disableDocumentCacheForOwner(owner, false);
 }
 
-export async function getMeta(key: string): Promise<string | null> {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(META_STORE, "readonly");
-    const meta = await requestToPromise<{ value?: string } | undefined>(
-      tx.objectStore(META_STORE).get(key),
-    );
-    return meta?.value ?? null;
-  } catch {
-    return null;
-  }
+/** Permanently removes both clean and dirty cached data for an owner. */
+export function purgeDocumentCacheForOwner(owner: string): Promise<void> {
+  return disableDocumentCacheForOwner(owner, true);
+}
+
+/** Compatibility alias for callers that explicitly intend a full purge. */
+export function clearCachedDocumentsForOwner(owner: string): Promise<void> {
+  return purgeDocumentCacheForOwner(owner);
 }
 
 export async function activateDocumentCacheForOwner(owner: string): Promise<void> {
@@ -431,8 +635,9 @@ export async function activateDocumentCacheForOwner(owner: string): Promise<void
     return;
   }
 
-  // Repeated authenticated activation calls share the current invalidation
-  // epoch. Only a purge advances it and makes earlier activation work stale.
+  // Repeated authenticated activation calls share the current generation.
+  // A concurrent deactivation advances the operation ID and wins over an
+  // activation that started earlier.
   const operationId = ownerStateOperationIds.get(owner) ?? 0;
 
   try {
@@ -469,6 +674,36 @@ export async function activateDocumentCacheForOwner(owner: string): Promise<void
   }
 }
 
+// ---------------------------------------------------------------------------
+// Meta helpers
+// ---------------------------------------------------------------------------
+
+export async function setMeta(key: string, value: string): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(META_STORE, "readwrite");
+    tx.objectStore(META_STORE).put({ key, value });
+    await waitForTransaction(tx);
+  } catch {
+    // Metadata is best-effort.
+  }
+}
+
+export async function getMeta(key: string): Promise<string | null> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(META_STORE, "readonly");
+    const transactionDone = waitForTransaction(tx);
+    const meta = await requestToPromise<{ value?: string } | undefined>(
+      tx.objectStore(META_STORE).get(key),
+    );
+    await transactionDone;
+    return meta?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function setLastActiveOwner(owner: string): Promise<void> {
   return setMeta(LAST_ACTIVE_OWNER_KEY, owner);
 }
@@ -484,48 +719,59 @@ export async function clearLastActiveOwner(): Promise<void> {
     tx.objectStore(META_STORE).delete(LAST_ACTIVE_OWNER_KEY);
     await waitForTransaction(tx);
   } catch {
-    // Silently ignore
+    // Metadata is best-effort.
   }
 }
 
 // ---------------------------------------------------------------------------
-// Dirty document helpers
+// Dirty documents and list sync
 // ---------------------------------------------------------------------------
 
-/**
- * Returns documents owned by the current user that have unsaved local changes.
- */
-export async function getDirtyDocuments(owner: string): Promise<CachedDocument[]> {
-  if (!owner) {
+export async function getDirtyDocuments(
+  owner: string,
+  token = getDocumentCacheWriteToken(owner),
+): Promise<CachedCompleteDocument[]> {
+  if (!owner || !token || token.owner !== owner) {
     return [];
   }
 
   try {
     const db = await openDB();
-    const tx = db.transaction(DOCS_STORE, "readonly");
-    const documents = await requestToPromise<CachedDocument[]>(
-      tx.objectStore(DOCS_STORE).index("owner").getAll(owner),
+    const tx = db.transaction([DOCS_STORE, META_STORE], "readonly");
+    const transactionDone = waitForTransaction(tx);
+    const [ownerState, documents] = await Promise.all([
+      requestToPromise<DocumentCacheOwnerState | undefined>(
+        tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
+      ),
+      requestToPromise<CachedDocumentRecord[]>(
+        tx.objectStore(DOCS_STORE).index("owner").getAll(owner),
+      ),
+    ]);
+    await transactionDone;
+
+    if (!isTokenAuthorized(ownerState, token)) {
+      return [];
+    }
+
+    return documents.filter(
+      (document): document is CachedCompleteDocument =>
+        isCompleteDocument(document) && document._dirty === true,
     );
-    return documents.filter((document) => document._dirty);
   } catch {
     return [];
   }
 }
 
-// ---------------------------------------------------------------------------
-// Sync helpers
-// ---------------------------------------------------------------------------
-
 /**
- * Replace the full local cache with fresh server data, preserving any local
- * dirty documents that haven't been synced yet.
+ * Reconciles list metadata while preserving complete documents and dirty local
+ * drafts. New list rows are metadata-only until the editor fetches full data.
  */
 export async function syncDocumentList(
-  serverDocs: CachedDocumentListItem[],
+  serverDocuments: CachedDocumentListItem[],
   owner: string,
-  writeToken = getDocumentCacheWriteToken(owner),
+  token = getDocumentCacheWriteToken(owner),
 ): Promise<void> {
-  if (!writeToken || writeToken.owner !== owner) {
+  if (!token || token.owner !== owner) {
     return;
   }
 
@@ -533,64 +779,71 @@ export async function syncDocumentList(
     const db = await openDB();
     const tx = db.transaction([DOCS_STORE, META_STORE], "readwrite");
     const transactionDone = waitForTransaction(tx);
-    const store = tx.objectStore(DOCS_STORE);
+    const documentStore = tx.objectStore(DOCS_STORE);
+    const metaStore = tx.objectStore(META_STORE);
     const ownerState = await requestToPromise<DocumentCacheOwnerState | undefined>(
-      tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
+      metaStore.get(getOwnerCacheStateKey(owner)),
     );
 
-    if (!isWriteTokenAuthorized(ownerState, writeToken)) {
+    if (!isTokenAuthorized(ownerState, token)) {
       await transactionDone;
       return;
     }
 
-    const existingForOwner = await requestToPromise<CachedDocument[]>(
-      store.index("owner").getAll(owner),
+    const existingForOwner = await requestToPromise<CachedDocumentRecord[]>(
+      documentStore.index("owner").getAll(owner),
     );
-    const existingById = new Map(existingForOwner.map((doc) => [doc.id, doc]));
-    const dirtyIds = new Set(existingForOwner.filter((d) => d._dirty).map((d) => d.id));
-    const serverIds = new Set(serverDocs.map((d) => d.id));
+    const existingById = new Map(
+      existingForOwner.map((document) => [document.id, document]),
+    );
+    const dirtyIds = new Set(
+      existingForOwner
+        .filter(
+          (document) =>
+            isCompleteDocument(document) && document._dirty === true,
+        )
+        .map((document) => document.id),
+    );
+    const serverIds = new Set(
+      serverDocuments.map((document) => document.id),
+    );
 
-    // Remove docs that no longer exist on server (unless dirty)
-    for (const doc of existingForOwner) {
-      if (!serverIds.has(doc.id) && !doc._dirty) {
-        store.delete(doc.id);
+    for (const document of existingForOwner) {
+      if (!serverIds.has(document.id) && !dirtyIds.has(document.id)) {
+        documentStore.delete(document.id);
       }
     }
 
-    // Update non-dirty docs with server metadata
-    for (const serverDoc of serverDocs) {
-      if (!dirtyIds.has(serverDoc.id)) {
-        const existingDoc = existingById.get(serverDoc.id);
-        if (existingDoc) {
-          // Update metadata but keep full content if present
-          store.put(
-            normalizeCachedDocumentForStorage({
-              ...existingDoc,
-              title: serverDoc.title,
-              updated_at: serverDoc.updated_at,
-            }),
-          );
-        } else {
-          // New doc from server – store list metadata (content loaded on demand)
-          store.put(
-            normalizeCachedDocumentForStorage({
-              id: serverDoc.id,
-              owner,
-              title: serverDoc.title,
-              content: "",
-              updated_at: serverDoc.updated_at,
-              share_enabled: false,
-              share_token: null,
-            }),
-          );
-        }
+    for (const serverDocument of serverDocuments) {
+      if (dirtyIds.has(serverDocument.id)) {
+        continue;
+      }
+
+      const existingDocument = existingById.get(serverDocument.id);
+      if (isCompleteDocument(existingDocument)) {
+        documentStore.put(
+          toStoredCompleteDocument({
+            ...existingDocument,
+            title: serverDocument.title,
+            updated_at: serverDocument.updated_at,
+          }),
+        );
+      } else {
+        documentStore.put(
+          toMetadataDocument({
+            ...serverDocument,
+            owner,
+          }),
+        );
       }
     }
 
+    metaStore.put({
+      key: getOwnerLastSyncKey(owner),
+      value: new Date().toISOString(),
+    });
     await transactionDone;
-
-    await setMeta("lastSyncAt", new Date().toISOString());
   } catch {
-    // Silently ignore
+    // Cache reconciliation is best-effort.
   }
 }

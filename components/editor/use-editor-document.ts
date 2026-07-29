@@ -8,7 +8,7 @@ import {
   getDocumentCacheWriteToken,
   getCachedDocumentForOwner,
   reconcileCachedDocumentWithServer,
-  type CachedDocument,
+  type CachedCompleteDocument,
 } from "@/lib/doc-cache";
 import {
   areEditorDocumentsEqual,
@@ -52,7 +52,7 @@ export function useEditorDocument(
     };
 
     void (async () => {
-      let cachedDocument: CachedDocument | null = null;
+      let cachedDocument: CachedCompleteDocument | null = null;
       let hasValidatedCachedDocument = false;
 
       try {
@@ -76,7 +76,11 @@ export function useEditorDocument(
 
         const cacheWriteToken = getDocumentCacheWriteToken(userId);
 
-        cachedDocument = await getCachedDocumentForOwner(documentId, userId);
+        cachedDocument = await getCachedDocumentForOwner(
+          documentId,
+          userId,
+          cacheWriteToken,
+        );
 
         if (!isActive) {
           return;
@@ -95,6 +99,7 @@ export function useEditorDocument(
           .select(EDITOR_DOCUMENT_SELECT)
           .eq("id", documentId)
           .eq("owner", userId)
+          .is("clone_status", null)
           .maybeSingle();
 
         if (!isActive) {
