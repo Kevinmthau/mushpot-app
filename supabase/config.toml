@@ -1,0 +1,5 @@
+[functions.get-shared-doc]
+verify_jwt = false
+
+[functions.document-media-maintenance]
+verify_jwt = false
