@@ -1,6 +1,6 @@
 begin;
 
-select plan(59);
+select plan(68);
 
 -- Schema, privilege, and helper-function assertions.
 select is(
@@ -651,6 +651,130 @@ select lives_ok(
 );
 
 reset role;
+reset "request.jwt.claims";
+reset "request.jwt.claim.sub";
+reset "request.jwt.claim.role";
+
+-- Atomic maintenance claims skip active leases and reclaim expired leases.
+update public.document_media_cleanup_jobs
+set
+  next_attempt_at = now() + interval '1 day',
+  lease_token = null,
+  lease_expires_at = null;
+
+insert into public.document_media_cleanup_jobs (
+  document_id,
+  owner,
+  next_attempt_at
+)
+values (
+  'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+  '11111111-1111-4111-8111-111111111111',
+  now() - interval '1 minute'
+);
+
+create temporary table first_cleanup_claim on commit drop as
+select *
+from public.claim_document_media_cleanup_jobs(1, 60);
+
+select is(
+  (select count(*) from first_cleanup_claim),
+  1::bigint,
+  'first cleanup worker claims the due job'
+);
+select is(
+  (
+    select count(*)
+    from public.claim_document_media_cleanup_jobs(1, 60)
+  ),
+  0::bigint,
+  'competing cleanup worker skips an active lease'
+);
+
+update public.document_media_cleanup_jobs
+set lease_expires_at = now() - interval '1 minute'
+where document_id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+
+create temporary table reclaimed_cleanup_job on commit drop as
+select *
+from public.claim_document_media_cleanup_jobs(1, 60);
+
+select is(
+  (select count(*) from reclaimed_cleanup_job),
+  1::bigint,
+  'cleanup worker reclaims a stale lease'
+);
+select ok(
+  (
+    select first_cleanup_claim.lease_token <>
+      reclaimed_cleanup_job.lease_token
+    from first_cleanup_claim
+    cross join reclaimed_cleanup_job
+  ),
+  'stale cleanup lease receives a new token'
+);
+
+-- Expired pending clones are atomically claimed as recovering and cannot be
+-- claimed again until the new server lease expires.
+insert into public.documents (
+  id,
+  owner,
+  title,
+  content,
+  clone_status,
+  clone_lease_token,
+  clone_lease_expires_at
+)
+values (
+  'ffffffff-ffff-4fff-8fff-ffffffffffff',
+  '11111111-1111-4111-8111-111111111111',
+  'Expired pending clone',
+  '',
+  'pending',
+  '99999999-9999-4999-8999-999999999999',
+  now() - interval '1 minute'
+);
+
+create temporary table claimed_expired_clone on commit drop as
+select *
+from public.claim_expired_document_clones(1, 120);
+
+select is(
+  (select count(*) from claimed_expired_clone),
+  1::bigint,
+  'maintenance claims one expired pending clone'
+);
+select is(
+  (select document_id from claimed_expired_clone),
+  'ffffffff-ffff-4fff-8fff-ffffffffffff'::uuid,
+  'expired clone claim returns the expected document'
+);
+select is(
+  (
+    select clone_status
+    from public.documents
+    where id = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+  ),
+  'recovering',
+  'claimed expired clone is marked recovering'
+);
+select ok(
+  (
+    select clone_lease_token <>
+      '99999999-9999-4999-8999-999999999999'::uuid
+    from public.documents
+    where id = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+  ),
+  'claimed expired clone receives a new server lease token'
+);
+select is(
+  (
+    select count(*)
+    from public.claim_expired_document_clones(1, 120)
+  ),
+  0::bigint,
+  'active recovering clone lease is not claimed twice'
+);
 
 select * from finish();
 rollback;

@@ -51,6 +51,7 @@ export type MaintenanceOperations = {
     prefix: string,
     offset: number,
   ) => Promise<ListedObject[]>;
+  purgeExpiredBackfillSnapshots: () => Promise<number>;
   removeObjects: (
     bucket: DocumentMediaBucket,
     paths: string[],
@@ -261,12 +262,16 @@ async function runMaintenance(operations: MaintenanceOperations) {
     }
   }
 
+  const expiredSnapshotsDeleted = await operations
+    .purgeExpiredBackfillSnapshots();
+
   return {
     claimedClones: claimedClones.length,
     claimedJobs: claimedJobs.length,
     completedJobs,
     deferredJobs,
     deletedClones,
+    expiredSnapshotsDeleted,
     failedJobs,
   };
 }
@@ -440,6 +445,19 @@ export function createSupabaseMaintenanceOperations(
         id: entry.id,
         name: entry.name,
       }));
+    },
+
+    async purgeExpiredBackfillSnapshots() {
+      const { count, error } = await client
+        .from("document_media_backfill_snapshots")
+        .delete({ count: "exact" })
+        .lt("expires_at", new Date().toISOString());
+      if (error) {
+        throw new Error(
+          `Unable to purge expired backfill snapshots: ${error.message}`,
+        );
+      }
+      return count ?? 0;
     },
 
     async removeObjects(bucket, paths) {

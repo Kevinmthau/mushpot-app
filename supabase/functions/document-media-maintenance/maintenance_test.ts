@@ -29,6 +29,7 @@ function createOperations(
     deferCleanupJob: () => Promise.resolve(),
     failCleanupJob: () => Promise.resolve(),
     listObjects: () => Promise.resolve([]),
+    purgeExpiredBackfillSnapshots: () => Promise.resolve(0),
     removeObjects: () => Promise.resolve(),
     ...overrides,
   };
@@ -102,8 +103,168 @@ Deno.test("maintenance accepts both secrets and runs claimed work", async () => 
     completedJobs: 0,
     deferredJobs: 0,
     deletedClones: 0,
+    expiredSnapshotsDeleted: 0,
     failedJobs: 0,
   });
+});
+
+Deno.test("maintenance reports expired snapshots deleted by the worker", async () => {
+  const response = await handleMaintenanceRequest(
+    new Request("https://example.test", {
+      method: "POST",
+      headers: {
+        apikey: "publishable",
+        "x-mushpot-maintenance-secret": "maintenance",
+      },
+    }),
+    {
+      createOperations: () =>
+        createOperations({
+          purgeExpiredBackfillSnapshots: () => Promise.resolve(3),
+        }),
+      getEnvironmentValue: (name) =>
+        name === "SUPABASE_ANON_KEY"
+          ? "publishable"
+          : name === "MUSHPOT_MAINTENANCE_SECRET"
+          ? "maintenance"
+          : undefined,
+    },
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(
+    (await response.json()).expiredSnapshotsDeleted,
+    3,
+  );
+});
+
+Deno.test("maintenance fails visibly when snapshot expiry cannot run", async () => {
+  const originalConsoleError = console.error;
+  console.error = () => {};
+
+  try {
+    const response = await handleMaintenanceRequest(
+      new Request("https://example.test", {
+        method: "POST",
+        headers: {
+          apikey: "publishable",
+          "x-mushpot-maintenance-secret": "maintenance",
+        },
+      }),
+      {
+        createOperations: () =>
+          createOperations({
+            purgeExpiredBackfillSnapshots: () =>
+              Promise.reject(new Error("database unavailable")),
+          }),
+        getEnvironmentValue: (name) =>
+          name === "SUPABASE_ANON_KEY"
+            ? "publishable"
+            : name === "MUSHPOT_MAINTENANCE_SECRET"
+            ? "maintenance"
+            : undefined,
+      },
+    );
+
+    assertEquals(response.status, 500);
+    assertEquals(await response.json(), {
+      error: "Maintenance failed.",
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+Deno.test("maintenance deletes a claimed expired clone", async () => {
+  const clone = {
+    document_id: "55555555-5555-4555-8555-555555555555",
+    lease_token: "66666666-6666-4666-8666-666666666666",
+    owner: "11111111-1111-4111-8111-111111111111",
+  };
+  let deletedCloneId = "";
+  const response = await handleMaintenanceRequest(
+    new Request("https://example.test", {
+      method: "POST",
+      headers: {
+        apikey: "publishable",
+        "x-mushpot-maintenance-secret": "maintenance",
+      },
+    }),
+    {
+      createOperations: () =>
+        createOperations({
+          claimExpiredClones: () => Promise.resolve([clone]),
+          deleteClaimedClone: (claimedClone) => {
+            deletedCloneId = claimedClone.document_id;
+            return Promise.resolve(true);
+          },
+        }),
+      getEnvironmentValue: (name) =>
+        name === "SUPABASE_ANON_KEY"
+          ? "publishable"
+          : name === "MUSHPOT_MAINTENANCE_SECRET"
+          ? "maintenance"
+          : undefined,
+    },
+  );
+
+  assertEquals(response.status, 200);
+  const result = await response.json();
+  assertEquals(result.claimedClones, 1);
+  assertEquals(result.deletedClones, 1);
+  assertEquals(deletedCloneId, clone.document_id);
+});
+
+Deno.test("maintenance schedules retry after cleanup failure", async () => {
+  let completed = false;
+  let retriedJobId = "";
+  let retryAt = "";
+  const response = await handleMaintenanceRequest(
+    new Request("https://example.test", {
+      method: "POST",
+      headers: {
+        apikey: "publishable",
+        "x-mushpot-maintenance-secret": "maintenance",
+      },
+    }),
+    {
+      createOperations: () =>
+        createOperations({
+          claimCleanupJobs: () => Promise.resolve([CLEANUP_JOB]),
+          completeCleanupJob: () => {
+            completed = true;
+            return Promise.resolve();
+          },
+          failCleanupJob: (job, _error, scheduledAt) => {
+            retriedJobId = job.job_id;
+            retryAt = scheduledAt;
+            return Promise.resolve();
+          },
+          listObjects: (bucket) =>
+            Promise.resolve(
+              bucket === "document-images"
+                ? [{ id: "image-id", name: "cover.png" }]
+                : [],
+            ),
+          removeObjects: () =>
+            Promise.reject(new Error("temporary Storage failure")),
+        }),
+      getEnvironmentValue: (name) =>
+        name === "SUPABASE_ANON_KEY"
+          ? "publishable"
+          : name === "MUSHPOT_MAINTENANCE_SECRET"
+          ? "maintenance"
+          : undefined,
+    },
+  );
+
+  assertEquals(response.status, 200);
+  const result = await response.json();
+  assertEquals(result.failedJobs, 1);
+  assertEquals(result.completedJobs, 0);
+  assertEquals(retriedJobId, CLEANUP_JOB.job_id);
+  assertEquals(retryAt.length > 0, true);
+  assertEquals(completed, false);
 });
 
 Deno.test("cleanup recursively deletes, re-lists, then completes", async () => {
