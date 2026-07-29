@@ -12,11 +12,13 @@ const OWNER_ID = "11111111-1111-4111-8111-111111111111";
 const DOCUMENT_ID = "22222222-2222-4222-8222-222222222222";
 
 function createSupabaseMock({
+  missingCloneStatus = false,
   sourceDocumentExists = true,
   signedUrl =
     "https://project-ref.supabase.co/storage/v1/object/sign/document-images/photo.png?token=signed",
   userId = OWNER_ID,
 }: {
+  missingCloneStatus?: boolean;
   sourceDocumentExists?: boolean;
   signedUrl?: string;
   userId?: string | null;
@@ -25,12 +27,27 @@ function createSupabaseMock({
     data: signedUrl ? { signedUrl } : null,
     error: signedUrl ? null : { message: "not found" },
   }));
-  const maybeSingle = vi.fn(async () => ({
+  const sourceDocumentResult = {
     data: sourceDocumentExists ? { id: DOCUMENT_ID } : null,
     error: null,
-  }));
+  };
+  const sourceDocumentResults = missingCloneStatus
+    ? [
+        {
+          data: null,
+          error: {
+            code: "42703",
+            message: "column documents.clone_status does not exist",
+          },
+        },
+        sourceDocumentResult,
+      ]
+    : [sourceDocumentResult];
+  const maybeSingle = vi.fn(
+    async () => sourceDocumentResults.shift() ?? sourceDocumentResult,
+  );
   const is = vi.fn(() => ({ maybeSingle }));
-  const ownerEq = vi.fn(() => ({ is }));
+  const ownerEq = vi.fn(() => ({ is, maybeSingle }));
   const idEq = vi.fn(() => ({ eq: ownerEq }));
   const select = vi.fn(() => ({ eq: idEq }));
   const from = vi.fn(() => ({ select }));
@@ -102,6 +119,21 @@ describe("private document media route", () => {
 
     expect(response.status).toBe(404);
     expect(createSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it("retries the document lookup without clone_status on an unmigrated schema", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
+    const { createSignedUrl, from, is, ownerEq } = createSupabaseMock({
+      missingCloneStatus: true,
+    });
+
+    const response = await requestMedia();
+
+    expect(from).toHaveBeenCalledTimes(2);
+    expect(ownerEq).toHaveBeenCalledTimes(2);
+    expect(is).toHaveBeenCalledOnce();
+    expect(createSignedUrl).toHaveBeenCalledOnce();
+    expect(response.status).toBe(307);
   });
 
   it("requires an authenticated owner", async () => {

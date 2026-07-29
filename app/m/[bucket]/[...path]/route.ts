@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { parseDocumentMediaRoute } from "@/lib/document-media";
+import { queryWithCloneStatusFallback } from "@/lib/supabase/clone-status-compat";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -47,13 +48,24 @@ export async function GET(_request: Request, context: MediaRouteContext) {
     return textResponse("Not authorized.", 403);
   }
 
-  const { data: sourceDocument, error: sourceDocumentError } = await supabase
-    .from("documents")
-    .select("id")
-    .eq("id", media.documentId)
-    .eq("owner", userId)
-    .is("clone_status", null)
-    .maybeSingle();
+  const { data: sourceDocument, error: sourceDocumentError } =
+    await queryWithCloneStatusFallback(
+      () =>
+        supabase
+          .from("documents")
+          .select("id")
+          .eq("id", media.documentId)
+          .eq("owner", userId)
+          .is("clone_status", null)
+          .maybeSingle(),
+      () =>
+        supabase
+          .from("documents")
+          .select("id")
+          .eq("id", media.documentId)
+          .eq("owner", userId)
+          .maybeSingle(),
+    );
 
   if (sourceDocumentError || !sourceDocument) {
     if (sourceDocumentError) {

@@ -15,6 +15,7 @@ import {
   EDITOR_DOCUMENT_SELECT,
   toEditorDocument,
 } from "@/lib/documents";
+import { queryWithCloneStatusFallback } from "@/lib/supabase/clone-status-compat";
 
 type EditorDocumentState = {
   document: EditorDocument | null;
@@ -109,13 +110,24 @@ export function useEditorDocument(
         const { getSupabaseBrowserClient } = await supabaseModulePromise;
         const supabase = await getSupabaseBrowserClient();
 
-        const { data: serverDocument, error: fetchError } = await supabase
-          .from("documents")
-          .select(EDITOR_DOCUMENT_SELECT)
-          .eq("id", documentId)
-          .eq("owner", userId)
-          .is("clone_status", null)
-          .maybeSingle();
+        const { data: serverDocument, error: fetchError } =
+          await queryWithCloneStatusFallback(
+            () =>
+              supabase
+                .from("documents")
+                .select(EDITOR_DOCUMENT_SELECT)
+                .eq("id", documentId)
+                .eq("owner", userId)
+                .is("clone_status", null)
+                .maybeSingle(),
+            () =>
+              supabase
+                .from("documents")
+                .select(EDITOR_DOCUMENT_SELECT)
+                .eq("id", documentId)
+                .eq("owner", userId)
+                .maybeSingle(),
+          );
 
         if (!isActive) {
           return;

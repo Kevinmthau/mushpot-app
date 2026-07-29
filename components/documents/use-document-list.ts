@@ -9,6 +9,7 @@ import {
   syncDocumentList,
 } from "@/lib/doc-cache";
 import { DOCUMENT_LIST_SELECT, type DocumentListItem } from "@/lib/documents";
+import { queryWithCloneStatusFallback } from "@/lib/supabase/clone-status-compat";
 
 type DocumentListState = {
   documents: DocumentListItem[];
@@ -66,12 +67,22 @@ export function useDocumentList(userId: string | null): DocumentListState {
     try {
       const { getSupabaseBrowserClient } = await supabaseModuleRef.current!;
       const supabase = await getSupabaseBrowserClient();
-      const { data, error: fetchError } = await supabase
-        .from("documents")
-        .select(DOCUMENT_LIST_SELECT)
-        .eq("owner", userId)
-        .is("clone_status", null)
-        .order("updated_at", { ascending: false });
+      const { data, error: fetchError } =
+        await queryWithCloneStatusFallback(
+          () =>
+            supabase
+              .from("documents")
+              .select(DOCUMENT_LIST_SELECT)
+              .eq("owner", userId)
+              .is("clone_status", null)
+              .order("updated_at", { ascending: false }),
+          () =>
+            supabase
+              .from("documents")
+              .select(DOCUMENT_LIST_SELECT)
+              .eq("owner", userId)
+              .order("updated_at", { ascending: false }),
+        );
 
       if (requestId !== requestIdRef.current) {
         return;
