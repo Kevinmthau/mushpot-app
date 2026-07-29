@@ -251,6 +251,18 @@ async function uploadVideoPosterImage({
   }
 }
 
+export function isolateVideoPosterImagePromise(
+  posterImagePromise: Promise<File | null>,
+) {
+  return posterImagePromise.catch((error) => {
+    // Attach the rejection handler as soon as extraction starts. Waiting until
+    // after the video upload would leave this promise abandoned when the upload
+    // fails or the editor unmounts first.
+    console.error("Video poster generation failed", error);
+    return null;
+  });
+}
+
 export async function resolveVideoPosterTitle({
   documentId,
   owner,
@@ -429,7 +441,7 @@ export function useMediaUploadInsertion({
 
             const posterImagePromise =
               mediaKind === "video"
-                ? generateVideoPosterImage(file)
+                ? isolateVideoPosterImagePromise(generateVideoPosterImage(file))
                 : Promise.resolve(null);
 
             const uploadedPath = await uploadMediaToStorage({
