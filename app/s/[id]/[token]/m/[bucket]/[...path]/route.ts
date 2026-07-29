@@ -41,6 +41,10 @@ export async function GET(
     return textResponse("Invalid media path.", 400);
   }
 
+  if (media.documentId !== id) {
+    return textResponse("Media not found.", 404);
+  }
+
   let signedUrlValue: string | null;
 
   try {

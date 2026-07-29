@@ -58,23 +58,16 @@ describe("shared document media route", () => {
     );
   });
 
-  it("revalidates legacy media whose path belongs to the clone source", async () => {
+  it("rejects media whose path belongs to another document", async () => {
     const sourceDocumentId = "33333333-3333-4333-8333-333333333333";
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
-    vi.mocked(fetchSharedMediaUrl).mockResolvedValue(
-      "https://project-ref.supabase.co/storage/v1/object/sign/document-images/photo.png?token=signed",
-    );
 
     const response = await requestMedia({
       mediaDocumentId: sourceDocumentId,
     });
 
-    expect(fetchSharedMediaUrl).toHaveBeenCalledWith(
-      DOCUMENT_ID,
-      SHARE_TOKEN,
-      `/m/document-images/${OWNER_ID}/${sourceDocumentId}/photo.png`,
-    );
-    expect(response.status).toBe(307);
+    expect(fetchSharedMediaUrl).not.toHaveBeenCalled();
+    expect(response.status).toBe(404);
   });
 
   it("refuses a signed URL from an unexpected origin", async () => {

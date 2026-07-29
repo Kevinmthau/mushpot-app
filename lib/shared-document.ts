@@ -28,7 +28,6 @@ async function requestSharedDocument(
     headers: {
       "Content-Type": "application/json",
       apikey: supabaseAnonKey,
-      Authorization: `Bearer ${supabaseAnonKey}`,
     },
     body: JSON.stringify(body),
     cache: "no-store",

@@ -12,7 +12,8 @@ type ParseSharedDocumentMediaReferenceOptions = {
 };
 
 type RewriteSharedDocumentMediaOptions =
-  ParseSharedDocumentMediaReferenceOptions & {
+  & ParseSharedDocumentMediaReferenceOptions
+  & {
     resolve: (
       reference: SharedDocumentMediaReference,
     ) => Promise<string> | string;
@@ -27,8 +28,7 @@ type BuildSharedDocumentMediaUrlOptions = {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHARE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{64}$/;
-const MEDIA_URL_CANDIDATE_PATTERN =
-  /https?:\/\/[^\s<>"')]+|\/m\/[^\s<>"')]+/g;
+const MEDIA_URL_CANDIDATE_PATTERN = /https?:\/\/[^\s<>"')]+|\/m\/[^\s<>"')]+/g;
 const LEGACY_PUBLIC_PATH_PREFIXES = [
   "/storage/v1/object/public/",
   "/storage/v1/render/image/public/",
@@ -80,9 +80,10 @@ function encodePathSegments(segments: string[]) {
 
   return segments
     .map((segment) =>
-      encodeURIComponent(segment).replace(/[!'()*]/g, (character) =>
-        `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
-      ),
+      encodeURIComponent(segment).replace(
+        /[!'()*]/g,
+        (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+      )
     )
     .join("/");
 }
@@ -138,7 +139,7 @@ function parseCandidateSegments(
   }
 
   const prefix = LEGACY_PUBLIC_PATH_PREFIXES.find((candidatePrefix) =>
-    candidateUrl.pathname.startsWith(candidatePrefix),
+    candidateUrl.pathname.startsWith(candidatePrefix)
   );
   if (!prefix) {
     return null;
@@ -168,7 +169,7 @@ export function parseSharedDocumentMediaReference(
   if (
     !isDocumentMediaBucket(bucket) ||
     pathOwnerId !== ownerId ||
-    !UUID_PATTERN.test(pathDocumentId) ||
+    pathDocumentId !== documentId ||
     fileSegments.length === 0
   ) {
     return null;
@@ -193,12 +194,14 @@ export function buildSharedDocumentMediaUrl({
     !isDocumentMediaBucket(reference.bucket) ||
     pathSegments.length < 3 ||
     !UUID_PATTERN.test(pathSegments[0]) ||
-    !UUID_PATTERN.test(pathSegments[1])
+    pathSegments[1] !== documentId
   ) {
     throw new Error("Invalid shared document media URL.");
   }
 
-  return `/s/${documentId}/${token}/m/${reference.bucket}/${encodePathSegments(pathSegments)}`;
+  return `/s/${documentId}/${token}/m/${reference.bucket}/${
+    encodePathSegments(pathSegments)
+  }`;
 }
 
 function getSharedDocumentMediaReferenceKey(
@@ -283,8 +286,7 @@ export async function rewriteSharedDocumentMediaUrls(
       continue;
     }
 
-    rewrittenContent =
-      rewrittenContent.slice(0, candidate.start) +
+    rewrittenContent = rewrittenContent.slice(0, candidate.start) +
       resolvedUrl +
       rewrittenContent.slice(candidate.end);
   }

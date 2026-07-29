@@ -47,6 +47,24 @@ export async function GET(_request: Request, context: MediaRouteContext) {
     return textResponse("Not authorized.", 403);
   }
 
+  const { data: sourceDocument, error: sourceDocumentError } = await supabase
+    .from("documents")
+    .select("id")
+    .eq("id", media.documentId)
+    .eq("owner", userId)
+    .is("clone_status", null)
+    .maybeSingle();
+
+  if (sourceDocumentError || !sourceDocument) {
+    if (sourceDocumentError) {
+      console.error(
+        "[document-media] source document lookup failed",
+        sourceDocumentError,
+      );
+    }
+    return textResponse("Media not found.", 404);
+  }
+
   const { data: signedData, error: signedUrlError } = await supabase.storage
     .from(media.bucket)
     .createSignedUrl(media.storagePath, SIGNED_MEDIA_URL_TTL_SECONDS);

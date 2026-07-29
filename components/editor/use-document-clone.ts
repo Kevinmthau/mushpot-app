@@ -11,8 +11,8 @@ import {
   planDocumentMediaClone,
   type DocumentMediaCopy,
 } from "@/lib/document-media-clone";
-import type { DocumentMediaBucket } from "@/lib/document-media";
 import { EDITOR_DOCUMENT_SELECT, toCachedDocument } from "@/lib/documents";
+import type { EditorDocument } from "@/lib/documents";
 import type { SupabaseBrowserClient } from "@/lib/supabase/client";
 
 type UseDocumentCloneParams = {
@@ -21,7 +21,16 @@ type UseDocumentCloneParams = {
   getLatestContent: () => string;
 };
 
-const STORAGE_DELETE_BATCH_SIZE = 100;
+type PerformDocumentCloneParams = {
+  content: string;
+  leaseToken?: string;
+  owner: string;
+  supabase: SupabaseBrowserClient;
+  title: string;
+};
+
+export const CLONE_LEASE_DURATION_MS = 10 * 60 * 1_000;
+export const CLONE_HEARTBEAT_INTERVAL_MS = 60 * 1_000;
 
 function getCloneTitle(title: string) {
   return `${title} (copy)`;
@@ -31,15 +40,90 @@ function getTemporaryCloneTitle(title: string) {
   return `${title} (copying…)`;
 }
 
-function getFailedCloneTitle(title: string) {
-  return `${title} (clone failed)`;
+function getCloneLeaseExpiry() {
+  return new Date(Date.now() + CLONE_LEASE_DURATION_MS).toISOString();
+}
+
+async function refreshCloneLease(
+  supabase: SupabaseBrowserClient,
+  owner: string,
+  documentId: string,
+  leaseToken: string,
+) {
+  const { data, error } = await supabase
+    .from("documents")
+    .update({ clone_lease_expires_at: getCloneLeaseExpiry() })
+    .eq("id", documentId)
+    .eq("owner", owner)
+    .eq("clone_status", "pending")
+    .eq("clone_lease_token", leaseToken)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    throw new Error(
+      error?.message ??
+        "The clone lease expired before the document could be completed.",
+    );
+  }
+}
+
+function startCloneLeaseHeartbeat(
+  supabase: SupabaseBrowserClient,
+  owner: string,
+  documentId: string,
+  leaseToken: string,
+) {
+  let failure: unknown = null;
+  let inFlight: Promise<void> | null = null;
+
+  const refresh = async () => {
+    if (failure) {
+      throw failure;
+    }
+
+    if (!inFlight) {
+      inFlight = refreshCloneLease(
+        supabase,
+        owner,
+        documentId,
+        leaseToken,
+      ).finally(() => {
+        inFlight = null;
+      });
+    }
+
+    try {
+      await inFlight;
+    } catch (error) {
+      failure = error;
+      throw error;
+    }
+  };
+
+  const intervalId = globalThis.setInterval(() => {
+    void refresh().catch(() => {
+      // The foreground copy loop observes the stored failure before it can
+      // complete the row. The server worker reclaims the expired lease.
+    });
+  }, CLONE_HEARTBEAT_INTERVAL_MS);
+
+  return {
+    refresh,
+    stop() {
+      globalThis.clearInterval(intervalId);
+    },
+  };
 }
 
 async function copyDocumentMedia(
   supabase: SupabaseBrowserClient,
   copies: DocumentMediaCopy[],
+  refreshLease: () => Promise<void>,
 ) {
   for (const copy of copies) {
+    await refreshLease();
+
     const { error } = await supabase.storage
       .from(copy.bucket)
       .copy(copy.sourcePath, copy.destinationPath);
@@ -47,95 +131,128 @@ async function copyDocumentMedia(
     if (error) {
       throw new Error(`Unable to copy document media: ${error.message}`);
     }
+
+    await refreshLease();
   }
 }
 
-async function removePlannedDocumentMedia(
-  supabase: SupabaseBrowserClient,
-  copies: DocumentMediaCopy[],
-) {
-  const pathsByBucket = new Map<DocumentMediaBucket, string[]>();
-
-  for (const copy of copies) {
-    const paths = pathsByBucket.get(copy.bucket) ?? [];
-    paths.push(copy.destinationPath);
-    pathsByBucket.set(copy.bucket, paths);
-  }
-
-  const failures: string[] = [];
-  for (const [bucket, paths] of pathsByBucket) {
-    for (let index = 0; index < paths.length; index += STORAGE_DELETE_BATCH_SIZE) {
-      const { error } = await supabase.storage
-        .from(bucket)
-        .remove(paths.slice(index, index + STORAGE_DELETE_BATCH_SIZE));
-
-      if (error) {
-        failures.push(`${bucket}: ${error.message}`);
-      }
-    }
-  }
-
-  if (failures.length > 0) {
-    throw new Error(failures.join("; "));
-  }
-}
-
-async function markCloneFailed(
+async function removeIncompleteClone(
   supabase: SupabaseBrowserClient,
   owner: string,
   documentId: string,
-  title: string,
+  leaseToken: string,
 ) {
   const { error } = await supabase
-    .from("documents")
-    .update({
-      clone_status: null,
-      content:
-        "This document was created by a clone operation that did not complete. Delete it and try cloning again.",
-      title: getFailedCloneTitle(title),
-    })
-    .eq("id", documentId)
-    .eq("owner", owner);
-
-  if (error) {
-    console.error("Unable to label an incomplete clone", error);
-  }
-}
-
-async function rollbackClone(
-  supabase: SupabaseBrowserClient,
-  owner: string,
-  documentId: string,
-  title: string,
-  copies: DocumentMediaCopy[],
-) {
-  try {
-    // Remove copied objects first so a successful rollback does not leave
-    // private orphans behind after the temporary row is deleted.
-    await removePlannedDocumentMedia(supabase, copies);
-  } catch (error) {
-    console.error("Unable to fully clean up cloned media", error);
-    await markCloneFailed(supabase, owner, documentId, title);
-    return false;
-  }
-
-  const { data, error } = await supabase
     .from("documents")
     .delete()
     .eq("id", documentId)
     .eq("owner", owner)
-    .select("id")
-    .maybeSingle();
+    .eq("clone_status", "pending")
+    .eq("clone_lease_token", leaseToken);
 
-  if (error || !data) {
-    if (error) {
-      console.error("Unable to remove an incomplete clone", error);
-    }
-    await markCloneFailed(supabase, owner, documentId, title);
-    return false;
+  if (error) {
+    console.warn(
+      "Unable to remove an incomplete clone; server maintenance will reclaim it.",
+      error,
+    );
   }
+}
 
-  return true;
+export async function performDocumentClone({
+  content,
+  leaseToken = crypto.randomUUID(),
+  owner,
+  supabase,
+  title,
+}: PerformDocumentCloneParams): Promise<EditorDocument> {
+  let createdDocumentId: string | null = null;
+  let heartbeat: ReturnType<typeof startCloneLeaseHeartbeat> | null = null;
+
+  try {
+    const { data, error } = await supabase
+      .from("documents")
+      .insert({
+        owner,
+        title: getTemporaryCloneTitle(title),
+        content: "",
+        clone_status: "pending",
+        clone_lease_token: leaseToken,
+        clone_lease_expires_at: getCloneLeaseExpiry(),
+      })
+      .select(EDITOR_DOCUMENT_SELECT)
+      .single();
+
+    if (error || !data) {
+      throw new Error(error?.message ?? "Unable to clone document.");
+    }
+
+    createdDocumentId = data.id;
+    heartbeat = startCloneLeaseHeartbeat(
+      supabase,
+      owner,
+      data.id,
+      leaseToken,
+    );
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (!supabaseUrl) {
+      throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL environment variable.");
+    }
+
+    const plan = planDocumentMediaClone({
+      content,
+      destinationDocumentId: data.id,
+      ownerId: owner,
+      supabaseUrl,
+    });
+
+    if (plan.copies.length === 0) {
+      await heartbeat.refresh();
+    } else {
+      await copyDocumentMedia(supabase, plan.copies, heartbeat.refresh);
+    }
+
+    heartbeat.stop();
+    heartbeat = null;
+
+    const { data: completedDocument, error: updateError } = await supabase
+      .from("documents")
+      .update({
+        content: plan.content,
+        title: getCloneTitle(title),
+        clone_status: null,
+        clone_lease_token: null,
+        clone_lease_expires_at: null,
+      })
+      .eq("id", data.id)
+      .eq("owner", owner)
+      .eq("clone_status", "pending")
+      .eq("clone_lease_token", leaseToken)
+      .select(EDITOR_DOCUMENT_SELECT)
+      .maybeSingle();
+
+    if (updateError || !completedDocument) {
+      throw new Error(
+        updateError?.message ?? "Unable to finish cloning document.",
+      );
+    }
+
+    createdDocumentId = null;
+    return completedDocument;
+  } catch (error) {
+    if (createdDocumentId) {
+      await removeIncompleteClone(
+        supabase,
+        owner,
+        createdDocumentId,
+        leaseToken,
+      );
+    }
+
+    throw error;
+  } finally {
+    heartbeat?.stop();
+  }
 }
 
 export function useDocumentClone({
@@ -157,106 +274,29 @@ export function useDocumentClone({
     setIsCloning(true);
     const cacheWriteToken = getDocumentCacheWriteToken(owner);
 
-    let createdDocumentId: string | null = null;
-    let plannedCopies: DocumentMediaCopy[] = [];
-    let supabaseClient: SupabaseBrowserClient | null = null;
-    let title = "";
-
     try {
       const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
       const supabase = await getSupabaseBrowserClient();
-      supabaseClient = supabase;
-      title = getLatestTitleRef.current();
-      const sourceContent = getLatestContentRef.current();
-      const { data, error } = await supabase
-        .from("documents")
-        .insert({
-          owner,
-          title: getTemporaryCloneTitle(title),
-          content: "",
-          clone_status: "pending",
-        })
-        .select(EDITOR_DOCUMENT_SELECT)
-        .single();
-
-      if (error || !data) {
-        throw new Error(error?.message ?? "Unable to clone document.");
-      }
-
-      createdDocumentId = data.id;
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      if (!supabaseUrl) {
-        throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL environment variable.");
-      }
-
-      const plan = planDocumentMediaClone({
-        content: sourceContent,
-        destinationDocumentId: data.id,
-        ownerId: owner,
-        supabaseUrl,
+      const completedDocument = await performDocumentClone({
+        content: getLatestContentRef.current(),
+        owner,
+        supabase,
+        title: getLatestTitleRef.current(),
       });
-      plannedCopies = plan.copies;
 
-      await copyDocumentMedia(supabase, plan.copies);
-
-      const { data: completedDocument, error: updateError } = await supabase
-        .from("documents")
-        .update({
-          content: plan.content,
-          title: getCloneTitle(title),
-          clone_status: null,
-        })
-        .eq("id", data.id)
-        .eq("owner", owner)
-        .eq("clone_status", "pending")
-        .select(EDITOR_DOCUMENT_SELECT)
-        .single();
-
-      if (updateError || !completedDocument) {
-        throw new Error(updateError?.message ?? "Unable to finish cloning document.");
+      try {
+        await putCachedDocument(
+          toCachedDocument(completedDocument),
+          cacheWriteToken,
+        );
+      } catch (cacheError) {
+        console.warn("Unable to cache the completed clone", cacheError);
       }
 
-      await putCachedDocument(
-        toCachedDocument(completedDocument),
-        cacheWriteToken,
-      );
-
-      createdDocumentId = null;
-      router.push(`/doc/${data.id}`);
-    } catch (err) {
-      let incompleteCloneWasKept = false;
-
-      if (createdDocumentId && supabaseClient) {
-        try {
-          incompleteCloneWasKept = !(await rollbackClone(
-            supabaseClient,
-            owner,
-            createdDocumentId,
-            title,
-            plannedCopies,
-          ));
-        } catch (cleanupError) {
-          console.error("Unable to roll back an incomplete clone", cleanupError);
-          try {
-            await markCloneFailed(
-              supabaseClient,
-              owner,
-              createdDocumentId,
-              title,
-            );
-          } catch (labelError) {
-            console.error("Unable to label an incomplete clone", labelError);
-          }
-          incompleteCloneWasKept = true;
-        }
-      }
-
-      const message =
-        err instanceof Error ? err.message : "Failed to clone document.";
+      router.push(`/doc/${completedDocument.id}`);
+    } catch (error) {
       window.alert(
-        incompleteCloneWasKept
-          ? `${message} An incomplete document may have been kept with a failure label so its media can be deleted safely.`
-          : message,
+        error instanceof Error ? error.message : "Failed to clone document.",
       );
     } finally {
       isCloningRef.current = false;

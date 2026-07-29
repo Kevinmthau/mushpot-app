@@ -1,9 +1,6 @@
-import { createClient } from "npm:@supabase/supabase-js@2.110.7";
+import { createClient } from "supabase";
 
-import {
-  getCorsHeaders,
-  isCorsOriginAllowed,
-} from "../_shared/cors.ts";
+import { getCorsHeaders, isCorsOriginAllowed } from "../_shared/cors.ts";
 import {
   buildSharedDocumentMediaUrl,
   DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
@@ -84,10 +81,9 @@ Deno.serve(async (request) => {
     return jsonResponse(request, { error: "Invalid JSON body." }, 400);
   }
 
-  const body =
-    typeof payload === "object" && payload !== null
-      ? (payload as Partial<SharedDocPayload>)
-      : {};
+  const body = typeof payload === "object" && payload !== null
+    ? (payload as Partial<SharedDocPayload>)
+    : {};
   const docId = typeof body.docId === "string" ? body.docId : "";
   const token = typeof body.token === "string" ? body.token : "";
   const mediaUrl = body.mediaUrl;

@@ -251,6 +251,41 @@ async function uploadVideoPosterImage({
   }
 }
 
+export async function resolveVideoPosterTitle({
+  documentId,
+  owner,
+  posterImagePromise,
+  randomId,
+  supabase,
+}: {
+  documentId: string;
+  owner: string;
+  posterImagePromise: Promise<File | null>;
+  randomId: string;
+  supabase: SupabaseBrowserClient;
+}) {
+  try {
+    const posterImage = await posterImagePromise;
+    if (!posterImage) {
+      return undefined;
+    }
+
+    const posterUrl = await uploadVideoPosterImage({
+      documentId,
+      owner,
+      poster: posterImage,
+      randomId,
+      supabase,
+    });
+    return posterUrl ? buildVideoPosterTitle(posterUrl) : undefined;
+  } catch (error) {
+    // Poster extraction is best-effort. A rejected extraction promise must
+    // never turn an already uploaded video into a reported upload failure.
+    console.error("Video poster generation failed", error);
+    return undefined;
+  }
+}
+
 function getErrorValue(error: unknown, key: string) {
   if (typeof error !== "object" || error === null || !(key in error)) {
     return null;
@@ -411,20 +446,13 @@ export function useMediaUploadInsertion({
 
             const mediaUrl = buildDocumentMediaUrl(bucket, uploadedPath);
 
-            let posterTitle: string | undefined;
-            const posterImage = await posterImagePromise;
-            if (posterImage) {
-              const posterUrl = await uploadVideoPosterImage({
-                documentId,
-                owner,
-                poster: posterImage,
-                randomId,
-                supabase,
-              });
-              if (posterUrl) {
-                posterTitle = buildVideoPosterTitle(posterUrl);
-              }
-            }
+            const posterTitle = await resolveVideoPosterTitle({
+              documentId,
+              owner,
+              posterImagePromise,
+              randomId,
+              supabase,
+            });
 
             if (!mountedRef.current) {
               return;

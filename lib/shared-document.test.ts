@@ -65,13 +65,22 @@ describe("fetchSharedMediaUrl", () => {
   it("requests a fresh signed URL without allowing response caching", async () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
-    const fetchMock = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          signedUrl: "https://project-ref.supabase.co/storage/v1/object/sign/media",
-        }),
-        { status: 200 },
-      ),
+    const fetchMock = vi.fn(
+      async (
+        ...requestArguments: [
+          input: Request | string | URL,
+          init?: RequestInit,
+        ]
+      ) => {
+        void requestArguments;
+        return new Response(
+          JSON.stringify({
+            signedUrl:
+              "https://project-ref.supabase.co/storage/v1/object/sign/media",
+          }),
+          { status: 200 },
+        );
+      },
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -92,6 +101,11 @@ describe("fetchSharedMediaUrl", () => {
         method: "POST",
       }),
     );
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(requestInit.headers).toEqual({
+      "Content-Type": "application/json",
+      apikey: "anon-key",
+    });
   });
 
   it("rejects unsuccessful and malformed signing responses", async () => {

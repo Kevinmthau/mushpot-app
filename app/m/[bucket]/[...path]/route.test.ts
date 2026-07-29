@@ -12,10 +12,12 @@ const OWNER_ID = "11111111-1111-4111-8111-111111111111";
 const DOCUMENT_ID = "22222222-2222-4222-8222-222222222222";
 
 function createSupabaseMock({
+  sourceDocumentExists = true,
   signedUrl =
     "https://project-ref.supabase.co/storage/v1/object/sign/document-images/photo.png?token=signed",
   userId = OWNER_ID,
 }: {
+  sourceDocumentExists?: boolean;
   signedUrl?: string;
   userId?: string | null;
 } = {}) {
@@ -23,7 +25,15 @@ function createSupabaseMock({
     data: signedUrl ? { signedUrl } : null,
     error: signedUrl ? null : { message: "not found" },
   }));
-  const from = vi.fn();
+  const maybeSingle = vi.fn(async () => ({
+    data: sourceDocumentExists ? { id: DOCUMENT_ID } : null,
+    error: null,
+  }));
+  const is = vi.fn(() => ({ maybeSingle }));
+  const ownerEq = vi.fn(() => ({ is }));
+  const idEq = vi.fn(() => ({ eq: ownerEq }));
+  const select = vi.fn(() => ({ eq: idEq }));
+  const from = vi.fn(() => ({ select }));
 
   vi.mocked(createSupabaseServerClient).mockResolvedValue({
     auth: {
@@ -38,7 +48,7 @@ function createSupabaseMock({
     },
   } as never);
 
-  return { createSignedUrl, from };
+  return { createSignedUrl, from, idEq, is, ownerEq, select };
 }
 
 function requestMedia(ownerId = OWNER_ID) {
@@ -57,13 +67,18 @@ afterEach(() => {
 });
 
 describe("private document media route", () => {
-  it("signs owner media without requiring the source document row to exist", async () => {
+  it("signs media only when its completed source document still exists", async () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
-    const { createSignedUrl, from } = createSupabaseMock();
+    const { createSignedUrl, from, idEq, is, ownerEq, select } =
+      createSupabaseMock();
 
     const response = await requestMedia();
 
-    expect(from).not.toHaveBeenCalled();
+    expect(from).toHaveBeenCalledWith("documents");
+    expect(select).toHaveBeenCalledWith("id");
+    expect(idEq).toHaveBeenCalledWith("id", DOCUMENT_ID);
+    expect(ownerEq).toHaveBeenCalledWith("owner", OWNER_ID);
+    expect(is).toHaveBeenCalledWith("clone_status", null);
     expect(createSignedUrl).toHaveBeenCalledWith(
       `${OWNER_ID}/${DOCUMENT_ID}/photo.png`,
       5 * 60,
@@ -75,6 +90,18 @@ describe("private document media route", () => {
     expect(response.headers.get("Cache-Control")).toBe(
       "private, no-store, max-age=0",
     );
+  });
+
+  it("does not sign orphaned media after its document is deleted", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
+    const { createSignedUrl } = createSupabaseMock({
+      sourceDocumentExists: false,
+    });
+
+    const response = await requestMedia();
+
+    expect(response.status).toBe(404);
+    expect(createSignedUrl).not.toHaveBeenCalled();
   });
 
   it("requires an authenticated owner", async () => {

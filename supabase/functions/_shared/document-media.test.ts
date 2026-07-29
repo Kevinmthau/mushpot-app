@@ -42,16 +42,13 @@ describe("parseSharedDocumentMediaReference", () => {
     });
   });
 
-  it("accepts same-owner cross-document media and rejects foreign origins", () => {
+  it("rejects cross-document media and foreign origins", () => {
     expect(
       parseSharedDocumentMediaReference(
         `/m/document-images/${OWNER_ID}/${OTHER_DOCUMENT_ID}/photo.png`,
         OPTIONS,
       ),
-    ).toEqual({
-      bucket: "document-images",
-      path: `${OWNER_ID}/${OTHER_DOCUMENT_ID}/photo.png`,
-    });
+    ).toBeNull();
     expect(
       parseSharedDocumentMediaReference(
         `https://evil.example/storage/v1/object/public/document-images/${OWNER_ID}/${DOCUMENT_ID}/photo.png`,
@@ -77,25 +74,23 @@ describe("buildSharedDocumentMediaUrl", () => {
     );
   });
 
-  it("keeps a legacy source document ID inside the share-scoped route", () => {
+  it("rejects a media path owned by another document", () => {
     expect(
-      buildSharedDocumentMediaUrl({
-        documentId: DOCUMENT_ID,
-        reference: {
-          bucket: "document-images",
-          path: `${OWNER_ID}/${OTHER_DOCUMENT_ID}/photo.png`,
-        },
-        token: SHARE_TOKEN,
-      }),
-    ).toBe(
-      `/s/${DOCUMENT_ID}/${SHARE_TOKEN}/m/document-images/` +
-        `${OWNER_ID}/${OTHER_DOCUMENT_ID}/photo.png`,
-    );
+      () =>
+        buildSharedDocumentMediaUrl({
+          documentId: DOCUMENT_ID,
+          reference: {
+            bucket: "document-images",
+            path: `${OWNER_ID}/${OTHER_DOCUMENT_ID}/photo.png`,
+          },
+          token: SHARE_TOKEN,
+        }),
+    ).toThrow("Invalid shared document media URL");
   });
 });
 
 describe("sharedDocumentContentReferencesMedia", () => {
-  it("allows an exact cross-document media reference present in the content", () => {
+  it("does not authorize cross-document media even when present in content", () => {
     const reference = {
       bucket: "document-images" as const,
       path: `${OWNER_ID}/${OTHER_DOCUMENT_ID}/photo.png`,
@@ -107,7 +102,7 @@ describe("sharedDocumentContentReferencesMedia", () => {
         reference,
         OPTIONS,
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("does not authorize an unreferenced object from the same owner", () => {
@@ -134,7 +129,7 @@ describe("rewriteSharedDocumentMediaUrls", () => {
       "![external](https://images.example/photo.png)",
     ].join("\n");
     const resolve = vi.fn(({ bucket, path }) =>
-      `/shared-media/${bucket}/${path}`,
+      `/shared-media/${bucket}/${path}`
     );
 
     const rewritten = await rewriteSharedDocumentMediaUrls(content, {
@@ -176,24 +171,20 @@ describe("rewriteSharedDocumentMediaUrls", () => {
     expect(rewritten).toContain("/shared-media/video");
   });
 
-  it("rewrites media retained from a pre-migration clone", async () => {
+  it("leaves pre-migration cross-document media untouched", async () => {
     const sourcePath = `${OWNER_ID}/${OTHER_DOCUMENT_ID}/photo.png`;
+    const resolve = vi.fn();
+    const original = `![legacy clone](/m/document-images/${sourcePath})`;
 
     const rewritten = await rewriteSharedDocumentMediaUrls(
-      `![legacy clone](/m/document-images/${sourcePath})`,
+      original,
       {
         ...OPTIONS,
-        resolve: (reference) =>
-          buildSharedDocumentMediaUrl({
-            documentId: DOCUMENT_ID,
-            reference,
-            token: SHARE_TOKEN,
-          }),
+        resolve,
       },
     );
 
-    expect(rewritten).toContain(
-      `/s/${DOCUMENT_ID}/${SHARE_TOKEN}/m/document-images/${sourcePath}`,
-    );
+    expect(rewritten).toBe(original);
+    expect(resolve).not.toHaveBeenCalled();
   });
 });
