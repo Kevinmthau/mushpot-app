@@ -57,6 +57,22 @@ describe("toEditorDocument", () => {
       ].sort(),
     );
   });
+
+  it("preserves local draft metadata when projecting a cached document", () => {
+    expect(
+      toEditorDocument(
+        makeEditorDocument({
+          _dirty: true,
+          _localUpdatedAt: 42,
+        }),
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        _dirty: true,
+        _localUpdatedAt: 42,
+      }),
+    );
+  });
 });
 
 describe("areEditorDocumentsEqual", () => {
@@ -76,6 +92,8 @@ describe("areEditorDocumentsEqual", () => {
       { updated_at: "2026-01-01T00:00:00.000Z" },
       { share_enabled: true },
       { share_token: "token" },
+      { _dirty: true },
+      { _localUpdatedAt: 42 },
     ];
 
     for (const override of fields) {
