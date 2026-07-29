@@ -2,6 +2,9 @@
   "name": "mushpot-app",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22 <25"
+  },
   "scripts": {
     "dev": "next dev",
     "newchange": "./scripts/newchange.sh",
@@ -20,14 +23,15 @@
     "@codemirror/view": "^6.39.16",
     "@lezer/common": "^1.5.2",
     "@marsidev/react-turnstile": "^1.5.3",
-    "@supabase/ssr": "^0.12.3",
-    "@supabase/supabase-js": "^2.110.7",
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.111.0",
     "nanoid": "^5.1.6",
-    "next": "16.2.10",
+    "next": "16.2.12",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "sharp": "0.35.3",
     "tus-js-client": "^4.3.1"
   },
   "devDependencies": {
@@ -37,7 +41,7 @@
     "@types/react-dom": "^19",
     "@vitest/coverage-v8": "^4.1.6",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
+    "eslint-config-next": "16.2.12",
     "fake-indexeddb": "^6.2.5",
     "supabase": "^2.101.0",
     "tailwindcss": "^4",
@@ -45,6 +49,7 @@
     "vitest": "^4.1.6"
   },
   "overrides": {
-    "postcss": "^8.5.10"
+    "postcss": "^8.5.10",
+    "sharp": "0.35.3"
   }
 }

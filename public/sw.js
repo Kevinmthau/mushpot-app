@@ -1,5 +1,5 @@
 const STATIC_CACHE_NAME = "mushpot-static-v8";
-const NAV_CACHE_NAME = "mushpot-nav-v11";
+const NAV_CACHE_NAME = "mushpot-nav-v12";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
@@ -67,8 +67,6 @@ async function staleWhileRevalidate(request, cacheName) {
   return cachedResponse || (await networkResponsePromise) || Response.error();
 }
 
-const PRIVATE_DOC_SHELL_LIMIT = 12;
-
 function shouldBypassServiceWorkerCache(pathname) {
   return (
     pathname === "/s" ||
@@ -103,60 +101,14 @@ async function putNavigationResponse(cache, cacheKey, response) {
   }
 }
 
-async function trimPrivateDocShells(cache) {
-  const requests = await cache.keys();
-  const docRequests = requests.filter((request) => {
-    const pathname = new URL(request.url).pathname;
-    return pathname.startsWith("/doc/");
-  });
-
-  if (docRequests.length <= PRIVATE_DOC_SHELL_LIMIT) {
-    return;
-  }
-
-  await Promise.all(
-    docRequests
-      .slice(0, docRequests.length - PRIVATE_DOC_SHELL_LIMIT)
-      .map((request) => cache.delete(request)),
-  );
-}
-
-/**
- * Private route shells include authenticated session state, so they can only
- * be reused after a fresh network response validates the current request.
- */
-async function fetchPrivateNavigation(request, cache, cacheKey) {
-  const networkResponse = await fetch(request);
-
-  try {
-    if (networkResponse.ok && !networkResponse.redirected) {
-      await cache.put(cacheKey, networkResponse.clone());
-      await trimPrivateDocShells(cache);
-    } else {
-      await cache.delete(cacheKey);
-    }
-  } catch {
-    // Private shell cache maintenance is best-effort after fetch succeeds.
-  }
-
-  return networkResponse;
-}
-
 async function navigationNetworkFirst(request) {
   const pathname = new URL(request.url).pathname;
   const allowNavigationCache = pathname === "/auth";
-  const isPrivateRoute =
-    pathname === "/" || pathname.startsWith("/doc/");
-
-  const cacheName = (allowNavigationCache || isPrivateRoute) ? NAV_CACHE_NAME : null;
+  const cacheName = allowNavigationCache ? NAV_CACHE_NAME : null;
   const cache = cacheName ? await caches.open(cacheName) : null;
   const cacheKey = cache ? getNavigationCacheKey(request) : null;
 
   try {
-    if (isPrivateRoute && cache && cacheKey) {
-      return await fetchPrivateNavigation(request, cache, cacheKey);
-    }
-
     const networkResponse = await fetch(request);
 
     if (cache && cacheKey) {
@@ -164,7 +116,7 @@ async function navigationNetworkFirst(request) {
     }
     return networkResponse;
   } catch {
-    if (!isPrivateRoute && cache && cacheKey) {
+    if (cache && cacheKey) {
       const cachedResponse = await cache.match(cacheKey);
       if (cachedResponse) {
         return cachedResponse;

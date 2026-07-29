@@ -168,7 +168,7 @@ describe("service worker private navigation", () => {
     const context = loadServiceWorker(() =>
       Promise.resolve(new Response("network shell", { status: 200 })),
     );
-    const cache = await context.caches.open("mushpot-nav-v11");
+    const cache = await context.caches.open("mushpot-nav-v12");
     await cache.put(
       "https://mushpot.app/doc/abc",
       new Response("cached private shell", { status: 200 }),
@@ -185,15 +185,15 @@ describe("service worker private navigation", () => {
       await (
         await cache.match("https://mushpot.app/doc/abc")
       )?.text(),
-    ).toBe("network shell");
+    ).toBe("cached private shell");
   });
 
-  it("returns the private network response when caching fails", async () => {
+  it("does not attempt to cache a successful private response", async () => {
     const context = loadServiceWorker(() =>
       Promise.resolve(new Response("network shell", { status: 200 })),
     );
-    const cache = await context.caches.open("mushpot-nav-v11");
-    vi.spyOn(cache, "put").mockRejectedValueOnce(new Error("quota"));
+    const cache = await context.caches.open("mushpot-nav-v12");
+    const put = vi.spyOn(cache, "put");
 
     const response = await context.navigationNetworkFirst(
       new Request("https://mushpot.app/doc/abc"),
@@ -201,9 +201,10 @@ describe("service worker private navigation", () => {
     );
 
     expect(await response.text()).toBe("network shell");
+    expect(put).not.toHaveBeenCalled();
   });
 
-  it("returns a private auth redirect when cache clearing fails", async () => {
+  it("returns a private auth redirect without touching navigation cache", async () => {
     const context = loadServiceWorker(() =>
       Promise.resolve(
         new Response(null, {
@@ -212,12 +213,12 @@ describe("service worker private navigation", () => {
         }),
       ),
     );
-    const cache = await context.caches.open("mushpot-nav-v11");
+    const cache = await context.caches.open("mushpot-nav-v12");
     await cache.put(
       "https://mushpot.app/doc/abc",
       new Response("cached private shell", { status: 200 }),
     );
-    vi.spyOn(cache, "delete").mockRejectedValueOnce(new Error("storage"));
+    const remove = vi.spyOn(cache, "delete");
 
     const response = await context.navigationNetworkFirst(
       new Request("https://mushpot.app/doc/abc"),
@@ -226,11 +227,12 @@ describe("service worker private navigation", () => {
 
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe("/auth?next=%2Fdoc%2Fabc");
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("does not use a cached private shell when validation cannot complete", async () => {
     const context = loadServiceWorker(() => Promise.reject(new Error("offline")));
-    const cache = await context.caches.open("mushpot-nav-v11");
+    const cache = await context.caches.open("mushpot-nav-v12");
     await cache.put(
       "https://mushpot.app/doc/abc",
       new Response("cached private shell", { status: 200 }),
@@ -250,7 +252,7 @@ describe("service worker cacheable navigation", () => {
     const context = loadServiceWorker(() =>
       Promise.resolve(new Response("auth shell", { status: 200 })),
     );
-    const cache = await context.caches.open("mushpot-nav-v11");
+    const cache = await context.caches.open("mushpot-nav-v12");
     vi.spyOn(cache, "put").mockRejectedValueOnce(new Error("quota"));
 
     const response = await context.navigationNetworkFirst(
@@ -267,7 +269,7 @@ describe("service worker shared-document navigation", () => {
     const context = loadServiceWorker(() =>
       Promise.resolve(new Response("fresh shared document", { status: 200 })),
     );
-    const cache = await context.caches.open("mushpot-nav-v11");
+    const cache = await context.caches.open("mushpot-nav-v12");
 
     const response = await context.navigationNetworkFirst(
       new Request("https://mushpot.app/s/doc-id/share-token"),
@@ -282,7 +284,7 @@ describe("service worker shared-document navigation", () => {
 
   it("does not serve a previously cached shared document while offline", async () => {
     const context = loadServiceWorker(() => Promise.reject(new Error("offline")));
-    const cache = await context.caches.open("mushpot-nav-v11");
+    const cache = await context.caches.open("mushpot-nav-v12");
     await cache.put(
       "https://mushpot.app/s/doc-id/share-token",
       new Response("revoked shared document", { status: 200 }),
@@ -418,6 +420,7 @@ describe("service worker sensitive-route bypass", () => {
     await context.caches.open("mushpot-static-v7");
     await context.caches.open("mushpot-static-v8");
     await context.caches.open("mushpot-nav-v11");
+    await context.caches.open("mushpot-nav-v12");
     let activation: Promise<unknown> | undefined;
 
     context.activateHandler({
@@ -429,7 +432,7 @@ describe("service worker sensitive-route bypass", () => {
 
     expect(await context.caches.keys()).toEqual([
       "mushpot-static-v8",
-      "mushpot-nav-v11",
+      "mushpot-nav-v12",
     ]);
   });
 
@@ -443,7 +446,7 @@ describe("service worker sensitive-route bypass", () => {
       new Response("current offline fallback", { status: 200 }),
     );
     await context.caches.open("mushpot-static-v7");
-    await context.caches.open("mushpot-nav-v11");
+    await context.caches.open("mushpot-nav-v12");
     await context.caches.open("unrelated-cache");
     let cleanup: Promise<unknown> | undefined;
 

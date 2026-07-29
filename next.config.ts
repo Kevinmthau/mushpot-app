@@ -43,6 +43,21 @@ const securityHeaders = [
   },
 ];
 
+const privateNoStoreHeaders = [
+  {
+    key: "Cache-Control",
+    value: "private, no-store, max-age=0, must-revalidate",
+  },
+  {
+    key: "CDN-Cache-Control",
+    value: "no-store",
+  },
+  {
+    key: "Netlify-CDN-Cache-Control",
+    value: "no-store",
+  },
+];
+
 const nextConfig: NextConfig = {
   devIndicators: false,
 
@@ -62,20 +77,21 @@ const nextConfig: NextConfig = {
         headers: securityHeaders,
       },
       {
+        source: "/",
+        headers: privateNoStoreHeaders,
+      },
+      {
+        source: "/doc/:path*",
+        headers: privateNoStoreHeaders,
+      },
+      {
+        source: "/m/:path*",
+        headers: privateNoStoreHeaders,
+      },
+      {
         source: "/s/:path*",
         headers: [
-          {
-            key: "Cache-Control",
-            value: "private, no-store, max-age=0, must-revalidate",
-          },
-          {
-            key: "CDN-Cache-Control",
-            value: "no-store",
-          },
-          {
-            key: "Netlify-CDN-Cache-Control",
-            value: "no-store",
-          },
+          ...privateNoStoreHeaders,
           {
             key: "X-Robots-Tag",
             value: "noindex, nofollow, noarchive",

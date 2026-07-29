@@ -58,4 +58,25 @@ describe("security response headers", () => {
       ]),
     );
   });
+
+  it.each(["/", "/doc/:path*", "/m/:path*"])(
+    "prevents private route responses from being cached: %s",
+    async (source) => {
+      const configuredHeaders = await getConfiguredHeaders();
+      const headers = configuredHeaders.find(
+        (configuration) => configuration.source === source,
+      )?.headers;
+
+      expect(headers).toEqual(
+        expect.arrayContaining([
+          {
+            key: "Cache-Control",
+            value: "private, no-store, max-age=0, must-revalidate",
+          },
+          { key: "CDN-Cache-Control", value: "no-store" },
+          { key: "Netlify-CDN-Cache-Control", value: "no-store" },
+        ]),
+      );
+    },
+  );
 });
