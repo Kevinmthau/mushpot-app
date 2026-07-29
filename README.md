@@ -47,6 +47,8 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - `lib/`: Supabase clients, document cache, sync helpers, shared-document helpers, markdown utilities
 - `supabase/migrations`: database and storage setup
 - `supabase/functions/get-shared-doc`: share-token validation and public shared-doc fetch
+- `supabase/functions/document-media-maintenance`: scheduled private-media cleanup and interrupted-clone recovery
+- `supabase/admin`: production media inventory, backfill, bucket cutover, and cron runbooks
 - `public`: manifest, service worker, offline page, and app icons
 - `proxy.ts`: route protection and auth-cookie/session refresh handling
 
@@ -59,7 +61,10 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - `components/documents/use-document-list.ts` owns the cache-first document list load and background Supabase refresh.
 - `components/editor/use-editor-document.ts` owns cache-first editor document loading, session validation, and Supabase reconciliation.
 - `components/editor/use-document-draft.ts` owns local draft state, debounced IndexedDB writes, autosave retries, and share-state timestamp merging.
-- `lib/doc-cache.ts` is best-effort IndexedDB storage. `lib/document-sync.ts` retries dirty cached documents on startup, focus, online, and interval triggers through the PWA startup components.
+- `lib/doc-cache.ts` keeps metadata-only list entries separate from complete
+  editor snapshots. Only complete owner-scoped records may open offline;
+  `lib/document-sync.ts` retries dirty snapshots on startup, focus, online, and
+  interval triggers.
 
 ## Environment Variables
 
@@ -79,8 +84,9 @@ Notes:
 - `NEXT_PUBLIC_APP_URL` is used for auth redirect generation and shared-link origins.
 - `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is Cloudflare Turnstile's public site key. Production sign-in fails closed when it is missing; local development can omit it.
 - `npm run build` does not require Supabase env vars, but running authenticated pages does.
-- `SUPABASE_SERVICE_ROLE_KEY` is not used by the Next.js app directly. It is required by the Supabase Edge Function runtime when serving `get-shared-doc` locally.
+- `SUPABASE_SERVICE_ROLE_KEY` is not used by the Next.js app directly. It is required by the Supabase Edge Function runtime and production media administration tools.
 - Set the Edge Function secret `ALLOWED_ORIGINS` to the comma-separated app origins that may invoke `get-shared-doc` from a browser. Server-to-server calls do not send an `Origin` header.
+- Set `MUSHPOT_MAINTENANCE_SECRET` to the same high-entropy value in Supabase Edge Function secrets and Vault. The scheduled maintenance request sends it through `x-mushpot-maintenance-secret`.
 
 ## Supabase Setup
 
@@ -112,21 +118,32 @@ Notes:
 
    The app always sends `emailRedirectTo` as `/auth/verify?next=...`, so the `&token_hash=...` suffix is expected.
 6. Apply every SQL migration in `supabase/migrations/` in chronological order.
-   The final private-media policy change is
-   `20260717172439_secure_private_document_media.sql`.
-7. Deploy the public Edge Function used for shared-document reads:
+   The private-media migration is additive: it does not make either Storage
+   bucket private and starts the rollout in the `backfill` phase.
+7. Deploy the Edge Functions. Their JWT behavior is tracked in
+   `supabase/config.toml`, so do not add ad hoc deployment flags:
 
 ```bash
-supabase functions deploy get-shared-doc --no-verify-jwt
+supabase functions deploy get-shared-doc
+supabase functions deploy document-media-maintenance
 ```
 
-For local Edge Function serving, provide `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to the function runtime.
+8. Follow `supabase/admin/README.md` to configure the maintenance secret and
+   schedule, inventory/backfill existing document media, perform the short
+   final write freeze, and switch the buckets through the Storage API.
+
+For local Edge Function serving, provide `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, and the maintenance secret to the function
+runtime.
 
 ### Auth Email Verification
 
 After custom SMTP and the custom email templates are enabled, verify the production auth flow with an email address outside the Supabase project team. Request a link from `/auth`, confirm it arrives from the configured Resend sender, open the email link, press Continue on `/auth/verify`, and confirm the app signs in. Check Resend delivery logs and Supabase Auth logs if the email is delayed or rejected.
 
 ## Development
+
+Use Node.js 22 (the repository includes `.nvmrc` and enforces the supported
+range through `package.json`):
 
 ```bash
 npm install
@@ -139,8 +156,14 @@ Quality gate before merge:
 npm run lint
 npm run typecheck
 npm run test
+npm run test:coverage
+npm run check:edge
 npm run build
 ```
+
+`npm run test:db` runs the pgTAP migration suite and requires a running local
+Supabase stack. Validate the full migration and Storage-policy flow on a
+disposable hosted project before applying it to production.
 
 Unit tests run on [Vitest](https://vitest.dev/). Tests live next to their
 sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
@@ -151,13 +174,20 @@ sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
 - `netlify.toml` is included for Netlify deployments and runs `npm run build`.
 - Any Next.js-compatible host can work as long as the public env vars are set and the `get-shared-doc` Supabase Edge Function is deployed.
 - The production service worker is registered only in production builds.
-- For the private-media rollout, deploy the updated Next.js app and
-  `get-shared-doc` Edge Function before applying the final private-bucket
-  migration, or release all three together. Applying only the migration makes
-  legacy shared media unavailable until the updated application code is live.
-- Media left behind by documents deleted before this release becomes private
-  but is not removed automatically. Inventory and remove those pre-existing
-  orphans with an administrator/service-role maintenance job.
+- When the deployed domain changes, update `NEXT_PUBLIC_APP_URL`, redeploy so
+  the new origin is included in the build, and update the Supabase Auth Site
+  URL plus Redirect URLs for both `https://<domain>/auth/verify` and
+  `https://<domain>/auth/confirm`. Leaving `NEXT_PUBLIC_APP_URL` unset makes
+  the app resolve the live request origin.
+- The private-media rollout is deliberately staged. Keep buckets public while
+  applying the additive schema, deploying both Edge Functions and the app, and
+  completing the production backfill. Freeze document writes only for the
+  final pass, switch the rollout to `enforced`, smoke-test, and then run the
+  Storage API bucket cutover. The exact commands and rollback path live in
+  `supabase/admin/README.md`.
+- Do not update `storage.buckets` or `storage.objects` directly with SQL.
+  Bucket configuration, object copies, and object deletion go through the
+  Storage API.
 
 ## Behavior Notes
 
@@ -167,6 +197,13 @@ sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
 - Dirty cached documents are retried on startup, when the app regains focus, and when the browser comes back online.
 - Share links are bearer URLs: anyone with the full `/s/[id]/[token]` URL can read that document until the token is rotated or sharing is disabled.
 - Uploaded media lives in private, owner-scoped `document-images` and `document-videos` buckets. Documents store stable `/m/...` paths; authenticated owner views and public share responses exchange those paths for short-lived signed Storage URLs.
-- Media URLs retained by documents cloned before the private-media rollout remain usable. Deleting a source document is blocked while another document still references media from its folder.
-- Deletion records a durable media-cleanup job before removing the document row, and signed-in startup maintenance retries interrupted cleanup. Interrupted clones are similarly recovered after a grace period so partial media and permanent “copying…” rows do not accumulate.
+- Every document owns copies of its embedded Mushpot media. The rollout
+  backfills legacy cross-document paths, and enforced mode rejects new local
+  media paths whose owner or document segment does not match the document row.
+- Deletion queues durable media cleanup in a database trigger. Scheduled
+  service-role maintenance keeps a 24-hour tombstone, repeatedly verifies both
+  document folders are empty, and also reclaims clones whose leases expire.
+- Signed media redirects expire after five minutes. Disabling sharing prevents
+  new redirects immediately, but a URL already signed before revocation can
+  remain usable until its five-minute expiry.
 - Shared-document rendering supports GitHub Flavored Markdown and remote/public images, so third-party image hosts can receive reader requests for embedded remote assets.

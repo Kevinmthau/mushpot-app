@@ -91,3 +91,26 @@ deno run --allow-env --allow-net \
 
 After the private cutover, verify owner media, shared media, share revocation,
 raw public URL failure, and expiry of previously issued five-minute signed URLs.
+
+## Production sequence
+
+Do not start this sequence until the migration, worker, backfill, and privacy
+cutover have passed on a disposable hosted project.
+
+1. Apply the additive migration while both media buckets are still public.
+2. Configure the Edge and Vault secrets above.
+3. Deploy `get-shared-doc` and `document-media-maintenance`, then install the
+   five-minute schedule.
+4. Deploy the Next.js application.
+5. Run the backfill in dry-run mode and resolve every reported blocker.
+6. Run `--apply --finalize`. This freezes client document writes, applies the
+   final pass, requires a clean audit, switches atomically to `enforced`, and
+   resumes normal writes. If it fails, writes intentionally remain frozen.
+7. Smoke-test owner and shared media while the buckets are still public.
+8. Dry-run and then apply the private bucket cutover.
+9. Confirm that raw public URLs fail, owner and shared routes work, share
+   revocation blocks new redirects, and previously signed URLs expire within
+   five minutes.
+10. Run the Supabase Security and Performance Advisors. Retain the backfill
+    snapshots for their seven-day lifetime before considering the rollout
+    complete.

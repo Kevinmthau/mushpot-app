@@ -38,6 +38,7 @@ describe("security response headers", () => {
     expect(contentSecurityPolicy).toContain("img-src 'self' data: blob: https:");
     expect(contentSecurityPolicy).toContain("media-src 'self' blob: https:");
     expect(contentSecurityPolicy).toContain("connect-src 'self' https: wss:");
+    expect(contentSecurityPolicy).not.toContain("'unsafe-eval'");
   });
 
   it("prevents shared-document responses from being cached or indexed", async () => {

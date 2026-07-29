@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22 <25"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "next dev",
@@ -14,7 +14,13 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "edge:fmt": "deno fmt --check supabase/functions/_shared supabase/functions/get-shared-doc supabase/functions/document-media-maintenance supabase/admin",
+    "edge:lint": "deno lint --config supabase/functions/get-shared-doc/deno.json supabase/functions/_shared/*.ts supabase/functions/get-shared-doc/index.ts supabase/functions/get-shared-doc/handler.ts supabase/functions/get-shared-doc/handler_test.ts && deno lint --config supabase/functions/document-media-maintenance/deno.json supabase/functions/document-media-maintenance/*.ts && deno lint --config supabase/admin/deno.json supabase/admin/*.ts",
+    "edge:check": "deno check --config supabase/functions/get-shared-doc/deno.json supabase/functions/_shared/cors.ts supabase/functions/_shared/document-media.ts supabase/functions/get-shared-doc/index.ts supabase/functions/get-shared-doc/handler.ts supabase/functions/get-shared-doc/handler_test.ts && deno check --config supabase/functions/document-media-maintenance/deno.json supabase/functions/document-media-maintenance/index.ts supabase/functions/document-media-maintenance/maintenance.ts && deno check --config supabase/admin/deno.json supabase/admin/*.ts",
+    "edge:test": "deno test --config supabase/functions/get-shared-doc/deno.json supabase/functions/get-shared-doc/handler_test.ts && deno test --config supabase/functions/document-media-maintenance/deno.json supabase/functions/document-media-maintenance/maintenance_test.ts && deno test --config supabase/admin/deno.json supabase/admin/document-media-backfill_test.ts",
+    "check:edge": "npm run edge:fmt && npm run edge:lint && npm run edge:check && npm run edge:test",
+    "test:db": "supabase test db"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.2",
