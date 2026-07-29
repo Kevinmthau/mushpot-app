@@ -1,10 +1,9 @@
-const STATIC_CACHE_NAME = "mushpot-static-v8";
+const STATIC_CACHE_NAME = "mushpot-static-v9";
 const NAV_CACHE_NAME = "mushpot-nav-v12";
 
 const STATIC_FILES = [
   "/manifest.webmanifest",
   "/icons/icon-192.png",
-  "/offline.html",
 ];
 
 // Known cache names – anything else gets cleaned up on activate
@@ -123,8 +122,13 @@ async function navigationNetworkFirst(request) {
       }
     }
 
-    const fallback = await caches.match("/offline.html");
-    return fallback || Response.error();
+    return new Response("Mushpot is offline.", {
+      status: 503,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "text/plain; charset=utf-8",
+      },
+    });
   }
 }
 

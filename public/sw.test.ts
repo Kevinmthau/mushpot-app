@@ -81,10 +81,6 @@ class MemoryCaches {
   }
 
   async match(input: RequestInfo | URL) {
-    if (input.toString() === "/offline.html") {
-      return new Response("offline", { status: 200 });
-    }
-
     for (const cache of this.caches.values()) {
       const response = await cache.match(input);
 
@@ -243,7 +239,8 @@ describe("service worker private navigation", () => {
       buildNavigationEvent(),
     );
 
-    expect(await response.text()).toBe("offline");
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe("Mushpot is offline.");
   });
 });
 
@@ -295,7 +292,8 @@ describe("service worker shared-document navigation", () => {
       buildNavigationEvent(),
     );
 
-    expect(await response.text()).toBe("offline");
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe("Mushpot is offline.");
   });
 });
 
@@ -405,7 +403,7 @@ describe("service worker sensitive-route bypass", () => {
     expect(responsePromise).toBeDefined();
     await responsePromise;
 
-    const cache = await context.caches.open("mushpot-static-v8");
+    const cache = await context.caches.open("mushpot-static-v9");
     expect(
       await cache.match("https://mushpot.app/icons/icon-192.png"),
     ).toBeUndefined();
@@ -419,6 +417,7 @@ describe("service worker sensitive-route bypass", () => {
     await context.caches.open("mushpot-nav-v10");
     await context.caches.open("mushpot-static-v7");
     await context.caches.open("mushpot-static-v8");
+    await context.caches.open("mushpot-static-v9");
     await context.caches.open("mushpot-nav-v11");
     await context.caches.open("mushpot-nav-v12");
     let activation: Promise<unknown> | undefined;
@@ -431,19 +430,19 @@ describe("service worker sensitive-route bypass", () => {
     await activation;
 
     expect(await context.caches.keys()).toEqual([
-      "mushpot-static-v8",
+      "mushpot-static-v9",
       "mushpot-nav-v12",
     ]);
   });
 
-  it("clears private and legacy caches while preserving current offline assets", async () => {
+  it("clears private and legacy caches while preserving current public assets", async () => {
     const context = loadServiceWorker(() =>
       Promise.resolve(new Response("network", { status: 200 })),
     );
-    const currentStaticCache = await context.caches.open("mushpot-static-v8");
+    const currentStaticCache = await context.caches.open("mushpot-static-v9");
     await currentStaticCache.put(
-      "https://mushpot.app/offline.html",
-      new Response("current offline fallback", { status: 200 }),
+      "https://mushpot.app/icons/icon-192.png",
+      new Response("current public icon", { status: 200 }),
     );
     await context.caches.open("mushpot-static-v7");
     await context.caches.open("mushpot-nav-v12");
@@ -459,13 +458,15 @@ describe("service worker sensitive-route bypass", () => {
     await cleanup;
 
     expect(await context.caches.keys()).toEqual([
-      "mushpot-static-v8",
+      "mushpot-static-v9",
       "unrelated-cache",
     ]);
     expect(
       await (
-        await currentStaticCache.match("https://mushpot.app/offline.html")
+        await currentStaticCache.match(
+          "https://mushpot.app/icons/icon-192.png",
+        )
       )?.text(),
-    ).toBe("current offline fallback");
+    ).toBe("current public icon");
   });
 });
