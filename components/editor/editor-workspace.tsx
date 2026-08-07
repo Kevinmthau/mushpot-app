@@ -1,6 +1,6 @@
 "use client";
 
-import { markdown } from "@codemirror/lang-markdown";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import {
   EditorState,
   Transaction,
@@ -110,7 +110,7 @@ export function EditorWorkspace({
 
   const editorExtensions = useMemo(
     () => [
-      markdown(),
+      markdown({ base: markdownLanguage }),
       markdownLiveFormatting,
       mediaUploadExtensions,
       EditorView.lineWrapping,

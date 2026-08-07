@@ -1,7 +1,12 @@
 "use client";
 
 import { syntaxTree } from "@codemirror/language";
-import { type Range } from "@codemirror/state";
+import {
+  EditorState,
+  StateField,
+  Transaction,
+  type Range,
+} from "@codemirror/state";
 import { type SyntaxNode } from "@lezer/common";
 import {
   Decoration,
@@ -19,6 +24,14 @@ import {
   appendFirstFrameFragment,
   parseVideoPosterFromTitle,
 } from "@/lib/markdown/video-poster";
+import {
+  parseMarkdownReferenceDefinitions,
+  parseMarkdownTable,
+  type MarkdownInlineContent,
+  type MarkdownTableAlignment,
+  type MarkdownTableCell,
+  type ParsedMarkdownTable,
+} from "@/lib/markdown/table";
 
 const DECORATION_REBUILD_INTERVAL_MS = 120;
 const MAX_LIVE_FORMATTING_DOC_LENGTH = 20_000;
@@ -89,6 +102,52 @@ class MarkdownHorizontalRuleWidget extends WidgetType {
   }
 }
 
+function createMarkdownMediaPreviewElement(
+  src: string,
+  altText: string,
+  width: string | null,
+  poster: string | null,
+) {
+  const isVideo = isSupportedVideoUrl(src);
+  const wrapper = document.createElement("span");
+  wrapper.className = isVideo
+    ? "cm-md-media-preview cm-md-video-preview"
+    : "cm-md-media-preview cm-md-image-preview";
+  wrapper.setAttribute("aria-label", altText || (isVideo ? "Video" : "Image"));
+
+  if (isVideo) {
+    const video = document.createElement("video");
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    if (poster) {
+      video.poster = poster;
+      video.src = src;
+    } else {
+      video.src = appendFirstFrameFragment(src);
+    }
+    if (width) {
+      video.style.width = width;
+    }
+
+    wrapper.appendChild(video);
+    return wrapper;
+  }
+
+  const image = document.createElement("img");
+  image.src = src;
+  image.alt = altText;
+  image.loading = "lazy";
+  image.decoding = "async";
+  image.draggable = false;
+  if (width) {
+    image.style.width = width;
+  }
+
+  wrapper.appendChild(image);
+  return wrapper;
+}
+
 class MarkdownMediaPreviewWidget extends WidgetType {
   constructor(
     private readonly src: string,
@@ -109,43 +168,199 @@ class MarkdownMediaPreviewWidget extends WidgetType {
   }
 
   toDOM() {
-    const isVideo = isSupportedVideoUrl(this.src);
-    const wrapper = document.createElement("span");
-    wrapper.className = isVideo
-      ? "cm-md-media-preview cm-md-video-preview"
-      : "cm-md-media-preview cm-md-image-preview";
-    wrapper.setAttribute("aria-label", this.altText || (isVideo ? "Video" : "Image"));
+    return createMarkdownMediaPreviewElement(
+      this.src,
+      this.altText,
+      this.width,
+      this.poster,
+    );
+  }
+}
 
-    if (isVideo) {
-      const video = document.createElement("video");
-      video.controls = true;
-      video.playsInline = true;
-      video.preload = "metadata";
-      if (this.poster) {
-        video.poster = this.poster;
-        video.src = this.src;
-      } else {
-        video.src = appendFirstFrameFragment(this.src);
-      }
-      if (this.width) {
-        video.style.width = this.width;
-      }
-
-      wrapper.appendChild(video);
-      return wrapper;
+function appendMarkdownInlineContent(
+  parent: HTMLElement,
+  content: MarkdownInlineContent[],
+) {
+  for (const part of content) {
+    if (part.type === "text") {
+      parent.append(document.createTextNode(part.text));
+      continue;
     }
 
-    const image = document.createElement("img");
-    image.src = this.src;
-    image.alt = this.altText;
-    image.loading = "lazy";
-    image.decoding = "async";
-    image.draggable = false;
-    if (this.width) {
-      image.style.width = this.width;
+    if (part.type === "break") {
+      parent.append(document.createElement("br"));
+      continue;
     }
 
-    wrapper.appendChild(image);
+    if (part.type === "code") {
+      const code = document.createElement("code");
+      code.textContent = part.text;
+      parent.append(code);
+      continue;
+    }
+
+    if (part.type === "media") {
+      const src = normalizeDocumentMediaUrl(part.src);
+      const poster = normalizeDocumentMediaUrl(
+        parseVideoPosterFromTitle(part.title) ?? "",
+      );
+      parent.append(
+        createMarkdownMediaPreviewElement(
+          src,
+          part.altText,
+          null,
+          poster || null,
+        ),
+      );
+      continue;
+    }
+
+    const element = document.createElement(
+      part.type === "strong"
+        ? "strong"
+        : part.type === "emphasis"
+          ? "em"
+          : part.type === "strikethrough"
+            ? "del"
+            : "span",
+    );
+
+    if (part.type === "link") {
+      element.className = "cm-md-table-link";
+      element.title = part.title ?? part.href;
+    }
+
+    appendMarkdownInlineContent(element, part.children);
+    parent.append(element);
+  }
+}
+
+function buildMarkdownTableCell(
+  cell: MarkdownTableCell,
+  alignment: MarkdownTableAlignment,
+  isHeader: boolean,
+) {
+  const element = document.createElement(isHeader ? "th" : "td");
+  element.dataset.tableSourcePosition = String(cell.from);
+  if (alignment) {
+    element.style.textAlign = alignment;
+  }
+  appendMarkdownInlineContent(element, cell.content);
+  return element;
+}
+
+class MarkdownTableWidget extends WidgetType {
+  private readonly renderKey: string;
+
+  constructor(
+    private readonly sourceFrom: number,
+    private readonly table: ParsedMarkdownTable,
+  ) {
+    super();
+    this.renderKey = JSON.stringify(table);
+  }
+
+  eq(other: MarkdownTableWidget) {
+    return (
+      this.sourceFrom === other.sourceFrom &&
+      this.renderKey === other.renderKey
+    );
+  }
+
+  private revealSource(view: EditorView, target?: EventTarget | null) {
+    const targetElement = target instanceof Element ? target : null;
+    const sourceCell = targetElement?.closest<HTMLElement>(
+      "[data-table-source-position]",
+    );
+    const parsedPosition = Number.parseInt(
+      sourceCell?.dataset.tableSourcePosition ?? "0",
+      10,
+    );
+    const relativePosition = Math.max(
+      1,
+      Math.min(
+        Number.isNaN(parsedPosition) ? 1 : parsedPosition,
+        Math.max(1, this.table.source.length - 1),
+      ),
+    );
+    const anchor = Math.min(
+      this.sourceFrom + relativePosition,
+      view.state.doc.length,
+    );
+
+    view.dispatch({
+      annotations: Transaction.userEvent.of("select.table"),
+      scrollIntoView: true,
+      selection: { anchor },
+    });
+    view.focus();
+  }
+
+  toDOM(view: EditorView) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "cm-md-table-preview";
+    wrapper.setAttribute("aria-label", "Table preview. Press Enter to edit.");
+    wrapper.setAttribute("role", "group");
+    wrapper.tabIndex = 0;
+    wrapper.title = "Click to edit table";
+
+    const table = document.createElement("table");
+    const tableHead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    this.table.header.forEach((cell, index) => {
+      headerRow.append(
+        buildMarkdownTableCell(
+          cell,
+          this.table.alignments[index] ?? null,
+          true,
+        ),
+      );
+    });
+    tableHead.append(headerRow);
+    table.append(tableHead);
+
+    if (this.table.rows.length > 0) {
+      const tableBody = document.createElement("tbody");
+      this.table.rows.forEach((row) => {
+        const rowElement = document.createElement("tr");
+        row.forEach((cell, index) => {
+          rowElement.append(
+            buildMarkdownTableCell(
+              cell,
+              this.table.alignments[index] ?? null,
+              false,
+            ),
+          );
+        });
+        tableBody.append(rowElement);
+      });
+      table.append(tableBody);
+    }
+
+    wrapper.append(table);
+    wrapper.addEventListener("click", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+
+      const targetElement =
+        event.target instanceof Element ? event.target : null;
+      if (targetElement?.closest("video")) {
+        return;
+      }
+
+      event.preventDefault();
+      this.revealSource(view, event.target);
+    });
+    wrapper.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+
+      event.preventDefault();
+      this.revealSource(view, event.target);
+    });
+
     return wrapper;
   }
 }
@@ -164,11 +379,15 @@ function getCurrentTimeMs() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }
 
-function shouldDisableLiveFormatting(view: EditorView) {
+function shouldDisableLiveFormattingState(state: EditorState) {
   return (
-    view.state.doc.length > MAX_LIVE_FORMATTING_DOC_LENGTH ||
-    view.state.doc.lines > MAX_LIVE_FORMATTING_LINE_COUNT
+    state.doc.length > MAX_LIVE_FORMATTING_DOC_LENGTH ||
+    state.doc.lines > MAX_LIVE_FORMATTING_LINE_COUNT
   );
+}
+
+function shouldDisableLiveFormatting(view: EditorView) {
+  return shouldDisableLiveFormattingState(view.state);
 }
 
 function stripLinkTitleDelimiters(rawTitle: string) {
@@ -243,9 +462,31 @@ function parseMarkdownImage(
 }
 
 function selectionIntersectsRange(view: EditorView, from: number, to: number) {
-  return view.state.selection.ranges.some((range) => {
+  return selectionIntersectsStateRange(view.state, from, to);
+}
+
+function selectionIntersectsStateRange(
+  state: EditorState,
+  from: number,
+  to: number,
+) {
+  return state.selection.ranges.some((range) => {
     if (range.from === range.to) {
       return range.from >= from && range.from <= to;
+    }
+
+    return range.from < to && range.to > from;
+  });
+}
+
+function selectionIntersectsTableRange(
+  state: EditorState,
+  from: number,
+  to: number,
+) {
+  return state.selection.ranges.some((range) => {
+    if (range.from === range.to) {
+      return range.from > from && range.from < to;
     }
 
     return range.from < to && range.to > from;
@@ -439,6 +680,15 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
       from,
       to,
       enter: (node) => {
+        if (node.name === "Table") {
+          if (selectionIntersectsTableRange(view.state, node.from, node.to)) {
+            return;
+          }
+
+          const source = view.state.doc.sliceString(node.from, node.to);
+          return parseMarkdownTable(source) ? false : undefined;
+        }
+
         if (node.name === "StrongEmphasis") {
           decorations.push(strongDecoration.range(node.from, node.to));
           return;
@@ -633,7 +883,64 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
   return Decoration.set(decorations, true);
 }
 
-export const markdownLiveFormatting = ViewPlugin.fromClass(
+function buildMarkdownTablePreviews(state: EditorState): DecorationSet {
+  if (shouldDisableLiveFormattingState(state)) {
+    return Decoration.none;
+  }
+
+  const decorations: Range<Decoration>[] = [];
+  const tree = syntaxTree(state);
+  const documentSource = state.doc.toString();
+  const references = parseMarkdownReferenceDefinitions(
+    documentSource,
+    tree.topNode,
+  );
+
+  tree.iterate({
+    enter: (node) => {
+      if (node.name !== "Table") {
+        return;
+      }
+
+      if (selectionIntersectsTableRange(state, node.from, node.to)) {
+        return false;
+      }
+
+      const source = state.doc.sliceString(node.from, node.to);
+      const table = parseMarkdownTable(source, { references });
+      if (!table) {
+        return false;
+      }
+
+      decorations.push(
+        Decoration.replace({
+          block: true,
+          inclusive: false,
+          widget: new MarkdownTableWidget(node.from, table),
+        }).range(node.from, node.to),
+      );
+      return false;
+    },
+  });
+
+  return Decoration.set(decorations, true);
+}
+
+const markdownTablePreviews = StateField.define<DecorationSet>({
+  create: buildMarkdownTablePreviews,
+  update: (decorations, transaction) => {
+    const syntaxChanged =
+      syntaxTree(transaction.startState) !== syntaxTree(transaction.state);
+    if (transaction.docChanged || transaction.selection || syntaxChanged) {
+      return buildMarkdownTablePreviews(transaction.state);
+    }
+
+    return decorations.map(transaction.changes);
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+const markdownInlineLiveFormatting = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
     lastDecorationBuildAt: number;
@@ -658,6 +965,16 @@ export const markdownLiveFormatting = ViewPlugin.fromClass(
         return;
       }
 
+      if (
+        update.transactions.some((transaction) =>
+          transaction.isUserEvent("select.table"),
+        )
+      ) {
+        this.decorations = buildMarkdownDecorations(update.view);
+        this.lastDecorationBuildAt = getCurrentTimeMs();
+        return;
+      }
+
       if (!update.viewportChanged && !update.selectionSet) {
         return;
       }
@@ -675,3 +992,8 @@ export const markdownLiveFormatting = ViewPlugin.fromClass(
     decorations: (instance) => instance.decorations,
   },
 );
+
+export const markdownLiveFormatting = [
+  markdownTablePreviews,
+  markdownInlineLiveFormatting,
+];
