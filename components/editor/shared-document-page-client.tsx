@@ -137,6 +137,16 @@ const markdownComponents: Components = {
   ),
   img: SharedMarkdownImage,
   p: SharedMarkdownParagraph,
+  table: ({ children }) => (
+    <div
+      aria-label="Table"
+      className="markdown-table-preview"
+      role="region"
+      tabIndex={0}
+    >
+      <table>{children}</table>
+    </div>
+  ),
 };
 
 export function SharedDocumentPageClient({

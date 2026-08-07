@@ -89,8 +89,7 @@ video {
 .markdown-body ul,
 .markdown-body ol,
 .markdown-body blockquote,
-.markdown-body pre,
-.markdown-body table {
+.markdown-body pre {
   margin: 1em 0;
 }
 
@@ -136,20 +135,6 @@ video {
   border: 0;
   border-top: 1px solid var(--line);
   margin: 2rem 0;
-}
-
-.markdown-body table {
-  border-collapse: collapse;
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
-  width: 100%;
-}
-
-.markdown-body th,
-.markdown-body td {
-  border: 1px solid var(--line);
-  padding: 0.55rem 0.7rem;
 }
 
 .cm-editor {
@@ -313,29 +298,51 @@ video {
   margin: 1.75rem 0;
 }
 
+.markdown-table-preview,
 .cm-md-table-preview {
   display: block;
   width: 100%;
-  max-width: 100%;
   min-width: 0;
   overflow-x: auto;
-  padding: 1rem 0;
-  cursor: text;
+  margin-left: 0;
   -webkit-overflow-scrolling: touch;
 }
 
+/* Keep prose narrow while centering top-level tables in the viewport. */
+.markdown-body > .markdown-table-preview,
+.cm-md-table-preview {
+  width: max(100%, calc(100vw - 2rem));
+  margin-left: min(0px, calc(50% - 50vw + 1rem));
+}
+
+.markdown-table-preview {
+  margin-block: 1em;
+}
+
+.cm-md-table-preview {
+  padding: 1rem 0;
+  cursor: text;
+}
+
+.markdown-table-preview table,
 .cm-md-table-preview table {
-  width: max-content;
+  width: 100%;
   min-width: 100%;
   border-collapse: collapse;
   color: var(--ink);
+  table-layout: auto;
+}
+
+.cm-md-table-preview table {
   font: inherit;
   line-height: 1.5;
 }
 
+.markdown-table-preview th,
+.markdown-table-preview td,
 .cm-md-table-preview th,
 .cm-md-table-preview td {
-  min-width: 10rem;
+  min-width: clamp(8rem, 18vw, 10rem);
   max-width: 28rem;
   padding: 0.65rem 0.75rem;
   border: 1px solid var(--line);
@@ -344,6 +351,7 @@ video {
   overflow-wrap: anywhere;
 }
 
+.markdown-table-preview th,
 .cm-md-table-preview th {
   background: #f5f3ec;
   font-weight: 700;
