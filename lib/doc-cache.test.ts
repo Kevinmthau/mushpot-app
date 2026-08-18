@@ -399,6 +399,101 @@ describe("owner-scoped document cache", () => {
     ).not.toBeNull();
   });
 
+  it("rejects stale list reconciliation after owner reactivation", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(
+      buildDocument({ id: "dirty", _dirty: true }),
+    );
+    const staleToken = cache.getDocumentCacheWriteToken(OWNER);
+
+    await cache.deactivateDocumentCacheForOwner(OWNER);
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(buildDocument({ id: "current" }));
+
+    await cache.syncDocumentList(
+      [
+        {
+          id: "stale-server-row",
+          title: "Stale",
+          updated_at: "2026-08-17T12:00:00.000Z",
+        },
+      ],
+      OWNER,
+      staleToken,
+    );
+
+    expect(
+      await cache.getCachedDocumentForOwner("dirty", OWNER),
+    ).not.toBeNull();
+    expect(
+      await cache.getCachedDocumentForOwner("current", OWNER),
+    ).not.toBeNull();
+    expect(
+      await cache.getCachedDocumentRecordForOwner("stale-server-row", OWNER),
+    ).toBeNull();
+  });
+
+  it("returns a dirty cached draft instead of a clean remote snapshot", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(
+      buildDocument({
+        _dirty: true,
+        _localUpdatedAt: 200,
+        content: "Unsynced local edit",
+      }),
+    );
+    const token = cache.getDocumentCacheWriteToken(OWNER);
+
+    const reconciled = await cache.reconcileCachedDocumentWithServer(
+      buildDocument({
+        _dirty: false,
+        _localUpdatedAt: 100,
+        content: "Older server content",
+      }),
+      token,
+    );
+
+    expect(reconciled).toEqual(
+      expect.objectContaining({
+        _dirty: true,
+        _localUpdatedAt: 200,
+        content: "Unsynced local edit",
+      }),
+    );
+  });
+
+  it("does not commit remote reconciliation after its write guard is revoked", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(
+      buildDocument({
+        content: "Newer local content",
+        _localUpdatedAt: 200,
+      }),
+    );
+    const token = cache.getDocumentCacheWriteToken(OWNER);
+
+    await cache.reconcileCachedDocumentWithServer(
+      buildDocument({
+        content: "Stale remote content",
+        _localUpdatedAt: undefined,
+      }),
+      token,
+      () => false,
+    );
+
+    expect(
+      await cache.getCachedDocumentForOwner("document-a", OWNER, token),
+    ).toEqual(
+      expect.objectContaining({
+        content: "Newer local content",
+        _localUpdatedAt: 200,
+      }),
+    );
+  });
+
   it("preserves dirty rows that disappear from a server list", async () => {
     const cache = await loadDocumentCache();
     await cache.activateDocumentCacheForOwner(OWNER);

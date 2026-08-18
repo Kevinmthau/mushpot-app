@@ -4,6 +4,10 @@ import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { DocumentListClient } from "@/components/documents/document-list-client";
+import {
+  DocumentListLoading,
+  DocumentsPageLoading,
+} from "@/components/documents/document-list-loading";
 import { useDocumentList } from "@/components/documents/use-document-list";
 import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import PullToRefresh from "@/components/pull-to-refresh";
@@ -125,10 +129,18 @@ export async function completeCurrentDeviceSignOut({
 
 type SignOutPhase = "idle" | "flushing" | "confirm-discard" | "signing-out";
 
+export function shouldShowDocumentListLoading(
+  documents: readonly unknown[],
+  isLoading: boolean,
+) {
+  return isLoading && documents.length === 0;
+}
+
 export function DocumentsPageClient() {
   const router = useRouter();
   const { clearUserId, setUserId, userId } = usePrivateSession();
-  const { documents, error, refreshDocuments } = useDocumentList(userId);
+  const { documents, error, isLoading, refreshDocuments } =
+    useDocumentList(userId);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [signOutPhase, setSignOutPhase] = useState<SignOutPhase>("idle");
   const [unsavedDraftCount, setUnsavedDraftCount] = useState<number | null>(0);
@@ -231,7 +243,7 @@ export function DocumentsPageClient() {
   }, []);
 
   if (!userId) {
-    return null;
+    return <DocumentsPageLoading />;
   }
 
   const isBusy =
@@ -267,7 +279,9 @@ export function DocumentsPageClient() {
           ) : null}
         </header>
 
-        {error && documents.length === 0 ? (
+        {shouldShowDocumentListLoading(documents, isLoading) ? (
+          <DocumentListLoading />
+        ) : error && documents.length === 0 ? (
           <section className="rounded-2xl border border-[var(--line)] bg-[var(--paper)] px-4 py-5 text-sm text-[var(--muted)] sm:px-5">
             {error}
           </section>

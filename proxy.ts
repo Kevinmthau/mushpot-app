@@ -8,7 +8,9 @@ import {
 import type { Database } from "@/lib/supabase/types";
 
 function requiresAuth(pathname: string) {
-  return pathname === "/" || pathname.startsWith("/doc/");
+  return (
+    pathname === "/" || pathname === "/doc" || pathname.startsWith("/doc/")
+  );
 }
 
 function getNextPath(request: NextRequest) {
@@ -36,25 +38,47 @@ function getSupabaseConfig() {
 
 export async function proxy(request: NextRequest) {
   const isPrivateRequest = requiresAuth(request.nextUrl.pathname);
+  const shouldRefreshSession =
+    isPrivateRequest || request.nextUrl.pathname === "/auth";
+
+  if (!shouldRefreshSession) {
+    return NextResponse.next();
+  }
+
   const nextPath = isPrivateRequest ? getNextPath(request) : null;
   const responseHeaders = new Headers();
   const responseCookies: ResponseCookie[] = [];
 
+  const applySupabaseResponseState = (response: NextResponse) => {
+    responseCookies.forEach(({ name, value, options }) =>
+      response.cookies.set(name, value, options),
+    );
+    responseHeaders.forEach((value, name) =>
+      response.headers.set(name, value),
+    );
+
+    return response;
+  };
+
   const createForwardResponse = () => {
     const requestHeaders = new Headers(request.headers);
+
+    // The private redirect target is request context, never client input.
+    requestHeaders.delete(PRIVATE_NEXT_PATH_HEADER);
 
     if (nextPath) {
       requestHeaders.set(PRIVATE_NEXT_PATH_HEADER, nextPath);
     }
 
-    return NextResponse.next({
-      request: {
-        headers: requestHeaders,
-      },
-    });
+    return applySupabaseResponseState(
+      NextResponse.next({
+        request: {
+          headers: requestHeaders,
+        },
+      }),
+    );
   };
 
-  let supabaseResponse = createForwardResponse();
   const { supabaseAnonKey, supabaseUrl } = getSupabaseConfig();
   const supabase = createServerClient<Database>(supabaseUrl, supabaseAnonKey, {
     cookies: {
@@ -66,47 +90,33 @@ export async function proxy(request: NextRequest) {
         cookiesToSet.forEach(({ name, value }) =>
           request.cookies.set(name, value),
         );
-
-        supabaseResponse = createForwardResponse();
-
-        responseCookies.forEach(({ name, value, options }) =>
-          supabaseResponse.cookies.set(name, value, options),
-        );
         Object.entries(headers).forEach(([name, value]) => {
           responseHeaders.set(name, value);
-          supabaseResponse.headers.set(name, value);
         });
       },
     },
   });
 
-  const { data } = await supabase.auth.getClaims();
+  if (isPrivateRequest) {
+    const { data, error } = await supabase.auth.getClaims();
 
-  if (isPrivateRequest && !data?.claims.sub) {
-    const redirectUrl = new URL(
-      buildAuthRedirectPath(nextPath ?? "/"),
-      request.nextUrl.origin,
-    );
-    const redirectResponse = NextResponse.redirect(redirectUrl);
+    if (error || !data?.claims.sub) {
+      const redirectUrl = new URL(
+        buildAuthRedirectPath(nextPath ?? "/"),
+        request.nextUrl.origin,
+      );
 
-    responseCookies.forEach(({ name, value, options }) =>
-      redirectResponse.cookies.set(name, value, options),
-    );
-    responseHeaders.forEach((value, name) =>
-      redirectResponse.headers.set(name, value),
-    );
-
-    return redirectResponse;
+      return applySupabaseResponseState(NextResponse.redirect(redirectUrl));
+    }
+  } else {
+    // The auth page only needs refreshed cookies. Its server component owns
+    // the trusted claims check and post-auth redirect behavior.
+    await supabase.auth.getSession();
   }
 
-  return supabaseResponse;
+  return createForwardResponse();
 }
 
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except static files and images.
-     */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
-  ],
+  matcher: ["/", "/doc/:path*", "/auth"],
 };

@@ -15,11 +15,16 @@ type DocumentPageClientProps = {
 
 export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
   const { userId } = usePrivateSession();
-  const { document, error, hasResolvedRemoteState, notFound } =
-    useEditorDocument(documentId, userId);
+  const {
+    document,
+    error,
+    hasResolvedRemoteState,
+    markLocallyEdited,
+    notFound,
+  } = useEditorDocument(documentId, userId);
 
   if (!userId) {
-    return null;
+    return <EditorPageLoading />;
   }
 
   if (error || notFound) {
@@ -47,5 +52,12 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
     return hasResolvedRemoteState ? <MissingDocumentFallback /> : <EditorPageLoading />;
   }
 
-  return <EditorClient key={document.id} initialDocument={document} />;
+  return (
+    <EditorClient
+      key={document.id}
+      hasResolvedRemoteState={hasResolvedRemoteState}
+      initialDocument={document}
+      onLocalEdit={markLocallyEdited}
+    />
+  );
 }

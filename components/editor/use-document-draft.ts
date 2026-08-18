@@ -37,6 +37,19 @@ function getMostRecentTimestamp(currentTimestamp: string, nextTimestamp: string)
   return nextTime >= currentTime ? nextTimestamp : currentTimestamp;
 }
 
+function isIncomingHydrationStale(
+  currentTimestamp: string,
+  incomingTimestamp: string,
+) {
+  const currentTime = Date.parse(currentTimestamp);
+  const incomingTime = Date.parse(incomingTimestamp);
+
+  return (
+    !Number.isNaN(currentTime) &&
+    (Number.isNaN(incomingTime) || incomingTime < currentTime)
+  );
+}
+
 type UseDocumentDraftResult = {
   formattedUpdated: string;
   flushLatestDraft: () => void;
@@ -53,6 +66,11 @@ type UseDocumentDraftResult = {
   shareToken: string | null;
   title: string;
   updateShareState: (enabled: boolean, token: string | null, updatedAt: string) => void;
+};
+
+export type DraftSaveSnapshot = {
+  content: string;
+  title: string;
 };
 
 type DraftPageLifecycleOptions = {
@@ -127,8 +145,119 @@ export function hasUnsavedDocumentChanges({
   );
 }
 
+export function applyConfirmedShareUpdate(
+  didEditSinceHydration: { current: boolean },
+  applyUpdate: () => void,
+) {
+  didEditSinceHydration.current = true;
+  applyUpdate();
+}
+
+export type DraftHydrationState = {
+  content: string;
+  isDeleting: boolean;
+  savedContent: string;
+  savedTitle: string;
+  savedUpdatedAt: string;
+  shareEnabled: boolean;
+  shareToken: string | null;
+  title: string;
+  updatedAt: string;
+};
+
+export type DraftHydrationMutations = {
+  content: boolean;
+  share: boolean;
+  title: boolean;
+};
+
+/**
+ * Preserves fields changed in this editor while accepting authoritative
+ * remote values and save baselines for untouched fields.
+ */
+export function reconcileDraftHydration(
+  current: DraftHydrationState,
+  incoming: EditorDocument,
+  mutations: DraftHydrationMutations,
+): DraftHydrationState {
+  // Keep fields and their optimistic-concurrency timestamp from one coherent
+  // snapshot. A load that started before a confirmed local mutation must not
+  // reintroduce its older untouched fields under the newer local timestamp.
+  if (isIncomingHydrationStale(current.savedUpdatedAt, incoming.updated_at)) {
+    return current;
+  }
+
+  return {
+    content: mutations.content ? current.content : incoming.content,
+    isDeleting: current.isDeleting,
+    savedContent: incoming.content,
+    savedTitle: incoming.title,
+    savedUpdatedAt: incoming.updated_at,
+    shareEnabled: mutations.share
+      ? current.shareEnabled
+      : incoming.share_enabled,
+    shareToken: mutations.share ? current.shareToken : incoming.share_token,
+    title: mutations.title ? current.title : incoming.title,
+    updatedAt: getMostRecentTimestamp(current.updatedAt, incoming.updated_at),
+  };
+}
+
+export type InitialDraftPersistenceGate = {
+  hasDeferredSave: boolean;
+  isOpen: boolean;
+};
+
+export function createInitialDraftPersistenceGate(
+  isOpen: boolean,
+): InitialDraftPersistenceGate {
+  return { hasDeferredSave: false, isOpen };
+}
+
+export function requestInitialDraftPersistence(
+  gate: InitialDraftPersistenceGate,
+) {
+  if (gate.isOpen) {
+    return true;
+  }
+
+  gate.hasDeferredSave = true;
+  return false;
+}
+
+export function openInitialDraftPersistenceGate(
+  gate: InitialDraftPersistenceGate,
+) {
+  const shouldFlushDeferredSave = gate.hasDeferredSave;
+  gate.hasDeferredSave = false;
+  gate.isOpen = true;
+  return shouldFlushDeferredSave;
+}
+
+export function settleDraftSaveQueue(
+  queue: { current: DraftSaveSnapshot | null },
+  succeeded: boolean,
+) {
+  const queuedSave = queue.current;
+  queue.current = null;
+  return succeeded ? queuedSave : null;
+}
+
+export function scheduleFailedDraftSaveRetry(
+  queue: { current: DraftSaveSnapshot | null },
+  scheduleRetry: () => void,
+) {
+  if (queue.current === null) {
+    return false;
+  }
+
+  queue.current = null;
+  scheduleRetry();
+  return true;
+}
+
 export function useDocumentDraft(
   initialDocument: EditorDocument,
+  hasResolvedRemoteState: boolean,
 ): UseDocumentDraftResult {
   const [title, setTitle] = useState(initialDocument.title);
   const [contentForStats, setContentForStats] = useState(initialDocument.content);
@@ -141,9 +270,21 @@ export function useDocumentDraft(
   const localCacheTimeoutRef = useRef<number | null>(null);
   const statsSyncTimeoutRef = useRef<number | null>(null);
   const saveInFlightRef = useRef(false);
-  const queuedSaveRef = useRef<{ title: string; content: string } | null>(null);
+  const queuedSaveRef = useRef<DraftSaveSnapshot | null>(null);
+  const scheduledWorkGenerationRef = useRef(0);
+  const saveDraftRef = useRef<
+    (nextTitle: string, nextContent: string) => Promise<boolean>
+  >(() => Promise.resolve(false));
   const isDeletingRef = useRef(false);
   const didEditSinceHydrationRef = useRef(false);
+  const didEditTitleSinceHydrationRef = useRef(false);
+  const didEditContentSinceHydrationRef = useRef(false);
+  const didUpdateShareSinceHydrationRef = useRef(false);
+  const initialPersistenceGateRef = useRef(
+    createInitialDraftPersistenceGate(
+      hasResolvedRemoteState || initialDocument._dirty === true,
+    ),
+  );
   const cachedDraftIsDirtyRef = useRef(initialDocument._dirty === true);
   const latestTitleRef = useRef(initialDocument.title);
   const latestContentRef = useRef<Text | string>(initialDocument.content);
@@ -158,9 +299,12 @@ export function useDocumentDraft(
     title: initialDocument.title,
     content: initialDocument.content,
   });
+  const lastSavedUpdatedAtRef = useRef(initialDocument.updated_at);
   const deferredContent = useDeferredValue(contentForStats);
 
   const clearScheduledWork = useCallback(() => {
+    scheduledWorkGenerationRef.current += 1;
+
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
@@ -174,32 +318,6 @@ export function useDocumentDraft(
       statsSyncTimeoutRef.current = null;
     }
   }, []);
-
-  useEffect(() => {
-    if (didEditSinceHydrationRef.current) {
-      return;
-    }
-
-    setTitle(initialDocument.title);
-    setContentForStats(initialDocument.content);
-    setUpdatedAt(initialDocument.updated_at);
-    setShareEnabled(initialDocument.share_enabled);
-    setShareToken(initialDocument.share_token);
-    setIsDeleting(false);
-    latestTitleRef.current = initialDocument.title;
-    latestContentRef.current = initialDocument.content;
-    latestContentTextRef.current = initialDocument.content;
-    latestSerializedContentSourceRef.current = initialDocument.content;
-    latestUpdatedAtRef.current = initialDocument.updated_at;
-    shareEnabledRef.current = initialDocument.share_enabled;
-    shareTokenRef.current = initialDocument.share_token;
-    isDeletingRef.current = false;
-    cachedDraftIsDirtyRef.current = initialDocument._dirty === true;
-    lastSavedRef.current = {
-      title: initialDocument.title,
-      content: initialDocument.content,
-    };
-  }, [initialDocument]);
 
   useEffect(() => {
     latestTitleRef.current = title;
@@ -226,6 +344,31 @@ export function useDocumentDraft(
   const getLatestTitle = useCallback(() => {
     return latestTitleRef.current;
   }, []);
+
+  const scheduleLatestDraftSave = useCallback(
+    (scheduledWorkGeneration = scheduledWorkGenerationRef.current) => {
+      if (scheduledWorkGenerationRef.current !== scheduledWorkGeneration) {
+        return;
+      }
+
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
+
+      saveTimeoutRef.current = window.setTimeout(() => {
+        saveTimeoutRef.current = null;
+        if (scheduledWorkGenerationRef.current !== scheduledWorkGeneration) {
+          return;
+        }
+
+        void saveDraftRef.current(
+          latestTitleRef.current,
+          getLatestContent(),
+        );
+      }, AUTOSAVE_DEBOUNCE_MS);
+    },
+    [getLatestContent],
+  );
 
   const scheduleStatsSync = useCallback(() => {
     if (statsSyncTimeoutRef.current !== null) {
@@ -297,9 +440,79 @@ export function useDocumentDraft(
     return resolvedUpdatedAt;
   }, []);
 
+  useEffect(() => {
+    if (
+      isIncomingHydrationStale(
+        lastSavedUpdatedAtRef.current,
+        initialDocument.updated_at,
+      )
+    ) {
+      return;
+    }
+
+    const mutations: DraftHydrationMutations = {
+      content: didEditContentSinceHydrationRef.current,
+      share: didUpdateShareSinceHydrationRef.current,
+      title: didEditTitleSinceHydrationRef.current,
+    };
+    const reconciled = reconcileDraftHydration(
+      {
+        content: getLatestContent(),
+        isDeleting: isDeletingRef.current,
+        savedContent: lastSavedRef.current.content,
+        savedTitle: lastSavedRef.current.title,
+        savedUpdatedAt: lastSavedUpdatedAtRef.current,
+        shareEnabled: shareEnabledRef.current,
+        shareToken: shareTokenRef.current,
+        title: latestTitleRef.current,
+        updatedAt: latestUpdatedAtRef.current,
+      },
+      initialDocument,
+      mutations,
+    );
+
+    if (!mutations.title) {
+      latestTitleRef.current = reconciled.title;
+      setTitle(reconciled.title);
+    }
+
+    if (!mutations.content) {
+      latestContentRef.current = reconciled.content;
+      latestContentTextRef.current = reconciled.content;
+      latestSerializedContentSourceRef.current = reconciled.content;
+      setContentForStats(reconciled.content);
+    }
+
+    if (!mutations.share) {
+      shareEnabledRef.current = reconciled.shareEnabled;
+      shareTokenRef.current = reconciled.shareToken;
+      setShareEnabled(reconciled.shareEnabled);
+      setShareToken(reconciled.shareToken);
+    }
+
+    latestUpdatedAtRef.current = reconciled.updatedAt;
+    setUpdatedAt(reconciled.updatedAt);
+    isDeletingRef.current = reconciled.isDeleting;
+    setIsDeleting(reconciled.isDeleting);
+    cachedDraftIsDirtyRef.current = initialDocument._dirty === true;
+    lastSavedRef.current = {
+      title: reconciled.savedTitle,
+      content: reconciled.savedContent,
+    };
+    lastSavedUpdatedAtRef.current = reconciled.savedUpdatedAt;
+
+    if (mutations.title || mutations.content || mutations.share) {
+      scheduleLocalCacheWrite();
+    }
+  }, [getLatestContent, initialDocument, scheduleLocalCacheWrite]);
+
   const saveDraft = useCallback(
     async (nextTitle: string, nextContent: string) => {
       if (isDeletingRef.current) {
+        return true;
+      }
+
+      if (!requestInitialDraftPersistence(initialPersistenceGateRef.current)) {
         return true;
       }
 
@@ -320,6 +533,8 @@ export function useDocumentDraft(
       }
 
       saveInFlightRef.current = true;
+      const scheduledWorkGeneration = scheduledWorkGenerationRef.current;
+      let shouldRetryQueuedSave = false;
       let titleToSave = nextTitle;
       let contentToSave = nextContent;
 
@@ -331,17 +546,24 @@ export function useDocumentDraft(
 
           const shareEnabledToSave = shareEnabledRef.current;
           const shareTokenToSave = shareTokenRef.current;
-          const result = await persistDocumentSnapshot({
-            id: initialDocument.id,
-            owner: initialDocument.owner,
-            title: titleToSave,
-            content: contentToSave,
-            share_enabled: shareEnabledToSave,
-            share_token: shareTokenToSave,
-            updated_at: latestUpdatedAtRef.current,
-          });
+          let result;
+          try {
+            result = await persistDocumentSnapshot({
+              id: initialDocument.id,
+              owner: initialDocument.owner,
+              title: titleToSave,
+              content: contentToSave,
+              share_enabled: shareEnabledToSave,
+              share_token: shareTokenToSave,
+              updated_at: latestUpdatedAtRef.current,
+            });
+          } catch {
+            shouldRetryQueuedSave = true;
+            return false;
+          }
 
           if (!result.ok || !result.updatedAt) {
+            shouldRetryQueuedSave = true;
             return false;
           }
 
@@ -349,6 +571,7 @@ export function useDocumentDraft(
             title: titleToSave,
             content: contentToSave,
           };
+          lastSavedUpdatedAtRef.current = result.updatedAt;
           cachedDraftIsDirtyRef.current = false;
           const resolvedUpdatedAt = applyUpdatedAt(result.updatedAt);
 
@@ -360,12 +583,11 @@ export function useDocumentDraft(
             writeLocalCacheSnapshot();
           }
 
-          const queuedSave = queuedSaveRef.current;
+          const queuedSave = settleDraftSaveQueue(queuedSaveRef, true);
           if (!queuedSave) {
             return true;
           }
 
-          queuedSaveRef.current = null;
           if (
             queuedSave.title === lastSavedRef.current.title &&
             queuedSave.content === lastSavedRef.current.content
@@ -378,25 +600,69 @@ export function useDocumentDraft(
         }
       } finally {
         saveInFlightRef.current = false;
+        if (shouldRetryQueuedSave) {
+          if (
+            scheduledWorkGenerationRef.current === scheduledWorkGeneration
+          ) {
+            scheduleFailedDraftSaveRetry(queuedSaveRef, () => {
+              scheduleLatestDraftSave(scheduledWorkGeneration);
+            });
+          } else {
+            settleDraftSaveQueue(queuedSaveRef, false);
+          }
+        }
       }
     },
-    [applyUpdatedAt, initialDocument.id, initialDocument.owner, writeLocalCacheSnapshot],
+    [
+      applyUpdatedAt,
+      initialDocument.id,
+      initialDocument.owner,
+      scheduleLatestDraftSave,
+      writeLocalCacheSnapshot,
+    ],
   );
+
+  useEffect(() => {
+    saveDraftRef.current = saveDraft;
+  }, [saveDraft]);
+
+  useEffect(() => {
+    if (!hasResolvedRemoteState) {
+      return;
+    }
+
+    const hadDeferredSave = openInitialDraftPersistenceGate(
+      initialPersistenceGateRef.current,
+    );
+    const latestTitle = latestTitleRef.current;
+    const latestContent = getLatestContent();
+    const hasUnsavedChanges = hasUnsavedDocumentChanges({
+      cachedDraftIsDirty: cachedDraftIsDirtyRef.current,
+      latestContent,
+      latestTitle,
+      savedContent: lastSavedRef.current.content,
+      savedTitle: lastSavedRef.current.title,
+    });
+
+    if (
+      hadDeferredSave ||
+      (didEditSinceHydrationRef.current && hasUnsavedChanges)
+    ) {
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      void saveDraft(latestTitle, latestContent);
+    }
+  }, [getLatestContent, hasResolvedRemoteState, saveDraft]);
 
   useEffect(() => {
     if (!didEditSinceHydrationRef.current) {
       return;
     }
 
-    if (saveTimeoutRef.current !== null) {
-      window.clearTimeout(saveTimeoutRef.current);
-    }
-
-    saveTimeoutRef.current = window.setTimeout(() => {
-      saveTimeoutRef.current = null;
-      void saveDraft(latestTitleRef.current, getLatestContent());
-    }, AUTOSAVE_DEBOUNCE_MS);
-  }, [getLatestContent, saveDraft, title]);
+    scheduleLatestDraftSave();
+  }, [scheduleLatestDraftSave, title]);
 
   useEffect(() => {
     if (!didEditSinceHydrationRef.current) {
@@ -472,6 +738,7 @@ export function useDocumentDraft(
 
   const handleTitleChange = useCallback((nextTitle: string) => {
     didEditSinceHydrationRef.current = true;
+    didEditTitleSinceHydrationRef.current = true;
     latestTitleRef.current = nextTitle;
     setTitle(nextTitle);
   }, []);
@@ -488,28 +755,26 @@ export function useDocumentDraft(
   const handleEditorChange = useCallback(
     (doc: Text) => {
       didEditSinceHydrationRef.current = true;
+      didEditContentSinceHydrationRef.current = true;
       latestContentRef.current = doc;
       scheduleStatsSync();
       scheduleLocalCacheWrite();
-      if (saveTimeoutRef.current !== null) {
-        window.clearTimeout(saveTimeoutRef.current);
-      }
-      saveTimeoutRef.current = window.setTimeout(() => {
-        saveTimeoutRef.current = null;
-        void saveDraft(latestTitleRef.current, getLatestContent());
-      }, AUTOSAVE_DEBOUNCE_MS);
+      scheduleLatestDraftSave();
     },
-    [getLatestContent, saveDraft, scheduleLocalCacheWrite, scheduleStatsSync],
+    [scheduleLatestDraftSave, scheduleLocalCacheWrite, scheduleStatsSync],
   );
 
   const updateShareState = useCallback(
     (enabled: boolean, token: string | null, updatedAt: string) => {
-      shareEnabledRef.current = enabled;
-      shareTokenRef.current = token;
-      applyUpdatedAt(updatedAt);
-      setShareEnabled(enabled);
-      setShareToken(token);
-      writeLocalCacheSnapshot();
+      applyConfirmedShareUpdate(didEditSinceHydrationRef, () => {
+        didUpdateShareSinceHydrationRef.current = true;
+        shareEnabledRef.current = enabled;
+        shareTokenRef.current = token;
+        applyUpdatedAt(updatedAt);
+        setShareEnabled(enabled);
+        setShareToken(token);
+        writeLocalCacheSnapshot();
+      });
     },
     [applyUpdatedAt, writeLocalCacheSnapshot],
   );

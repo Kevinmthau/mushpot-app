@@ -56,7 +56,7 @@ export function EditorClient(props: EditorClientProps) {
     return <MissingDocumentFallback />;
   }
 
-  return <EditorClientLoader initialDocument={props.initialDocument} />;
+  return <EditorClientLoader {...props} />;
 }
 
 function EditorClientLoader(props: EditorClientProps) {

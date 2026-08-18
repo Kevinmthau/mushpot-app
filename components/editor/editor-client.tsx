@@ -64,15 +64,36 @@ export function preloadEditorWorkspace() {
   return editorWorkspaceModulePromise;
 }
 
+type ShareUpdateHandler = (
+  enabled: boolean,
+  token: string | null,
+  updatedAt: string,
+) => void;
+
+export function applyShareUpdateWithLocalEditSignal(
+  onLocalEdit: (() => void) | undefined,
+  updateShareState: ShareUpdateHandler,
+  enabled: boolean,
+  token: string | null,
+  updatedAt: string,
+) {
+  onLocalEdit?.();
+  updateShareState(enabled, token, updatedAt);
+}
+
 export function EditorClient(props: EditorClientProps) {
   if (!props?.initialDocument) {
     return <MissingDocumentFallback />;
   }
 
-  return <EditorClientInner initialDocument={props.initialDocument} />;
+  return <EditorClientInner {...props} />;
 }
 
-function EditorClientInner({ initialDocument }: EditorClientProps) {
+function EditorClientInner({
+  hasResolvedRemoteState,
+  initialDocument,
+  onLocalEdit,
+}: EditorClientProps) {
   const router = useRouter();
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [uploadingMediaCount, setUploadingMediaCount] = useState(0);
@@ -96,7 +117,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
     shareToken,
     title,
     updateShareState,
-  } = useDocumentDraft(initialDocument);
+  } = useDocumentDraft(initialDocument, hasResolvedRemoteState);
   const { isCloning, handleClone } = useDocumentClone({
     owner: initialDocument.owner,
     getLatestTitle: getLatestTitle,
@@ -143,9 +164,31 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
 
   const handleTitleInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
+      onLocalEdit?.();
       handleTitleChange(event.target.value);
     },
-    [handleTitleChange],
+    [handleTitleChange, onLocalEdit],
+  );
+
+  const handleEditorDocumentChange = useCallback(
+    (doc: Text) => {
+      onLocalEdit?.();
+      handleEditorChange(doc);
+    },
+    [handleEditorChange, onLocalEdit],
+  );
+
+  const handleShareUpdated = useCallback<ShareUpdateHandler>(
+    (enabled, token, updatedAt) => {
+      applyShareUpdateWithLocalEditSignal(
+        onLocalEdit,
+        updateShareState,
+        enabled,
+        token,
+        updatedAt,
+      );
+    },
+    [onLocalEdit, updateShareState],
   );
 
   const handleTitleKeyDown = useCallback(
@@ -299,7 +342,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
             key={initialDocument.id}
             documentId={initialDocument.id}
             initialValue={initialDocument.content}
-            onChange={handleEditorChange}
+            onChange={handleEditorDocumentChange}
             onReady={handleEditorWorkspaceReady}
             onUploadingMediaCountChange={setUploadingMediaCount}
             owner={initialDocument.owner}
@@ -317,7 +360,7 @@ function EditorClientInner({ initialDocument }: EditorClientProps) {
           onClose={handleCloseShareModal}
           shareEnabled={shareEnabled}
           shareToken={shareToken}
-          onShareUpdated={updateShareState}
+          onShareUpdated={handleShareUpdated}
         />
       ) : null}
     </div>

@@ -527,6 +527,7 @@ export async function getCachedDocumentListForOwner(
 export async function reconcileCachedDocumentWithServer(
   serverDocument: CachedDocument,
   token = getDocumentCacheWriteToken(serverDocument.owner),
+  canWrite: () => boolean = () => true,
 ): Promise<CachedCompleteDocument> {
   const nextDocument = toStoredCompleteDocument({
     ...serverDocument,
@@ -546,13 +547,14 @@ export async function reconcileCachedDocumentWithServer(
     return cachedDocument;
   }
 
-  await putCachedDocument(nextDocument, token);
+  await putCachedDocument(nextDocument, token, canWrite);
   return nextDocument;
 }
 
 export async function putCachedDocument(
   document: CachedDocument,
   token = getDocumentCacheWriteToken(document.owner),
+  canWrite: () => boolean = () => true,
 ): Promise<boolean> {
   if (!token || token.owner !== document.owner) {
     return false;
@@ -581,6 +583,7 @@ export async function putCachedDocument(
     const incomingDocument = toStoredCompleteDocument(document);
     const stored =
       authorized &&
+      canWrite() &&
       !isDocumentCacheDeletionTombstone(
         deletionTombstone,
         document.owner,
