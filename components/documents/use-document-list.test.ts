@@ -46,7 +46,7 @@ function initialState(): OwnedDocumentListState {
 }
 
 describe("initial document list loading", () => {
-  it("starts remote work before cache resolution and applies cache before remote", async () => {
+  it("starts remote work before cache resolution and applies reconciled remote state after cache", async () => {
     const cache = deferred<{
       documents: DocumentListItem[];
       token: DocumentCacheWriteToken;
@@ -63,6 +63,7 @@ describe("initial document list loading", () => {
     });
     const syncRemote = vi.fn(() => {
       events.push("remote-synced");
+      return [REMOTE_DOCUMENT];
     });
 
     const completion = loadInitialDocumentList({
@@ -88,10 +89,95 @@ describe("initial document list loading", () => {
     expect(events).toEqual([
       "remote-started",
       "cache-applied",
-      "remote-applied",
       "remote-synced",
+      "remote-applied",
     ]);
     expect(syncRemote).toHaveBeenCalledWith([REMOTE_DOCUMENT], TOKEN);
+  });
+
+  it("publishes a newer dirty cached title instead of a stale remote prefix", async () => {
+    const staleRemoteDocument = {
+      ...REMOTE_DOCUMENT,
+      id: "presentation",
+      title: "Present",
+    };
+    const dirtyCachedDocument = {
+      ...staleRemoteDocument,
+      title: "Presentation outline",
+    };
+    const onRemoteSuccess = vi.fn();
+
+    await loadInitialDocumentList({
+      isCurrent: () => true,
+      loadCache: async () => ({
+        documents: [dirtyCachedDocument],
+        token: TOKEN,
+      }),
+      loadRemote: async () => ({
+        documents: [staleRemoteDocument],
+        error: null,
+      }),
+      onCache: vi.fn(),
+      onRemoteError: vi.fn(),
+      onRemoteSuccess,
+      syncRemote: async () => [dirtyCachedDocument],
+    });
+
+    expect(onRemoteSuccess).toHaveBeenCalledWith([dirtyCachedDocument]);
+  });
+
+  it("falls back to remote rows when cache reconciliation fails", async () => {
+    const onRemoteSuccess = vi.fn();
+
+    await loadInitialDocumentList({
+      isCurrent: () => true,
+      loadCache: async () => ({ documents: [], token: TOKEN }),
+      loadRemote: async () => ({
+        documents: [REMOTE_DOCUMENT],
+        error: null,
+      }),
+      onCache: vi.fn(),
+      onRemoteError: vi.fn(),
+      onRemoteSuccess,
+      syncRemote: async () => {
+        throw new Error("IndexedDB unavailable");
+      },
+    });
+
+    expect(onRemoteSuccess).toHaveBeenCalledWith([REMOTE_DOCUMENT]);
+  });
+
+  it("does not publish reconciliation that finishes after cancellation", async () => {
+    const reconciliation = deferred<DocumentListItem[] | null>();
+    let markSyncStarted!: () => void;
+    const syncStarted = new Promise<void>((resolve) => {
+      markSyncStarted = resolve;
+    });
+    let isCurrent = true;
+    const onRemoteSuccess = vi.fn();
+
+    const completion = loadInitialDocumentList({
+      isCurrent: () => isCurrent,
+      loadCache: async () => ({ documents: [], token: TOKEN }),
+      loadRemote: async () => ({
+        documents: [REMOTE_DOCUMENT],
+        error: null,
+      }),
+      onCache: vi.fn(),
+      onRemoteError: vi.fn(),
+      onRemoteSuccess,
+      syncRemote: () => {
+        markSyncStarted();
+        return reconciliation.promise;
+      },
+    });
+
+    await syncStarted;
+    isCurrent = false;
+    reconciliation.resolve([REMOTE_DOCUMENT]);
+    await completion;
+
+    expect(onRemoteSuccess).not.toHaveBeenCalled();
   });
 
   it("suppresses cache, remote, and sync commits after a newer request wins", async () => {
@@ -143,7 +229,10 @@ describe("initial document list loading", () => {
       onCache: () => events.push("cache-applied"),
       onRemoteError: () => events.push("remote-error"),
       onRemoteSuccess: () => events.push("remote-applied"),
-      syncRemote: () => events.push("remote-synced"),
+      syncRemote: () => {
+        events.push("remote-synced");
+        return null;
+      },
     });
 
     expect(events).toEqual(["cache-applied", "remote-error"]);
@@ -160,9 +249,9 @@ describe("initial document list loading", () => {
       error: null;
     }>();
     const getCacheWriteToken = vi.fn(() => TOKEN);
-    const initialSync = vi.fn();
+    const initialSync = vi.fn(() => [CACHED_DOCUMENT]);
     const refreshSuccess = vi.fn();
-    const refreshSync = vi.fn();
+    const refreshSync = vi.fn(() => [CACHED_DOCUMENT]);
     let requestId = 1;
 
     const initialCompletion = loadInitialDocumentList({
@@ -202,7 +291,7 @@ describe("initial document list loading", () => {
 
     expect(initialSync).not.toHaveBeenCalled();
     expect(getCacheWriteToken).toHaveBeenCalledOnce();
-    expect(refreshSuccess).toHaveBeenCalledWith([REMOTE_DOCUMENT]);
+    expect(refreshSuccess).toHaveBeenCalledWith([CACHED_DOCUMENT]);
     expect(refreshSync).toHaveBeenCalledWith([REMOTE_DOCUMENT], TOKEN);
   });
 });

@@ -81,6 +81,14 @@ export function applyShareUpdateWithLocalEditSignal(
   updateShareState(enabled, token, updatedAt);
 }
 
+export async function navigateToDocumentsAfterDraftFlush(
+  flushLatestDraft: () => Promise<void>,
+  navigate: () => void,
+) {
+  await flushLatestDraft();
+  navigate();
+}
+
 export function EditorClient(props: EditorClientProps) {
   if (!props?.initialDocument) {
     return <MissingDocumentFallback />;
@@ -247,15 +255,16 @@ function EditorClientInner({
     void handleDeleteDocument();
   }, [handleDeleteDocument]);
 
-  const navigateToDocuments = useCallback(() => {
+  const navigateToDocuments = useCallback(async () => {
     if (isDeleting || isNavigatingHomeRef.current) {
       return;
     }
 
     isNavigatingHomeRef.current = true;
     titleInputRef.current?.blur();
-    flushLatestDraft();
-    router.push("/");
+    await navigateToDocumentsAfterDraftFlush(flushLatestDraft, () => {
+      router.push("/");
+    });
   }, [flushLatestDraft, isDeleting, router]);
 
   const handleDocumentsClick = useCallback(
@@ -265,7 +274,7 @@ function EditorClientInner({
         return;
       }
 
-      navigateToDocuments();
+      void navigateToDocuments();
     },
     [navigateToDocuments],
   );

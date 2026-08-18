@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { applyShareUpdateWithLocalEditSignal } from "@/components/editor/editor-client";
+import {
+  applyShareUpdateWithLocalEditSignal,
+  navigateToDocumentsAfterDraftFlush,
+} from "@/components/editor/editor-client";
 
 describe("editor share reconciliation handoff", () => {
   it("signals a local mutation before applying confirmed share state", () => {
@@ -22,5 +25,31 @@ describe("editor share reconciliation handoff", () => {
       "share-token",
       "2026-08-17T14:00:00.000Z",
     );
+  });
+});
+
+describe("editor document-list navigation", () => {
+  it("waits for the local draft flush before navigating", async () => {
+    let finishFlush!: () => void;
+    const flushLatestDraft = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFlush = resolve;
+        }),
+    );
+    const navigate = vi.fn();
+
+    const navigation = navigateToDocumentsAfterDraftFlush(
+      flushLatestDraft,
+      navigate,
+    );
+
+    expect(flushLatestDraft).toHaveBeenCalledOnce();
+    expect(navigate).not.toHaveBeenCalled();
+
+    finishFlush();
+    await navigation;
+
+    expect(navigate).toHaveBeenCalledOnce();
   });
 });

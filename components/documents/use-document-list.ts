@@ -128,6 +128,8 @@ type DocumentListCacheSnapshot = {
   token: DocumentCacheWriteToken | null;
 };
 
+type DocumentListSyncResult = DocumentListItem[] | null;
+
 type InitialDocumentListLoadOptions = {
   isCurrent: () => boolean;
   loadCache: () => Promise<DocumentListCacheSnapshot>;
@@ -138,7 +140,7 @@ type InitialDocumentListLoadOptions = {
   syncRemote: (
     documents: DocumentListItem[],
     token: DocumentCacheWriteToken | null,
-  ) => void;
+  ) => DocumentListSyncResult | Promise<DocumentListSyncResult>;
 };
 
 type DocumentListRefreshOptions = {
@@ -151,7 +153,7 @@ type DocumentListRefreshOptions = {
   syncRemote: (
     documents: DocumentListItem[],
     token: DocumentCacheWriteToken | null,
-  ) => void;
+  ) => DocumentListSyncResult | Promise<DocumentListSyncResult>;
 };
 
 const DOCUMENT_LIST_LOAD_ERROR =
@@ -210,8 +212,21 @@ export async function loadInitialDocumentList({
     return;
   }
 
-  onRemoteSuccess(remoteResult.documents);
-  syncRemote(remoteResult.documents, cacheSnapshot.token);
+  let visibleDocuments = remoteResult.documents;
+  try {
+    visibleDocuments =
+      (await syncRemote(remoteResult.documents, cacheSnapshot.token)) ??
+      remoteResult.documents;
+  } catch {
+    // IndexedDB is best-effort. Raw remote state remains a safe fallback when
+    // cache reconciliation is unavailable.
+  }
+
+  if (!isCurrent()) {
+    return;
+  }
+
+  onRemoteSuccess(visibleDocuments);
 }
 
 /**
@@ -258,8 +273,21 @@ export async function loadDocumentListRefresh({
     return;
   }
 
-  onRemoteSuccess(remoteResult.documents);
-  syncRemote(remoteResult.documents, cacheWriteToken);
+  let visibleDocuments = remoteResult.documents;
+  try {
+    visibleDocuments =
+      (await syncRemote(remoteResult.documents, cacheWriteToken)) ??
+      remoteResult.documents;
+  } catch {
+    // IndexedDB is best-effort. Raw remote state remains a safe fallback when
+    // cache reconciliation is unavailable.
+  }
+
+  if (!isCurrent()) {
+    return;
+  }
+
+  onRemoteSuccess(visibleDocuments);
 }
 
 const INITIAL_STATE: OwnedDocumentListState = {
@@ -349,7 +377,7 @@ export function useDocumentList(userId: string | null): DocumentListState {
         );
       },
       syncRemote: (documents, token) => {
-        void syncDocumentList(documents, userId, token);
+        return syncDocumentList(documents, userId, token);
       },
     });
   }, [loadRemoteDocuments, userId]);
@@ -410,7 +438,7 @@ export function useDocumentList(userId: string | null): DocumentListState {
         );
       },
       syncRemote: (documents, token) => {
-        void syncDocumentList(documents, userId, token);
+        return syncDocumentList(documents, userId, token);
       },
     });
 

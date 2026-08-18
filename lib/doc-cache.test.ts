@@ -144,7 +144,7 @@ describe("owner-scoped document cache", () => {
     await cache.activateDocumentCacheForOwner(OWNER);
     await cache.putCachedDocument(buildDocument());
 
-    await cache.syncDocumentList(
+    const reconciledDocuments = await cache.syncDocumentList(
       [
         {
           id: "document-a",
@@ -165,6 +165,13 @@ describe("owner-scoped document cache", () => {
         updated_at: "2026-07-19T12:00:00.000Z",
       }),
     );
+    expect(reconciledDocuments).toEqual([
+      {
+        id: "document-a",
+        title: "Renamed remotely",
+        updated_at: "2026-07-19T12:00:00.000Z",
+      },
+    ]);
   });
 
   it("does not let an older save completion overwrite a newer local draft", async () => {
@@ -222,7 +229,7 @@ describe("owner-scoped document cache", () => {
       ),
     ).toBe(false);
 
-    await cache.syncDocumentList(
+    const reconciledDocuments = await cache.syncDocumentList(
       [
         {
           id: "document-a",
@@ -244,6 +251,7 @@ describe("owner-scoped document cache", () => {
     expect(
       await cache.getCachedDocumentListForOwner(OWNER, deletionGeneration),
     ).toEqual([]);
+    expect(reconciledDocuments).toEqual([]);
   });
 
   it("scopes deletion tombstones to the active owner generation", async () => {
@@ -502,7 +510,7 @@ describe("owner-scoped document cache", () => {
     );
     await cache.putCachedDocument(buildDocument({ id: "clean" }));
 
-    await cache.syncDocumentList([], OWNER);
+    const reconciledDocuments = await cache.syncDocumentList([], OWNER);
 
     expect(
       await cache.getCachedDocumentForOwner("dirty", OWNER),
@@ -510,6 +518,128 @@ describe("owner-scoped document cache", () => {
     expect(
       await cache.getCachedDocumentRecordForOwner("clean", OWNER),
     ).toBeNull();
+    expect(reconciledDocuments).toEqual([
+      {
+        id: "dirty",
+        title: "Draft",
+        updated_at: "2026-07-17T12:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("returns a dirty local title when the server list contains an older prefix", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(
+      buildDocument({
+        _dirty: true,
+        _localUpdatedAt: 200,
+        title: "Presentation outline",
+      }),
+    );
+
+    const reconciledDocuments = await cache.syncDocumentList(
+      [
+        {
+          id: "document-a",
+          title: "Present",
+          updated_at: "2026-07-17T12:00:00.000Z",
+        },
+      ],
+      OWNER,
+    );
+
+    expect(reconciledDocuments).toEqual([
+      {
+        id: "document-a",
+        title: "Presentation outline",
+        updated_at: "2026-07-17T12:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("uses fresh server timestamps to order dirty local titles without advancing the cached conflict base", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(
+      buildDocument({
+        _dirty: true,
+        _localUpdatedAt: 200,
+        title: "Presentation outline",
+        updated_at: "2026-07-17T12:00:00.000Z",
+      }),
+    );
+
+    const reconciledDocuments = await cache.syncDocumentList(
+      [
+        {
+          id: "document-a",
+          title: "Present",
+          updated_at: "2026-07-17T13:00:00.000Z",
+        },
+        {
+          id: "document-b",
+          title: "Second document",
+          updated_at: "2026-07-17T12:30:00.000Z",
+        },
+      ],
+      OWNER,
+    );
+
+    expect(reconciledDocuments).toEqual([
+      {
+        id: "document-a",
+        title: "Presentation outline",
+        updated_at: "2026-07-17T13:00:00.000Z",
+      },
+      {
+        id: "document-b",
+        title: "Second document",
+        updated_at: "2026-07-17T12:30:00.000Z",
+      },
+    ]);
+    expect(
+      await cache.getCachedDocumentForOwner("document-a", OWNER),
+    ).toEqual(
+      expect.objectContaining({
+        _dirty: true,
+        _localUpdatedAt: 200,
+        title: "Presentation outline",
+        updated_at: "2026-07-17T12:00:00.000Z",
+      }),
+    );
+  });
+
+  it("does not let a stale list response roll back a newer completed save", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(
+      buildDocument({
+        _dirty: false,
+        _localUpdatedAt: 200,
+        title: "Presentation outline",
+        updated_at: "2026-07-17T13:00:00.000Z",
+      }),
+    );
+
+    const reconciledDocuments = await cache.syncDocumentList(
+      [
+        {
+          id: "document-a",
+          title: "Present",
+          updated_at: "2026-07-17T12:00:00.000Z",
+        },
+      ],
+      OWNER,
+    );
+
+    expect(reconciledDocuments).toEqual([
+      {
+        id: "document-a",
+        title: "Presentation outline",
+        updated_at: "2026-07-17T13:00:00.000Z",
+      },
+    ]);
   });
 
   it("migrates v2 dirty/non-empty rows as complete and ambiguous empty rows as metadata", async () => {

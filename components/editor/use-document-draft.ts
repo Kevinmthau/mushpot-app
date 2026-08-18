@@ -52,7 +52,7 @@ function isIncomingHydrationStale(
 
 type UseDocumentDraftResult = {
   formattedUpdated: string;
-  flushLatestDraft: () => void;
+  flushLatestDraft: () => Promise<void>;
   getLatestContent: () => string;
   getLatestTitle: () => string;
   handleEditorChange: (doc: Text) => void;
@@ -386,9 +386,9 @@ export function useDocumentDraft(
     }, STATS_SYNC_DEBOUNCE_MS);
   }, [getLatestContent]);
 
-  const writeLocalCacheSnapshot = useCallback(() => {
+  const persistLocalCacheSnapshot = useCallback(() => {
     if (isDeletingRef.current) {
-      return;
+      return Promise.resolve(false);
     }
 
     const latestContent = getLatestContent();
@@ -412,8 +412,12 @@ export function useDocumentDraft(
       _dirty: isDirty,
     };
 
-    void putCachedDocument(doc);
+    return putCachedDocument(doc);
   }, [getLatestContent, initialDocument.id, initialDocument.owner]);
+
+  const writeLocalCacheSnapshot = useCallback(() => {
+    void persistLocalCacheSnapshot();
+  }, [persistLocalCacheSnapshot]);
 
   const scheduleLocalCacheWrite = useCallback(() => {
     if (localCacheTimeoutRef.current !== null) {
@@ -726,15 +730,16 @@ export function useDocumentDraft(
     return formatRelativeTimestamp(updatedAt);
   }, [updatedAt]);
 
-  const flushLatestDraft = useCallback(() => {
+  const flushLatestDraft = useCallback(async () => {
     if (isDeletingRef.current) {
       return;
     }
 
     clearScheduledWork();
-    writeLocalCacheSnapshot();
+    const cacheWrite = persistLocalCacheSnapshot();
     void saveDraft(latestTitleRef.current, getLatestContent());
-  }, [clearScheduledWork, getLatestContent, saveDraft, writeLocalCacheSnapshot]);
+    await cacheWrite;
+  }, [clearScheduledWork, getLatestContent, persistLocalCacheSnapshot, saveDraft]);
 
   const handleTitleChange = useCallback((nextTitle: string) => {
     didEditSinceHydrationRef.current = true;

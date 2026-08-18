@@ -267,6 +267,40 @@ function documentsHaveDifferentEditorState(
   );
 }
 
+function isCachedDocumentNewerThanServerListItem(
+  cachedDocument: CachedDocumentRecord,
+  serverDocument: CachedDocumentListItem,
+) {
+  const cachedUpdatedAt = Date.parse(cachedDocument.updated_at);
+  const serverUpdatedAt = Date.parse(serverDocument.updated_at);
+
+  return (
+    !Number.isNaN(cachedUpdatedAt) &&
+    (Number.isNaN(serverUpdatedAt) || cachedUpdatedAt > serverUpdatedAt)
+  );
+}
+
+function getVisibleDocumentUpdatedAt(
+  cachedDocument: CachedDocumentRecord,
+  serverDocument: CachedDocumentListItem | undefined,
+) {
+  if (
+    !serverDocument ||
+    !isCompleteDocument(cachedDocument) ||
+    cachedDocument._dirty !== true ||
+    isCachedDocumentNewerThanServerListItem(
+      cachedDocument,
+      serverDocument,
+    )
+  ) {
+    return cachedDocument.updated_at;
+  }
+
+  // Keep the dirty record's optimistic-concurrency timestamp in IndexedDB,
+  // while letting fresher server metadata drive list display and ordering.
+  return serverDocument.updated_at;
+}
+
 function shouldPreserveExistingDocument(
   existing: CachedDocumentRecord | undefined,
   incoming: CachedCompleteDocument,
@@ -880,9 +914,9 @@ export async function syncDocumentList(
   serverDocuments: CachedDocumentListItem[],
   owner: string,
   token = getDocumentCacheWriteToken(owner),
-): Promise<void> {
+): Promise<CachedDocumentListItem[] | null> {
   if (!token || token.owner !== owner) {
-    return;
+    return null;
   }
 
   try {
@@ -906,7 +940,7 @@ export async function syncDocumentList(
 
     if (!isTokenAuthorized(ownerState, token)) {
       await transactionDone;
-      return;
+      return null;
     }
 
     const deletedDocumentIds = new Set(
@@ -921,6 +955,7 @@ export async function syncDocumentList(
     const existingById = new Map(
       existingForOwner.map((document) => [document.id, document]),
     );
+    const reconciledById = new Map(existingById);
     const dirtyIds = new Set(
       existingForOwner
         .filter(
@@ -929,9 +964,10 @@ export async function syncDocumentList(
         )
         .map((document) => document.id),
     );
-    const serverIds = new Set(
-      serverDocuments.map((document) => document.id),
+    const serverById = new Map(
+      serverDocuments.map((document) => [document.id, document]),
     );
+    const serverIds = new Set(serverById.keys());
 
     for (const document of existingForOwner) {
       if (
@@ -939,6 +975,7 @@ export async function syncDocumentList(
         (!serverIds.has(document.id) && !dirtyIds.has(document.id))
       ) {
         documentStore.delete(document.id);
+        reconciledById.delete(document.id);
       }
     }
 
@@ -951,21 +988,31 @@ export async function syncDocumentList(
       }
 
       const existingDocument = existingById.get(serverDocument.id);
+      if (
+        existingDocument &&
+        isCachedDocumentNewerThanServerListItem(
+          existingDocument,
+          serverDocument,
+        )
+      ) {
+        continue;
+      }
+
       if (isCompleteDocument(existingDocument)) {
-        documentStore.put(
-          toStoredCompleteDocument({
-            ...existingDocument,
-            title: serverDocument.title,
-            updated_at: serverDocument.updated_at,
-          }),
-        );
+        const nextDocument = toStoredCompleteDocument({
+          ...existingDocument,
+          title: serverDocument.title,
+          updated_at: serverDocument.updated_at,
+        });
+        documentStore.put(nextDocument);
+        reconciledById.set(serverDocument.id, nextDocument);
       } else {
-        documentStore.put(
-          toMetadataDocument({
-            ...serverDocument,
-            owner,
-          }),
-        );
+        const nextDocument = toMetadataDocument({
+          ...serverDocument,
+          owner,
+        });
+        documentStore.put(nextDocument);
+        reconciledById.set(serverDocument.id, nextDocument);
       }
     }
 
@@ -974,7 +1021,28 @@ export async function syncDocumentList(
       value: new Date().toISOString(),
     });
     await transactionDone;
+
+    return Array.from(reconciledById.values())
+      .map((document) => {
+        const serverDocument = serverById.get(document.id);
+
+        return {
+          id: document.id,
+          title: document.title,
+          updated_at: getVisibleDocumentUpdatedAt(
+            document,
+            serverDocument,
+          ),
+        };
+      })
+      .sort((left, right) => {
+        const updatedAtComparison = right.updated_at.localeCompare(
+          left.updated_at,
+        );
+        return updatedAtComparison || right.id.localeCompare(left.id);
+      });
   } catch {
     // Cache reconciliation is best-effort.
+    return null;
   }
 }
