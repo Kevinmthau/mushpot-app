@@ -40,7 +40,7 @@ export type CachedMetadataDocument = CachedDocumentBase & {
   kind: "metadata";
 };
 
-/** The discriminated record shape persisted in IndexedDB v3. */
+/** The discriminated record shape persisted in IndexedDB. */
 export type CachedDocumentRecord =
   | CachedCompleteDocument
   | CachedMetadataDocument;
@@ -52,7 +52,7 @@ export type CachedDocumentListItem = {
 };
 
 const DB_NAME = "mushpot";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const DOCS_STORE = "documents";
 const META_STORE = "meta";
 const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
@@ -113,6 +113,9 @@ function ensureDocumentIndexes(store: IDBObjectStore) {
   }
   if (!store.indexNames.contains("dirty")) {
     store.createIndex("dirty", "_dirtyKey");
+  }
+  if (!store.indexNames.contains("owner_dirty")) {
+    store.createIndex("owner_dirty", ["owner", "_dirtyKey"]);
   }
 }
 
@@ -374,7 +377,7 @@ function openDB(): Promise<IDBDatabase> {
   dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result;
       if (!db.objectStoreNames.contains(DOCS_STORE)) {
         const store = db.createObjectStore(DOCS_STORE, { keyPath: "id" });
@@ -382,7 +385,9 @@ function openDB(): Promise<IDBDatabase> {
       } else {
         const store = request.transaction!.objectStore(DOCS_STORE);
         ensureDocumentIndexes(store);
-        migrateExistingDocuments(store);
+        if (event.oldVersion < 3) {
+          migrateExistingDocuments(store);
+        }
       }
 
       if (!db.objectStoreNames.contains(META_STORE)) {
@@ -390,13 +395,24 @@ function openDB(): Promise<IDBDatabase> {
       }
     };
 
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      // A blocked request can still succeed after an older tab closes. Replace
+      // its rejected promise so later cache operations can use the connection.
+      dbPromise = Promise.resolve(db);
+      resolve(db);
+    };
     request.onerror = () => {
       dbPromise = null;
       reject(request.error);
     };
     request.onblocked = () => {
-      dbPromise = null;
+      // The open request is still pending. Keep its rejected promise so later
+      // callers fail promptly instead of queuing behind the blocked upgrade.
       reject(new Error("Document cache upgrade was blocked."));
     };
   });
@@ -891,7 +907,7 @@ export async function getDirtyDocuments(
       tx.objectStore(META_STORE).get(getOwnerCacheStateKey(owner)),
     ),
     requestToPromise<CachedDocumentRecord[]>(
-      tx.objectStore(DOCS_STORE).index("owner").getAll(owner),
+      tx.objectStore(DOCS_STORE).index("owner_dirty").getAll([owner, 1]),
     ),
   ]);
   await transactionDone;
@@ -990,10 +1006,12 @@ export async function syncDocumentList(
       const existingDocument = existingById.get(serverDocument.id);
       if (
         existingDocument &&
-        isCachedDocumentNewerThanServerListItem(
-          existingDocument,
-          serverDocument,
-        )
+        ((existingDocument.title === serverDocument.title &&
+          existingDocument.updated_at === serverDocument.updated_at) ||
+          isCachedDocumentNewerThanServerListItem(
+            existingDocument,
+            serverDocument,
+          ))
       ) {
         continue;
       }

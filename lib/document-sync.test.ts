@@ -76,10 +76,8 @@ describe("flushDirtyDocuments", () => {
     });
     mocks.updateMaybeSingle.mockResolvedValue({
       data: {
-        content: "Keep",
         share_enabled: false,
         share_token: null,
-        title: "Active",
         updated_at: "2026-07-17T12:00:00.000Z",
       },
       error: null,
@@ -123,10 +121,16 @@ describe("flushDirtyDocuments", () => {
       "updated_at",
       "2026-07-17T11:00:00.000Z",
     );
+    expect(mocks.updateSelect).toHaveBeenCalledWith(
+      "share_enabled, share_token, updated_at",
+    );
+    expect(mocks.readSelect).not.toHaveBeenCalled();
     expect(mocks.putCachedDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "active-document",
         owner: "active-owner",
+        title: "Active",
+        content: "Keep",
         _dirty: false,
       }),
       { generation: 4, owner: "active-owner" },
@@ -313,6 +317,9 @@ describe("flushDirtyDocuments", () => {
       "2026-07-17T11:00:00.000Z",
     );
     expect(mocks.readIdEq).toHaveBeenCalledWith("id", "active-document");
+    expect(mocks.readSelect).toHaveBeenCalledWith(
+      "title, content, share_enabled, share_token, updated_at",
+    );
     expect(result).toEqual({
       cacheUpdated: true,
       conflict: false,
