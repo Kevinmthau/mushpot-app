@@ -1,7 +1,7 @@
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Text } from "@codemirror/state";
 import { EditorView, ViewPlugin, type DecorationSet } from "@codemirror/view";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { markdownLiveFormatting } from "@/components/editor/editor-appearance";
 import { markdownLinkPaste } from "@/components/editor/markdown-link-paste";
@@ -147,6 +147,39 @@ describe("Markdown link label previews", () => {
 });
 
 describe("Markdown table previews", () => {
+  it("does not serialize documents without tables", () => {
+    const doc = Text.of(["Plain paragraph", "", "Another paragraph"]);
+    const serialize = vi.spyOn(doc, "toString");
+    const state = EditorState.create({
+      doc,
+      extensions: [markdown({ base: markdownLanguage }), markdownLiveFormatting],
+    });
+
+    state.update({ selection: { anchor: 2 } }).state.facet(EditorView.decorations);
+
+    expect(serialize).not.toHaveBeenCalled();
+  });
+
+  it("reuses parsed previews when moving into and out of a table", () => {
+    const initialState = createState(`${TABLE}\n\nAfter`, 0);
+    const [initialWidget] = blockPreviewWidgets(initialState);
+    const serialize = vi.spyOn(initialState.doc, "toString");
+    const movedState = initialState.update({ selection: { anchor: TABLE.length + 2 } }).state;
+    const editingState = movedState.update({ selection: { anchor: 2 } }).state;
+    const previewState = editingState.update({ selection: { anchor: 0 } }).state;
+
+    expect(blockPreviewWidgets(movedState)[0]).toBe(initialWidget);
+    expect(blockPreviewWidgets(editingState)).toHaveLength(0);
+    expect(blockPreviewWidgets(previewState)[0]).toBe(initialWidget);
+    expect(serialize).not.toHaveBeenCalled();
+  });
+
+  it("parses a table when the cursor leaves initially revealed source", () => {
+    const initialState = createState(TABLE, 2);
+    expect(blockPreviewCount(initialState)).toBe(0);
+    expect(blockPreviewCount(initialState.update({ selection: { anchor: 0 } }).state)).toBe(1);
+  });
+
   it("previews a table-only document at either selection boundary", () => {
     expect(blockPreviewCount(createState(TABLE, 0))).toBe(1);
     expect(blockPreviewCount(createState(TABLE, TABLE.length))).toBe(1);

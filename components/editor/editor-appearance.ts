@@ -29,6 +29,7 @@ import {
   parseMarkdownReferenceDefinitions,
   parseMarkdownTable,
   type MarkdownInlineContent,
+  type MarkdownReferenceDefinitions,
   type MarkdownTableAlignment,
   type MarkdownTableCell,
   type ParsedMarkdownTable,
@@ -253,22 +254,20 @@ function buildMarkdownTableCell(
 class MarkdownTableWidget extends WidgetType {
   private readonly renderKey: string;
 
-  constructor(
-    private readonly sourceFrom: number,
-    private readonly table: ParsedMarkdownTable,
-  ) {
+  constructor(private readonly table: ParsedMarkdownTable) {
     super();
     this.renderKey = JSON.stringify(table);
   }
 
   eq(other: MarkdownTableWidget) {
-    return (
-      this.sourceFrom === other.sourceFrom &&
-      this.renderKey === other.renderKey
-    );
+    return this.renderKey === other.renderKey;
   }
 
-  private revealSource(view: EditorView, target?: EventTarget | null) {
+  private revealSource(
+    view: EditorView,
+    wrapper: HTMLElement,
+    target?: EventTarget | null,
+  ) {
     const targetElement = target instanceof Element ? target : null;
     const sourceCell = targetElement?.closest<HTMLElement>(
       "[data-table-source-position]",
@@ -285,7 +284,9 @@ class MarkdownTableWidget extends WidgetType {
       ),
     );
     const anchor = Math.min(
-      this.sourceFrom + relativePosition,
+      // A reused widget can move when text before it changes. Read its current
+      // position from CodeMirror instead of retaining the creation offset.
+      view.posAtDOM(wrapper) + relativePosition,
       view.state.doc.length,
     );
 
@@ -351,7 +352,7 @@ class MarkdownTableWidget extends WidgetType {
       }
 
       event.preventDefault();
-      this.revealSource(view, event.target);
+      this.revealSource(view, wrapper, event.target);
     });
     wrapper.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") {
@@ -359,7 +360,7 @@ class MarkdownTableWidget extends WidgetType {
       }
 
       event.preventDefault();
-      this.revealSource(view, event.target);
+      this.revealSource(view, wrapper, event.target);
     });
 
     return wrapper;
@@ -716,8 +717,10 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
             return;
           }
 
-          const source = view.state.doc.sliceString(node.from, node.to);
-          return parseMarkdownTable(source) ? false : undefined;
+          const table = view.state.field(markdownTablePreviews).tables.find(
+            (table) => table.from === node.from && table.to === node.to,
+          );
+          return table?.preview ? false : undefined;
         }
 
         if (node.name === "StrongEmphasis") {
@@ -931,61 +934,111 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
   return Decoration.set(decorations, true);
 }
 
-function buildMarkdownTablePreviews(state: EditorState): DecorationSet {
+type MarkdownTablePreview = {
+  from: number;
+  to: number;
+  // Undefined defers parsing a table whose source is currently being edited.
+  preview?: Range<Decoration> | null;
+};
+
+type MarkdownTablePreviewState = {
+  decorations: DecorationSet;
+  references: MarkdownReferenceDefinitions | null;
+  tables: MarkdownTablePreview[];
+  visiblePreviews: Range<Decoration>[];
+};
+
+function buildMarkdownTablePreviews(
+  state: EditorState,
+  previous?: MarkdownTablePreviewState,
+): MarkdownTablePreviewState {
   if (shouldDisableLiveFormattingState(state)) {
-    return Decoration.none;
+    return {
+      decorations: Decoration.none,
+      references: null,
+      tables: [],
+      visiblePreviews: [],
+    };
   }
 
-  const decorations: Range<Decoration>[] = [];
-  const tree = syntaxTree(state);
-  const documentSource = state.doc.toString();
-  const references = parseMarkdownReferenceDefinitions(
-    documentSource,
-    tree.topNode,
-  );
+  const candidates = previous?.tables ?? [];
+  if (!previous) {
+    syntaxTree(state).iterate({
+      enter: (node) => {
+        if (node.name !== "Table") {
+          return;
+        }
 
-  tree.iterate({
-    enter: (node) => {
-      if (node.name !== "Table") {
-        return;
-      }
-
-      if (selectionIntersectsTableRange(state, node.from, node.to)) {
+        candidates.push({ from: node.from, to: node.to });
         return false;
-      }
+      },
+    });
+  }
 
-      const source = state.doc.sliceString(node.from, node.to);
-      const table = parseMarkdownTable(source, { references });
-      if (!table) {
-        return false;
-      }
-
-      decorations.push(
-        Decoration.replace({
-          block: true,
-          inclusive: false,
-          widget: new MarkdownTableWidget(node.from, table),
-        }).range(node.from, node.to),
-      );
-      return false;
-    },
-  });
-
-  return Decoration.set(decorations, true);
-}
-
-const markdownTablePreviews = StateField.define<DecorationSet>({
-  create: buildMarkdownTablePreviews,
-  update: (decorations, transaction) => {
-    const syntaxChanged =
-      syntaxTree(transaction.startState) !== syntaxTree(transaction.state);
-    if (transaction.docChanged || transaction.selection || syntaxChanged) {
-      return buildMarkdownTablePreviews(transaction.state);
+  let references = previous?.references ?? null;
+  const visiblePreviews: Range<Decoration>[] = [];
+  const tables = candidates.map((candidate) => {
+    const { from, to } = candidate;
+    if (selectionIntersectsTableRange(state, from, to)) {
+      return candidate;
     }
 
-    return decorations.map(transaction.changes);
+    let { preview } = candidate;
+    if (preview === undefined) {
+      // Selection-only updates reuse reference definitions and parsed widgets.
+      // Documents without tables never need full-text serialization here.
+      references ??= parseMarkdownReferenceDefinitions(
+        state.doc.toString(),
+        syntaxTree(state).topNode,
+      );
+      const source = state.doc.sliceString(from, to);
+      const table = parseMarkdownTable(source, { references });
+      preview = table
+        ? Decoration.replace({
+            block: true,
+            inclusive: false,
+            widget: new MarkdownTableWidget(table),
+          }).range(from, to)
+        : null;
+    }
+    if (preview) {
+      visiblePreviews.push(preview);
+    }
+    return preview === candidate.preview ? candidate : { from, to, preview };
+  });
+
+  const visibilityUnchanged =
+    previous &&
+    visiblePreviews.length === previous.visiblePreviews.length &&
+    visiblePreviews.every(
+      (preview, index) => preview === previous.visiblePreviews[index],
+    );
+
+  return {
+    decorations: visibilityUnchanged
+      ? previous.decorations
+      : Decoration.set(visiblePreviews, true),
+    references,
+    tables,
+    visiblePreviews,
+  };
+}
+
+const markdownTablePreviews = StateField.define<MarkdownTablePreviewState>({
+  create: buildMarkdownTablePreviews,
+  update: (previews, transaction) => {
+    const syntaxChanged =
+      syntaxTree(transaction.startState) !== syntaxTree(transaction.state);
+    if (transaction.docChanged || syntaxChanged) {
+      return buildMarkdownTablePreviews(transaction.state);
+    }
+    if (transaction.selection) {
+      return buildMarkdownTablePreviews(transaction.state, previews);
+    }
+    return previews;
   },
-  provide: (field) => EditorView.decorations.from(field),
+  provide: (field) =>
+    EditorView.decorations.from(field, (previews) => previews.decorations),
 });
 
 const markdownInlineLiveFormatting = ViewPlugin.fromClass(

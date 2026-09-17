@@ -41,15 +41,19 @@ export type FlushDirtyDocumentsResult =
     };
 
 const SAVE_RETRY_DELAYS_MS = [1000, 2000, 4000];
-const DOCUMENT_SAVE_SELECT =
+const DOCUMENT_SAVE_SELECT = "share_enabled, share_token, updated_at";
+const DOCUMENT_RECOVERY_SELECT =
   "title, content, share_enabled, share_token, updated_at";
 
-type PersistedDocumentState = {
-  content: string;
+type PersistedDocumentMetadata = {
   share_enabled: boolean;
   share_token: string | null;
-  title: string;
   updated_at: string;
+};
+
+type PersistedDocumentState = PersistedDocumentMetadata & {
+  content: string;
+  title: string;
 };
 
 export function normalizeDocumentTitle(title: string) {
@@ -77,7 +81,7 @@ export async function persistDocumentSnapshot(
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < SAVE_RETRY_DELAYS_MS.length; attempt += 1) {
-    let updatedDocument: PersistedDocumentState | null = null;
+    let updatedDocument: PersistedDocumentMetadata | null = null;
     let updateError: unknown = null;
 
     try {
@@ -130,7 +134,7 @@ export async function persistDocumentSnapshot(
     try {
       const { data, error } = await supabase
         .from("documents")
-        .select(DOCUMENT_SAVE_SELECT)
+        .select(DOCUMENT_RECOVERY_SELECT)
         .eq("id", snapshot.id)
         .eq("owner", snapshot.owner)
         .maybeSingle();

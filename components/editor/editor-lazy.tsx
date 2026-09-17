@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
 
 import { EditorPreviewFallback } from "@/components/editor/editor-loading";
+import { preloadEditorWorkspace } from "@/components/editor/editor-workspace-loader";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { getDocumentDisplayTitle } from "@/lib/documents";
@@ -14,11 +15,13 @@ let editorClientModulePromise:
 let resolvedEditorClient: ComponentType<EditorClientProps> | null = null;
 
 export function preloadEditorClient() {
+  // Start both chunks together. The workspace loader retries a failed warmup
+  // when the editor mounts, without delaying the lightweight editor shell.
+  void preloadEditorWorkspace().catch(() => {});
   if (!editorClientModulePromise) {
     editorClientModulePromise = import("@/components/editor/editor-client")
       .then((module) => {
         resolvedEditorClient = module.EditorClient;
-        void module.preloadEditorWorkspace?.();
         return module;
       })
       .catch((error) => {

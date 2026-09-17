@@ -228,6 +228,7 @@ Deno.test("maintenance schedules retry after cleanup failure", async () => {
       },
     }),
     {
+      now: () => new Date("2026-07-29T11:00:00.000Z"),
       createOperations: () =>
         createOperations({
           claimCleanupJobs: () => Promise.resolve([CLEANUP_JOB]),
@@ -263,7 +264,9 @@ Deno.test("maintenance schedules retry after cleanup failure", async () => {
   assertEquals(result.failedJobs, 1);
   assertEquals(result.completedJobs, 0);
   assertEquals(retriedJobId, CLEANUP_JOB.job_id);
-  assertEquals(retryAt.length > 0, true);
+  // At age 23 hours, a successful scan would wait until expiry. A first
+  // operational failure still becomes eligible for retry in one minute.
+  assertEquals(retryAt, "2026-07-29T11:01:00.000Z");
   assertEquals(completed, false);
 });
 
@@ -304,7 +307,11 @@ Deno.test("cleanup recursively deletes, re-lists, then completes", async () => {
     },
   });
 
-  await processCleanupJob(operations, CLEANUP_JOB);
+  await processCleanupJob(
+    operations,
+    CLEANUP_JOB,
+    new Date("2026-07-29T12:00:00.000Z"),
+  );
 
   assertEquals(
     calls.some((call) =>
@@ -341,8 +348,139 @@ Deno.test("cleanup defers empty tombstones during the TUS grace window", async (
   );
 
   assertEquals(result, "deferred");
-  assertEquals(deferredUntil, "2026-07-29T12:06:00.000Z");
+  assertEquals(deferredUntil, "2026-07-29T12:05:00.000Z");
   assertEquals(completed, false);
+});
+
+Deno.test("empty cleanup scans back off and finish with a pass at expiry", async () => {
+  const createdAt = new Date(CLEANUP_JOB.created_at).getTime();
+  const scanAges: number[] = [];
+  let nextScanAt = new Date(createdAt);
+  let listCount = 0;
+  let completed = false;
+  const operations = createOperations({
+    listObjects: () => {
+      listCount += 1;
+      return Promise.resolve([]);
+    },
+    deferCleanupJob: (_job, retryAt) => {
+      const scheduledAt = new Date(retryAt);
+      assertEquals(scheduledAt > nextScanAt, true);
+      nextScanAt = scheduledAt;
+      return Promise.resolve();
+    },
+    completeCleanupJob: () => {
+      assertEquals(nextScanAt.getTime() - createdAt, 24 * 60 * 60 * 1_000);
+      completed = true;
+      return Promise.resolve();
+    },
+  });
+
+  for (let attempt = 0; attempt < 20 && !completed; attempt += 1) {
+    scanAges.push((nextScanAt.getTime() - createdAt) / 60_000);
+    const result = await processCleanupJob(operations, CLEANUP_JOB, nextScanAt);
+    assertEquals(result, completed ? "completed" : "deferred");
+  }
+
+  assertEquals(completed, true);
+  assertEquals(scanAges, [
+    0,
+    5,
+    15,
+    30,
+    60,
+    120,
+    240,
+    480,
+    720,
+    960,
+    1_200,
+    1_440,
+  ]);
+  // Both buckets are checked twice per pass, including the final expiry pass.
+  assertEquals(listCount, 48);
+});
+
+Deno.test("cleanup skips missed scans without using the failure retry count", async () => {
+  let deferredUntil = "";
+  const result = await processCleanupJob(
+    createOperations({
+      deferCleanupJob: (_job, retryAt) => {
+        deferredUntil = retryAt;
+        return Promise.resolve();
+      },
+    }),
+    { ...CLEANUP_JOB, attempt_count: 100 },
+    new Date("2026-07-28T13:40:00.000Z"),
+  );
+
+  assertEquals(result, "deferred");
+  assertEquals(deferredUntil, "2026-07-28T14:00:00.000Z");
+});
+
+Deno.test("later cleanup scans remove uploads arriving between passes and before expiry", async () => {
+  const root = `${CLEANUP_JOB.owner}/${CLEANUP_JOB.document_id}`;
+  const pendingObjects = new Set<string>();
+  const removedPaths: string[] = [];
+  let completed = false;
+  const operations = createOperations({
+    listObjects: (bucket) =>
+      Promise.resolve(
+        bucket === "document-videos"
+          ? Array.from(pendingObjects, (name) => ({ id: name, name }))
+          : [],
+      ),
+    removeObjects: (bucket, paths) => {
+      assertEquals(bucket, "document-videos");
+      for (const path of paths) {
+        removedPaths.push(path);
+        pendingObjects.delete(path.slice(root.length + 1));
+      }
+      return Promise.resolve();
+    },
+    completeCleanupJob: () => {
+      assertEquals(pendingObjects.size, 0);
+      completed = true;
+      return Promise.resolve();
+    },
+  });
+
+  await processCleanupJob(
+    operations,
+    CLEANUP_JOB,
+    new Date("2026-07-28T12:05:00.000Z"),
+  );
+  pendingObjects.add("resumed-at-12-06.mp4");
+  assertEquals(
+    await processCleanupJob(
+      operations,
+      CLEANUP_JOB,
+      new Date("2026-07-28T12:15:00.000Z"),
+    ),
+    "deferred",
+  );
+  assertEquals(pendingObjects.size, 0);
+  assertEquals(completed, false);
+
+  await processCleanupJob(
+    operations,
+    CLEANUP_JOB,
+    new Date("2026-07-29T08:00:00.000Z"),
+  );
+  pendingObjects.add("resumed-just-before-expiry.mp4");
+  assertEquals(
+    await processCleanupJob(
+      operations,
+      CLEANUP_JOB,
+      new Date("2026-07-29T12:00:00.000Z"),
+    ),
+    "completed",
+  );
+  assertEquals(completed, true);
+  assertEquals(removedPaths, [
+    `${root}/resumed-at-12-06.mp4`,
+    `${root}/resumed-just-before-expiry.mp4`,
+  ]);
 });
 
 Deno.test("late TUS object is removed and tombstone remains scheduled", async () => {
@@ -411,7 +549,11 @@ Deno.test("cleanup never completes when deletion fails", async () => {
 
   let message = "";
   try {
-    await processCleanupJob(operations, CLEANUP_JOB);
+    await processCleanupJob(
+      operations,
+      CLEANUP_JOB,
+      new Date("2026-07-29T12:00:00.000Z"),
+    );
   } catch (error) {
     message = error instanceof Error ? error.message : "";
   }

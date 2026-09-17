@@ -645,10 +645,17 @@ function parseTableCells(
     },
   );
 
-  for (const cell of children.filter((child) => child.name === "TableCell")) {
-    const delimitersBeforeCell = delimiters.filter(
-      (delimiter) => delimiter.to <= cell.from,
-    ).length;
+  let delimitersBeforeCell = 0;
+  for (const cell of children) {
+    if (cell.name !== "TableCell") {
+      continue;
+    }
+    while (
+      delimitersBeforeCell < delimiters.length &&
+      delimiters[delimitersBeforeCell].to <= cell.from
+    ) {
+      delimitersBeforeCell += 1;
+    }
     const cellIndex = delimitersBeforeCell - (hasLeadingDelimiter ? 1 : 0);
     if (cellIndex < 0 || cellIndex >= columnCount) {
       continue;
