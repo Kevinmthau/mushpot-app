@@ -19,9 +19,21 @@ Also create Vault secrets named `mushpot_project_url` and
 `schedule-document-media-maintenance.sql`. The cron request intentionally uses
 only `apikey` plus the maintenance secret.
 
-Deleted-document cleanup jobs remain as tombstones for 24 hours and rescan both
-buckets every five minutes. This catches objects completed by resumable upload
-sessions that were created before the document was deleted.
+Deleted-document cleanup jobs remain as tombstones for 24 hours. After the
+initial cleanup, successful scans schedule the next check at job ages 5, 15, and
+30 minutes, then 1, 2, 4, 8, 12, 16, 20, and 24 hours. The five-minute cron
+claims only due jobs; missed milestones are skipped after a worker outage. Each
+pass checks both buckets twice, including a final cleanup at or after expiry
+before removing the tombstone. An always-empty job therefore needs at most 12
+passes (48 bucket listings) instead of rescanning every five minutes.
+
+These rescans catch objects completed by resumable upload sessions created
+before deletion. During the later part of the grace period, such objects may
+wait up to four hours for the next eligible scan, plus scheduler delay. Storage
+failures use a separate exponential retry starting at one minute; successful
+rescans do not increment that failure count. Deploy the updated
+`document-media-maintenance` function to apply this schedule; no database
+migration or cron change is needed.
 
 ## Backfill
 
