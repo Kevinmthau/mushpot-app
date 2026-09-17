@@ -210,6 +210,27 @@ function getSharedDocumentMediaReferenceKey(
   return `${reference.bucket}\0${reference.path}`;
 }
 
+export function getSharedDocumentMediaReferences(
+  content: string,
+  options: ParseSharedDocumentMediaReferenceOptions,
+) {
+  const references = new Map<string, SharedDocumentMediaReference>();
+  for (const match of content.matchAll(MEDIA_URL_CANDIDATE_PATTERN)) {
+    const reference = parseSharedDocumentMediaReference(match[0], options);
+    if (reference) {
+      references.set(getSharedDocumentMediaReferenceKey(reference), reference);
+    }
+  }
+  return references;
+}
+
+export function hasSharedDocumentMediaReference(
+  references: Map<string, SharedDocumentMediaReference>,
+  reference: SharedDocumentMediaReference,
+) {
+  return references.has(getSharedDocumentMediaReferenceKey(reference));
+}
+
 export function sharedDocumentContentReferencesMedia(
   content: string,
   expectedReference: SharedDocumentMediaReference,
