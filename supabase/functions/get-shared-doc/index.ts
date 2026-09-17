@@ -14,6 +14,8 @@ Deno.serve((request) =>
       });
 
       return {
+        createSignedUrls: (bucket, paths, expiresIn) =>
+          adminClient.storage.from(bucket).createSignedUrls(paths, expiresIn),
         createSignedUrl: (bucket, path, expiresIn) =>
           adminClient.storage.from(bucket).createSignedUrl(path, expiresIn),
         getSharedDocument: async (docId, token) => {

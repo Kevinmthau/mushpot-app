@@ -2,6 +2,8 @@ import { getCorsHeaders, isCorsOriginAllowed } from "../_shared/cors.ts";
 import {
   buildSharedDocumentMediaUrl,
   DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
+  getSharedDocumentMediaReferences,
+  hasSharedDocumentMediaReference,
   parseSharedDocumentMediaReference,
   rewriteSharedDocumentMediaUrls,
   sharedDocumentContentReferencesMedia,
@@ -11,6 +13,7 @@ import {
 type SharedDocPayload = {
   docId: string;
   mediaUrl?: string;
+  mediaUrls?: string[];
   token: string;
 };
 
@@ -27,6 +30,17 @@ type QueryResult<T> = {
 };
 
 export type SharedDocumentOperations = {
+  createSignedUrls: (
+    bucket: SharedDocumentMediaReference["bucket"],
+    paths: string[],
+    expiresIn: number,
+  ) => Promise<
+    QueryResult<
+      Array<
+        { path: string | null; signedUrl: string | null; error: string | null }
+      >
+    >
+  >;
   createSignedUrl: (
     bucket: SharedDocumentMediaReference["bucket"],
     path: string,
@@ -117,11 +131,17 @@ export async function handleSharedDocumentRequest(
   const docId = typeof body.docId === "string" ? body.docId : "";
   const token = typeof body.token === "string" ? body.token : "";
   const mediaUrl = body.mediaUrl;
+  const mediaUrls = body.mediaUrls;
 
   if (
     !UUID_PATTERN.test(docId) ||
     !SHARE_TOKEN_PATTERN.test(token) ||
-    (mediaUrl !== undefined && typeof mediaUrl !== "string")
+    (mediaUrl !== undefined && typeof mediaUrl !== "string") ||
+    (mediaUrls !== undefined && (
+      mediaUrl !== undefined || !Array.isArray(mediaUrls) ||
+      mediaUrls.length === 0 || mediaUrls.length > 50 ||
+      mediaUrls.some((url) => typeof url !== "string" || url.length > 4096)
+    ))
   ) {
     return jsonResponse(request, { error: "Invalid share link." }, 400);
   }
@@ -135,6 +155,58 @@ export async function handleSharedDocumentRequest(
       { error: "Invalid or expired share link." },
       404,
     );
+  }
+
+  if (mediaUrls !== undefined) {
+    const options = { documentId: docId, ownerId: data.owner, supabaseUrl };
+    const references = getSharedDocumentMediaReferences(data.content, options);
+    const results = new Map<
+      string,
+      { signedUrl: string | null; retry: boolean }
+    >();
+    const buckets = new Map<
+      SharedDocumentMediaReference["bucket"],
+      Map<string, string[]>
+    >();
+    for (const url of new Set(mediaUrls)) {
+      results.set(url, { signedUrl: null, retry: false });
+      const reference = parseSharedDocumentMediaReference(url, options);
+      if (
+        !reference || !hasSharedDocumentMediaReference(references, reference)
+      ) continue;
+      // Authorized media can retry through the single route if Storage has a
+      // partial outage. Denied references must not trigger additional requests.
+      results.set(url, { signedUrl: null, retry: true });
+      const paths = buckets.get(reference.bucket) ??
+        new Map<string, string[]>();
+      paths.set(reference.path, [...(paths.get(reference.path) ?? []), url]);
+      buckets.set(reference.bucket, paths);
+    }
+    await Promise.all(Array.from(buckets, async ([bucket, paths]) => {
+      try {
+        const signed = await operations.createSignedUrls(
+          bucket,
+          Array.from(paths.keys()),
+          DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
+        );
+        if (signed.error) return;
+        for (const result of signed.data ?? []) {
+          if (!result.path || result.error || !result.signedUrl) continue;
+          for (const url of paths.get(result.path) ?? []) {
+            results.set(url, { signedUrl: result.signedUrl, retry: false });
+          }
+        }
+      } catch {
+        // One unavailable bucket must not prevent the remaining media loading.
+      }
+    }));
+    return jsonResponse(request, {
+      urls: Array.from(
+        results,
+        ([mediaUrl, result]) => ({ mediaUrl, ...result }),
+      ),
+      expiresIn: DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
+    });
   }
 
   if (mediaUrl !== undefined) {

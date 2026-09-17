@@ -38,9 +38,10 @@ describe("buildSharedDocumentPreview", () => {
     expect(buildSharedDocumentPreview("![alt text](image.png)")).toBe(
       "alt text",
     );
-    expect(buildSharedDocumentPreview("[link label](https://example.com)")).toBe(
-      "link label",
-    );
+    expect(buildSharedDocumentPreview("[link label](https://example.com)"))
+      .toBe(
+        "link label",
+      );
     expect(buildSharedDocumentPreview("> a quoted line")).toBe("a quoted line");
     expect(buildSharedDocumentPreview("- a list item")).toBe("a list item");
     expect(buildSharedDocumentPreview("`inline code`")).toBe("inline code");
@@ -125,5 +126,62 @@ describe("fetchSharedMediaUrl", () => {
     await expect(
       fetchSharedMediaUrl("doc-id", "share-token", "/m/document-images/path"),
     ).resolves.toBeNull();
+  });
+});
+
+describe("fetchSharedMediaUrls", () => {
+  it("accepts partial results and refuses off-origin signed URLs", async () => {
+    const { fetchSharedMediaUrls } = await import("@/lib/shared-document");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({
+          urls: [
+            {
+              mediaUrl: "/m/one",
+              signedUrl: "https://project.supabase.co/signed/one",
+            },
+            { mediaUrl: "/m/two", signedUrl: "https://unexpected.example/two" },
+            { mediaUrl: "/m/three", signedUrl: null },
+          ],
+          expiresIn: 300,
+        }))
+      ),
+    );
+    await expect(
+      fetchSharedMediaUrls("doc", "token", ["/m/one", "/m/two", "/m/three"]),
+    ).resolves.toEqual({
+      urls: [
+        {
+          mediaUrl: "/m/one",
+          signedUrl: "https://project.supabase.co/signed/one",
+        },
+        { mediaUrl: "/m/two", signedUrl: null },
+        { mediaUrl: "/m/three", signedUrl: null },
+      ],
+      expiresIn: 300,
+    });
+  });
+
+  it("distinguishes an old edge deployment from a revoked share", async () => {
+    const { fetchSharedMediaUrls } = await import("@/lib/shared-document");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({ title: "Old edge", content: "Content" }),
+          ),
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 404 })),
+    );
+    await expect(fetchSharedMediaUrls("doc", "token", ["/m/one"])).resolves
+      .toBeNull();
+    await expect(fetchSharedMediaUrls("doc", "token", ["/m/one"])).resolves
+      .toEqual({ urls: [], expiresIn: 0 });
   });
 });

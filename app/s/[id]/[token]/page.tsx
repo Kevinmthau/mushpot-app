@@ -88,6 +88,7 @@ export default async function SharedDocumentPage({ params }: SharedDocPageProps)
     <SharedDocumentPageClient
       content={document.content}
       documentId={id}
+      shareToken={token}
       title={document.title}
       updatedAt={document.updated_at}
     />

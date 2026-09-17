@@ -1,9 +1,9 @@
 import {
   Children,
   cloneElement,
-  isValidElement,
-  type CSSProperties,
   type ComponentPropsWithoutRef,
+  type CSSProperties,
+  isValidElement,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -12,6 +12,10 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { isSupportedVideoUrl } from "@/components/editor/image-upload-utils";
+import {
+  SharedDocumentMedia,
+  SharedMediaProvider,
+} from "@/components/editor/shared-document-media";
 import { getReadingTimeFromText } from "@/lib/document-stats";
 import { getDocumentDisplayTitle } from "@/lib/documents";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
@@ -24,6 +28,7 @@ import {
 type SharedDocumentPageClientProps = {
   content: string;
   documentId: string;
+  shareToken: string;
   title: string;
   updatedAt: string;
 };
@@ -33,7 +38,9 @@ type ImageLikeElementProps = {
   style?: CSSProperties;
 };
 
-function isImageLikeElement(node: ReactNode): node is ReactElement<ImageLikeElementProps> {
+function isImageLikeElement(
+  node: ReactNode,
+): node is ReactElement<ImageLikeElementProps> {
   return (
     isValidElement(node) &&
     typeof node.props === "object" &&
@@ -97,29 +104,24 @@ function SharedMarkdownImage({
   if (isSupportedVideoUrl(src)) {
     const poster = parseVideoPosterFromTitle(title);
     return (
-      <video
-        aria-label={alt || "Video"}
+      <SharedDocumentMedia
+        alt={alt || "Video"}
         className={mediaClassName}
-        controls
-        playsInline
         poster={poster ?? undefined}
-        preload="none"
         src={poster ? src : appendFirstFrameFragment(src)}
         style={style}
+        video
       />
     );
   }
 
   return (
-    // Shared markdown can reference arbitrary remote images without known dimensions.
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
+    <SharedDocumentMedia
       alt={alt ?? ""}
       className={mediaClassName}
-      decoding="async"
-      loading="lazy"
       src={src}
       style={style}
+      video={false}
     />
   );
 }
@@ -152,6 +154,7 @@ const markdownComponents: Components = {
 export function SharedDocumentPageClient({
   content,
   documentId,
+  shareToken,
   title,
   updatedAt,
 }: SharedDocumentPageClientProps) {
@@ -184,12 +187,14 @@ export function SharedDocumentPageClient({
           className="markdown-body pb-24"
           data-document-id={documentId}
         >
-          <ReactMarkdown
-            components={markdownComponents}
-            remarkPlugins={[remarkGfm]}
-          >
-            {content}
-          </ReactMarkdown>
+          <SharedMediaProvider documentId={documentId} token={shareToken}>
+            <ReactMarkdown
+              components={markdownComponents}
+              remarkPlugins={[remarkGfm]}
+            >
+              {content}
+            </ReactMarkdown>
+          </SharedMediaProvider>
         </article>
       </main>
     </div>
