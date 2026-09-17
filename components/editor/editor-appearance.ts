@@ -8,6 +8,7 @@ import {
   type Range,
 } from "@codemirror/state";
 import { type SyntaxNode } from "@lezer/common";
+import { decodeString } from "micromark-util-decode-string";
 import {
   Decoration,
   type DecorationSet,
@@ -609,8 +610,38 @@ function parseMarkdownLink(view: EditorView, syntaxNode: SyntaxNode) {
   return {
     labelFrom,
     labelTo,
-    url,
+    url: decodeString(url),
   };
+}
+
+function addLinkLabelUrlEscapes(
+  view: EditorView,
+  syntaxNode: SyntaxNode,
+  labelFrom: number,
+  labelTo: number,
+  decorations: Range<Decoration>[],
+) {
+  syntaxNode.cursor().iterate((node) => {
+    if (/^(InlineCode|Image|Autolink|HTMLTag)$/.test(node.name)) {
+      return false;
+    }
+
+    if (node.name !== "URL") {
+      return;
+    }
+
+    if (node.from >= labelFrom && node.to <= labelTo) {
+      // GFM autolinking absorbs escapes into URL nodes inside link labels,
+      // so they do not have the Escape children handled by the main traversal.
+      const source = view.state.doc.sliceString(node.from, node.to);
+      for (const match of source.matchAll(/\\[!-/:-@[-`{-~]/g)) {
+        const from = node.from + match.index;
+        decorations.push(hiddenMarkdownMarkDecoration.range(from, from + 1));
+      }
+    }
+
+    return false;
+  });
 }
 
 function parseInlineCode(syntaxNode: SyntaxNode) {
@@ -704,6 +735,16 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
           return;
         }
 
+        if (
+          node.name === "Escape" &&
+          !selectionIntersectsRange(view, node.from, node.to)
+        ) {
+          decorations.push(
+            hiddenMarkdownMarkDecoration.range(node.from, node.from + 1),
+          );
+          return;
+        }
+
         if (node.name.startsWith("ATXHeading")) {
           if (selectionIntersectsRange(view, node.from, node.to)) {
             return;
@@ -788,6 +829,13 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
           const { labelFrom, labelTo, url } = parsedLink;
           if (labelFrom < labelTo) {
             decorations.push(getLinkDecoration(url).range(labelFrom, labelTo));
+            addLinkLabelUrlEscapes(
+              view,
+              node.node,
+              labelFrom,
+              labelTo,
+              decorations,
+            );
           }
 
           decorations.push(hiddenMarkdownMarkDecoration.range(node.from, labelFrom));

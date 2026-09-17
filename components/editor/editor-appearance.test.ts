@@ -1,9 +1,10 @@
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
-import { EditorView, type DecorationSet } from "@codemirror/view";
+import { EditorView, ViewPlugin, type DecorationSet } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 
 import { markdownLiveFormatting } from "@/components/editor/editor-appearance";
+import { markdownLinkPaste } from "@/components/editor/markdown-link-paste";
 import type { ParsedMarkdownTable } from "@/lib/markdown/table";
 
 const TABLE = ["| Name | Value |", "| --- | --- |", "| One | Two |"].join(
@@ -57,6 +58,93 @@ function blockPreviewWidgets(state: EditorState) {
   }
   return widgets;
 }
+
+type InlineFormattingPluginProbe = {
+  create: (view: EditorView) => { decorations: DecorationSet };
+};
+
+function inlinePreviewText(doc: string, anchor = doc.length) {
+  const state = createState(doc, anchor);
+  const plugin = markdownLiveFormatting.find(
+    (extension) => extension instanceof ViewPlugin,
+  ) as unknown as InlineFormattingPluginProbe;
+  const view = {
+    state,
+    visibleRanges: [{ from: 0, to: doc.length }],
+  } as unknown as EditorView;
+  const { decorations } = plugin.create(view);
+  const hiddenRanges: { from: number; to: number }[] = [];
+
+  decorations.between(0, doc.length, (from, to, decoration) => {
+    if (
+      decoration.spec.widget?.constructor.name !== "HiddenMarkdownMarkWidget"
+    ) {
+      return;
+    }
+
+    hiddenRanges.push({ from, to });
+  });
+
+  let text = "";
+  let position = 0;
+  for (const { from, to } of hiddenRanges.sort((a, b) => a.from - b.from)) {
+    // Hidden escapes must not duplicate or overlap another replacement.
+    expect(from).toBeGreaterThanOrEqual(position);
+    text += doc.slice(position, from);
+    position = to;
+  }
+
+  return text + doc.slice(position);
+}
+
+describe("Markdown link label previews", () => {
+  it.each([
+    "https://example.com/path_name",
+    "https://example.com/?a=1&b=2",
+    "https://example.com/a_(b)?tag=[x]&copy;=yes",
+  ])("hides escapes in pasted URL labels: %s", (url) => {
+    const state = EditorState.create({
+      extensions: [
+        markdown({ base: markdownLanguage }),
+        markdownLinkPaste,
+      ],
+    });
+    const pasted = state.update(state.replaceSelection(url), {
+      userEvent: "input.paste",
+    }).state.doc.toString();
+
+    expect(inlinePreviewText(`${pasted}\n\nAfter`)).toBe(`${url}\n\nAfter`);
+  });
+
+  it("handles URL nodes and ordinary escapes in the same label once each", () => {
+    const source = String.raw`[https://example.com/path\_name and \*literal\*](https://example.com)`;
+
+    expect(inlinePreviewText(`${source}\n\nAfter`)).toBe(
+      "https://example.com/path_name and *literal*\n\nAfter",
+    );
+  });
+
+  it("reveals URL-label escapes while editing the link", () => {
+    const source = String.raw`[https://example.com/path\_name](https://example.com/path_name)`;
+
+    expect(inlinePreviewText(source, 10)).toBe(source);
+  });
+
+  it.each([
+    String.raw`https://example.com/path\_name`,
+    String.raw`<https://example.com/path\_name>`,
+  ])("preserves backslashes in raw URL contexts: %s", (source) => {
+    expect(inlinePreviewText(`${source}\n\nAfter`)).toBe(`${source}\n\nAfter`);
+  });
+
+  it("preserves backslashes in inline code inside link labels", () => {
+    const source = "[`https://example.com/path\\_name`](https://example.com)";
+
+    expect(inlinePreviewText(`${source}\n\nAfter`)).toBe(
+      "https://example.com/path\\_name\n\nAfter",
+    );
+  });
+});
 
 describe("Markdown table previews", () => {
   it("previews a table-only document at either selection boundary", () => {
