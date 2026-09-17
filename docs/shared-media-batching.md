@@ -13,3 +13,7 @@ Deploy the updated `get-shared-doc` Edge Function, then the Next.js application.
 ## Verification
 
 Automated checks cover a batch's one document lookup/per-bucket signatures, duplicates and mixed invalid references, share revocation, partial Storage failures, bounded batch concurrency, URL expiry, old-edge fallback, offscreen observations, changed media props, and no-JavaScript SSR markup. A live-account check should load a shared document with several images plus a video/poster, scroll to later media after five minutes, revoke sharing before requesting new media, and confirm the same behavior with JavaScript disabled. Automated tests and synthetic fixtures do not establish deployed latency.
+
+Synthetic Safari verification used the actual page/media components and production CSS with local fake signing/image endpoints. The first two images loaded in one batch; the two below-fold images remained unrequested until scrolling and then loaded in a second batch. An external-reference image bypassed the batch endpoint. No live account or Supabase data was used.
+
+![Synthetic shared document with batched images and unchanged Markdown styling](screenshots/shared-media-batching.png)
