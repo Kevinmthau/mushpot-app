@@ -11,7 +11,18 @@ const STORAGE_DELETE_BATCH_SIZE = 100;
 const MAX_DELETE_PASSES = 100;
 const MAX_RETRY_SECONDS = 24 * 60 * 60;
 const CLEANUP_TOMBSTONE_MILLISECONDS = 24 * 60 * 60 * 1_000;
-const CLEANUP_RESCAN_MILLISECONDS = 5 * 60 * 1_000;
+const CLEANUP_RESCAN_OFFSETS_MILLISECONDS = [
+  5,
+  15,
+  30,
+  60,
+  120,
+  240,
+  480,
+  720,
+  960,
+  1_200,
+].map((minutes) => minutes * 60 * 1_000);
 
 export type DocumentMediaBucket = (typeof DOCUMENT_MEDIA_BUCKETS)[number];
 
@@ -61,6 +72,7 @@ export type MaintenanceOperations = {
 type MaintenanceRequestDependencies = {
   createOperations: () => MaintenanceOperations;
   getEnvironmentValue: (name: string) => string | undefined;
+  now?: () => Date;
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -100,6 +112,25 @@ export function getRetryDelaySeconds(attemptCount: number) {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown maintenance error.";
+}
+
+function getCleanupRescanAt(job: CleanupJob, now: Date) {
+  const createdAt = new Date(job.created_at).getTime();
+  if (!Number.isFinite(createdAt)) {
+    throw new Error("Cleanup job has an invalid creation timestamp.");
+  }
+
+  // Successful empty scans follow the tombstone's age, independently of the
+  // operational failure count. Skip missed milestones after a worker outage.
+  // Always retain a final pass at expiry to catch late resumable uploads.
+  const nextOffset = [
+    ...CLEANUP_RESCAN_OFFSETS_MILLISECONDS,
+    CLEANUP_TOMBSTONE_MILLISECONDS,
+  ].find((offset) => createdAt + offset > now.getTime());
+
+  return nextOffset === undefined
+    ? null
+    : new Date(createdAt + nextOffset).toISOString();
 }
 
 function joinStoragePath(prefix: string, name: string) {
@@ -177,6 +208,7 @@ export async function processCleanupJob(
   now = new Date(),
 ) {
   const rootPrefix = `${job.owner}/${job.document_id}`;
+  const retryAt = getCleanupRescanAt(job, now);
 
   for (const bucket of DOCUMENT_MEDIA_BUCKETS) {
     await deleteDocumentMedia(operations, bucket, rootPrefix);
@@ -189,19 +221,7 @@ export async function processCleanupJob(
     await deleteDocumentMedia(operations, bucket, rootPrefix);
   }
 
-  const tombstoneExpiresAt = new Date(job.created_at).getTime() +
-    CLEANUP_TOMBSTONE_MILLISECONDS;
-  if (!Number.isFinite(tombstoneExpiresAt)) {
-    throw new Error("Cleanup job has an invalid creation timestamp.");
-  }
-
-  if (now.getTime() < tombstoneExpiresAt) {
-    const retryAt = new Date(
-      Math.min(
-        now.getTime() + CLEANUP_RESCAN_MILLISECONDS,
-        tombstoneExpiresAt,
-      ),
-    ).toISOString();
+  if (retryAt !== null) {
     await operations.deferCleanupJob(job, retryAt);
     return "deferred" as const;
   }
@@ -210,7 +230,10 @@ export async function processCleanupJob(
   return "completed" as const;
 }
 
-async function runMaintenance(operations: MaintenanceOperations) {
+async function runMaintenance(
+  operations: MaintenanceOperations,
+  now: () => Date,
+) {
   const claimedClones = await operations.claimExpiredClones();
   let deletedClones = 0;
 
@@ -235,7 +258,7 @@ async function runMaintenance(operations: MaintenanceOperations) {
 
   for (const job of claimedJobs) {
     try {
-      const result = await processCleanupJob(operations, job);
+      const result = await processCleanupJob(operations, job, now());
       if (result === "completed") {
         completedJobs += 1;
       } else {
@@ -244,7 +267,8 @@ async function runMaintenance(operations: MaintenanceOperations) {
     } catch (error) {
       failedJobs += 1;
       const retryDelay = getRetryDelaySeconds(job.attempt_count);
-      const retryAt = new Date(Date.now() + retryDelay * 1_000).toISOString();
+      const retryAt = new Date(now().getTime() + retryDelay * 1_000)
+        .toISOString();
 
       try {
         await operations.failCleanupJob(
@@ -310,7 +334,10 @@ export async function handleMaintenanceRequest(
   }
 
   try {
-    const result = await runMaintenance(dependencies.createOperations());
+    const result = await runMaintenance(
+      dependencies.createOperations(),
+      dependencies.now ?? (() => new Date()),
+    );
     return jsonResponse(result);
   } catch (error) {
     console.error("Document media maintenance failed", error);

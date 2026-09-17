@@ -194,8 +194,10 @@ sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
   backfills legacy cross-document paths, and enforced mode rejects new local
   media paths whose owner or document segment does not match the document row.
 - Deletion queues durable media cleanup in a database trigger. Scheduled
-  service-role maintenance keeps a 24-hour tombstone, repeatedly verifies both
-  document folders are empty, and also reclaims clones whose leases expire.
+  service-role maintenance keeps a 24-hour tombstone, backs off successful empty
+  rescans to at most four hours apart, and verifies both folders again at expiry.
+  Failures follow a separate retry schedule. Maintenance also reclaims clones
+  whose leases expire; see `supabase/admin/README.md` for cleanup timing.
 - Signed media redirects expire after five minutes. Disabling sharing prevents
   new redirects immediately, but a URL already signed before revocation can
   remain usable until its five-minute expiry.
