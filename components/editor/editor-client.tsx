@@ -14,6 +14,10 @@ import { useRouter } from "next/navigation";
 import { useDocumentClone } from "@/components/editor/use-document-clone";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { EditorPreviewFallback } from "@/components/editor/editor-loading";
+import {
+  getLoadedEditorWorkspace,
+  preloadEditorWorkspace,
+} from "@/components/editor/editor-workspace-loader";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
@@ -42,27 +46,6 @@ type EditorWorkspaceProps = {
 type EditorWorkspaceApi = {
   focus: () => void;
 };
-
-let editorWorkspaceModulePromise:
-  | Promise<typeof import("@/components/editor/editor-workspace")>
-  | null = null;
-let resolvedEditorWorkspace: ComponentType<EditorWorkspaceProps> | null = null;
-
-export function preloadEditorWorkspace() {
-  if (!editorWorkspaceModulePromise) {
-    editorWorkspaceModulePromise = import("@/components/editor/editor-workspace")
-      .then((module) => {
-        resolvedEditorWorkspace = module.EditorWorkspace;
-        return module;
-      })
-      .catch((error) => {
-        editorWorkspaceModulePromise = null;
-        throw error;
-      });
-  }
-
-  return editorWorkspaceModulePromise;
-}
 
 type ShareUpdateHandler = (
   enabled: boolean,
@@ -378,7 +361,7 @@ function EditorClientInner({
 
 function EditorWorkspaceLoader(props: EditorWorkspaceProps) {
   const [LoadedWorkspace, setLoadedWorkspace] = useState<ComponentType<EditorWorkspaceProps> | null>(
-    () => resolvedEditorWorkspace,
+    getLoadedEditorWorkspace,
   );
 
   useEffect(() => {
