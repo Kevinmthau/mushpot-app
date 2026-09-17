@@ -50,6 +50,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "fake-indexeddb": "^6.2.5",
+    "jsdom": "^26.1.0",
     "supabase": "^2.101.0",
     "tailwindcss": "^4",
     "typescript": "5.9.3",
