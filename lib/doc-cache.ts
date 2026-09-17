@@ -401,6 +401,9 @@ function openDB(): Promise<IDBDatabase> {
         db.close();
         dbPromise = null;
       };
+      // A blocked request can still succeed after an older tab closes. Replace
+      // its rejected promise so later cache operations can use the connection.
+      dbPromise = Promise.resolve(db);
       resolve(db);
     };
     request.onerror = () => {
@@ -408,7 +411,8 @@ function openDB(): Promise<IDBDatabase> {
       reject(request.error);
     };
     request.onblocked = () => {
-      dbPromise = null;
+      // The open request is still pending. Keep its rejected promise so later
+      // callers fail promptly instead of queuing behind the blocked upgrade.
       reject(new Error("Document cache upgrade was blocked."));
     };
   });

@@ -781,4 +781,43 @@ describe("owner-scoped document cache", () => {
     );
     expect(await cache.getCachedDocumentForOwner("metadata", OWNER)).toBeNull();
   });
+
+  it("keeps cache activation best-effort while an older tab blocks the upgrade", async () => {
+    await seedPreviousCache([
+      buildDocument({ kind: "complete", _dirty: true, _dirtyKey: 1 }),
+    ], 3);
+    // The shipped v3 connection has no versionchange handler to close it.
+    const legacyDatabase = await waitForRequest(indexedDB.open("mushpot", 3));
+    const cache = await loadDocumentCache();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      await cache.activateDocumentCacheForOwner(OWNER);
+      expect(cache.getDocumentCacheWriteToken(OWNER)).toBeNull();
+
+      const repeatedActivation = cache.activateDocumentCacheForOwner(OWNER);
+      const settled = await Promise.race([
+        repeatedActivation.then(() => true),
+        new Promise<boolean>((resolve) => {
+          deadline = setTimeout(() => resolve(false), 100);
+        }),
+      ]);
+      // A queued second open never emits blocked, so it would prevent the
+      // document loaders from falling back to their completed remote request.
+      expect(settled).toBe(true);
+      expect(cache.getDocumentCacheWriteToken(OWNER)).toBeNull();
+    } finally {
+      clearTimeout(deadline);
+      legacyDatabase.close();
+    }
+
+    // This request runs after the pending upgrade and confirms it has finished.
+    const upgradedDatabase = await waitForRequest(indexedDB.open("mushpot", 4));
+    upgradedDatabase.close();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    expect(cache.getDocumentCacheWriteToken(OWNER)).not.toBeNull();
+    expect(await cache.getDirtyDocuments(OWNER)).toEqual([
+      expect.objectContaining({ id: "document-a", _dirty: true }),
+    ]);
+  });
 });
