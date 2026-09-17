@@ -4,6 +4,8 @@ type PendingMedia = {
   promise: Promise<ResolvedMedia>;
 };
 
+const BATCH_TIMEOUT_MS = 10_000;
+
 // This resolver is scoped to one mounted shared page, never persistent storage.
 export function createSharedMediaResolver(
   documentId: string,
@@ -24,6 +26,40 @@ export function createSharedMediaResolver(
       : null;
   }
 
+  async function requestBatch(sources: string[]) {
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const deadline = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error("Shared media batch timed out."));
+        }, BATCH_TIMEOUT_MS);
+      });
+      return await Promise.race([
+        fetcher(`${prefix}/media`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mediaUrls: sources.map((url) => mediaPath(url)),
+          }),
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: controller.signal,
+        }).then(async (response) => ({
+          ok: response.ok,
+          status: response.status,
+          // Include body consumption in the deadline: headers alone do not
+          // unblock the other media queued behind this batch.
+          body: response.ok ? await response.json() : null,
+        })),
+        deadline,
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async function flush() {
     timer = undefined;
     if (running || queue.size === 0) return;
@@ -37,17 +73,9 @@ export function createSharedMediaResolver(
     let expiresIn = 0;
     try {
       if (!batchUnavailable) {
-        const response = await fetcher(`${prefix}/media`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mediaUrls: sources.map((url) => mediaPath(url)),
-          }),
-          cache: "no-store",
-          credentials: "same-origin",
-        });
+        const response = await requestBatch(sources);
         if (response.ok) {
-          const body = await response.json();
+          const body = response.body;
           if (
             Array.isArray(body.urls) && body.urls.every((item: unknown) =>
               typeof item === "object" && item !== null && "mediaUrl" in item &&

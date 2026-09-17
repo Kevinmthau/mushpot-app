@@ -131,11 +131,62 @@ describe("shared media retry bounds", () => {
     );
     const url = source("slow");
     const request = resolver.resolve(url);
-    await vi.advanceTimersByTimeAsync(286000);
+    await vi.advanceTimersByTimeAsync(20);
+    // A clock adjustment can invalidate a signature without consuming the
+    // monotonic request timeout.
+    vi.setSystemTime(Date.now() + 286000);
     finish(success([url]));
     await vi.runAllTimersAsync();
     expect(await request).toEqual({ url, expiresAt: 0 });
   });
+
+  it.each(["fetch", "body"] as const)(
+    "times out a stalled %s, aborts it, and drains later batches",
+    async (phase) => {
+      vi.useFakeTimers();
+      const urls = Array.from({ length: 51 }, (_, index) => source(String(index)));
+      let finish!: () => void;
+      const fetcher = vi.fn<typeof fetch>()
+        .mockImplementationOnce(async () => {
+          if (phase === "fetch") {
+            return new Promise<Response>((resolve) => {
+              finish = () => resolve(success(urls.slice(0, 50)));
+            });
+          }
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              finish = () => {
+                controller.enqueue(new TextEncoder().encode(
+                  JSON.stringify({ urls: [], expiresIn: 300 }),
+                ));
+                controller.close();
+              };
+            },
+          }));
+        })
+        .mockImplementationOnce(async () => success(urls.slice(50)));
+      const resolver = createSharedMediaResolver("document", "token", fetcher);
+      const requests = urls.map((url) => resolver.resolve(url));
+      await vi.advanceTimersByTimeAsync(16);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      const signal = fetcher.mock.calls[0][1]?.signal;
+      expect(signal?.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(signal?.aborted).toBe(true);
+      expect(await requests[0]).toEqual({ url: urls[0], expiresAt: 0 });
+      await vi.advanceTimersByTimeAsync(16);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect((await requests[50]).url).toContain("/signed/50.png");
+      expect(vi.getTimerCount()).toBe(0);
+
+      // A late response must not overwrite the fallback or retain a timeout.
+      finish();
+      await vi.runAllTimersAsync();
+      expect(await requests[0]).toEqual({ url: urls[0], expiresAt: 0 });
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it("retries authorized signing failures while keeping denied paths unloaded", async () => {
     vi.useFakeTimers();
