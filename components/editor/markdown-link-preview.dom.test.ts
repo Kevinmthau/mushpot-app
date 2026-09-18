@@ -104,7 +104,8 @@ describe("link previews in the live editor", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     }
     expect(getLinkPreview).not.toHaveBeenCalled();
-    expect(editor.dom.querySelector(".link-preview-fallback")?.getAttribute("href")).toBe(url);
+    expect(editor.dom.querySelector(".link-preview-empty")).not.toBeNull();
+    expect(editor.dom.querySelector(".link-preview-fallback")).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(getLinkPreview).toHaveBeenCalledExactlyOnceWith(url);
     expect(editor.dom.querySelector(".link-preview-card")?.textContent).toContain("A page worth reading");

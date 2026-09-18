@@ -86,6 +86,33 @@ describe("link preview card", () => {
     expect(container.querySelector(".link-preview-card")).toBeNull();
   });
 
+  it("does not duplicate the editor's source link while loading or after a failure", async () => {
+    vi.mocked(getLinkPreview).mockResolvedValue(null);
+    await act(async () => root.render(createElement(LinkPreviewCard, {
+      url: "https://example.com", showFallbackLink: false,
+    })));
+    expect(container.querySelector(".link-preview-empty")).not.toBeNull();
+    expect(container.querySelector("a")).toBeNull();
+    await act(async () => enterViewport());
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(getLinkPreview).toHaveBeenCalledExactlyOnceWith("https://example.com/");
+    expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("loads the editor's preview from its empty placeholder", async () => {
+    vi.mocked(getLinkPreview).mockResolvedValue({
+      url: "https://example.com/", title: "Page title", image: "https://example.com/icon.png",
+    });
+    await act(async () => root.render(createElement(LinkPreviewCard, {
+      url: "https://example.com", showFallbackLink: false,
+    })));
+    await act(async () => enterViewport());
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(container.querySelector(".link-preview-card")?.textContent).toContain("Page title");
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("https://example.com/icon.png");
+    expect(container.querySelector(".link-preview-empty")).toBeNull();
+  });
+
   it("clears metadata when the URL changes and disconnects on unmount", async () => {
     vi.mocked(getLinkPreview).mockResolvedValue({ url: "https://example.com/first", title: "First" });
     await act(async () => root.render(createElement(LinkPreviewCard, { url: "https://example.com/first" })));

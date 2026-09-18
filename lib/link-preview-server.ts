@@ -197,6 +197,17 @@ function cleanText(value: string | undefined, maxLength: number): string | undef
   return value?.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, maxLength) || undefined;
 }
 
+function resolvePreviewImage(value: string, pageUrl: URL): string | undefined {
+  try {
+    const imageUrl = validateLinkPreviewUrl(new URL(value, pageUrl).href);
+    // The app's image CSP permits HTTPS. HTTP images would fail to render.
+    return imageUrl.protocol === "https:" ? imageUrl.href : undefined;
+  } catch {
+    // Invalid images are optional; the text preview is still useful.
+    return undefined;
+  }
+}
+
 class PreviewTokenizer extends Tokenizer {
   protected override _leaveAttrName() {
     // parse5 checks each new attribute against the existing list. Bound it
@@ -228,7 +239,11 @@ function parsePreviewHtml(html: string) {
         return defaultTreeAdapter.createCommentNode(...args);
       },
       insertText(...args) {
-        countNodeOperation();
+        const previous = args[0].childNodes.at(-1);
+        // Tokenization splits script/style text at whitespace. Appending to
+        // one existing text node is bounded by the HTML byte/time limits, not
+        // the node budget; ordinary script bundles can emit thousands of runs.
+        if (!previous || !defaultTreeAdapter.isTextNode(previous)) countNodeOperation();
         return defaultTreeAdapter.insertText(...args);
       },
       insertTextBefore(...args) {
@@ -261,6 +276,8 @@ export function extractLinkPreviewMetadata(html: string, url: URL): LinkPreviewM
   const document = parsePreviewHtml(html);
   const values = new Map<string, string>();
   let title = "";
+  let icon: string | undefined;
+  let touchIcon: string | undefined;
   const nodes: DefaultTreeAdapterTypes.Node[] = [...document.childNodes].reverse();
   while (nodes.length) {
     const node = nodes.pop()!;
@@ -273,6 +290,17 @@ export function extractLinkPreviewMetadata(html: string, url: URL): LinkPreviewM
       const key = (attrs.property || attrs.name || "").toLowerCase();
       if (attrs.content && !values.has(key)) values.set(key, attrs.content);
     }
+    if ("tagName" in node && node.tagName === "link") {
+      const attrs = Object.fromEntries(node.attrs.map(({ name, value }) => [name, value]));
+      const rel = (attrs.rel || "").toLowerCase().split(/\s+/);
+      if (attrs.href) {
+        if (rel.includes("apple-touch-icon") || rel.includes("apple-touch-icon-precomposed")) {
+          touchIcon ??= resolvePreviewImage(attrs.href, url);
+        } else if (rel.includes("icon")) {
+          icon ??= resolvePreviewImage(attrs.href, url);
+        }
+      }
+    }
     if ("tagName" in node && node.tagName === "title" && !title) {
       title = node.childNodes.map((child) => "value" in child ? child.value : "").join("");
     }
@@ -283,17 +311,8 @@ export function extractLinkPreviewMetadata(html: string, url: URL): LinkPreviewM
     }
   }
 
-  let image: string | undefined;
   const imageValue = values.get("og:image:secure_url") || values.get("og:image") || values.get("twitter:image");
-  if (imageValue) {
-    try {
-      const imageUrl = validateLinkPreviewUrl(new URL(imageValue, url).href);
-      // The app's image CSP permits HTTPS. HTTP images would fail to render.
-      if (imageUrl.protocol === "https:") image = imageUrl.href;
-    } catch {
-      // Invalid images are optional; the text preview is still useful.
-    }
-  }
+  const image = (imageValue ? resolvePreviewImage(imageValue, url) : undefined) ?? touchIcon ?? icon;
   return {
     url: url.href,
     title: cleanText(values.get("og:title") || values.get("twitter:title") || title, 300) || url.hostname,

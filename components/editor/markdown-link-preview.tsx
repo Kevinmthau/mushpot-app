@@ -46,6 +46,7 @@ class LinkPreviewWidget extends WidgetType {
     root.render(
       <LinkPreviewCard
         url={this.url}
+        showFallbackLink={false}
         onLoad={() => {
           if (element.isConnected) view.requestMeasure();
         }}

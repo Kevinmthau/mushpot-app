@@ -142,6 +142,11 @@ video {
   white-space: normal;
 }
 
+.link-preview-empty {
+  min-height: 1px;
+  margin: 0;
+}
+
 .markdown-body > .link-preview {
   margin: 1em 0;
 }

@@ -10,13 +10,14 @@ const PREVIEW_LOAD_DELAY_MS = 500;
 type LinkPreviewCardProps = {
   url: string;
   onLoad?: () => void;
+  showFallbackLink?: boolean;
 };
 
 export function LinkPreviewCard(props: LinkPreviewCardProps) {
   return <LinkPreviewCardContent key={props.url} {...props} />;
 }
 
-function LinkPreviewCardContent({ url, onLoad }: LinkPreviewCardProps) {
+function LinkPreviewCardContent({ url, onLoad, showFallbackLink = true }: LinkPreviewCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [metadata, setMetadata] = useState<LinkPreviewMetadata | null>(null);
   const [imageFailed, setImageFailed] = useState(false);
@@ -61,6 +62,12 @@ function LinkPreviewCardContent({ url, onLoad }: LinkPreviewCardProps) {
 
   if (!safeUrl) return null;
   const hostname = new URL(safeUrl).hostname.replace(/^www\./, "");
+
+  // The editor already renders an editable source link. Retain a measurable
+  // target for lazy loading without repeating that URL while metadata loads.
+  if (!metadata && !showFallbackLink) {
+    return <div className="link-preview link-preview-empty" ref={containerRef} />;
+  }
 
   return (
     <div className="link-preview" ref={containerRef}>

@@ -206,6 +206,57 @@ describe("link preview metadata", () => {
     },
   );
 
+  it("uses a relative favicon when a page has no social image metadata", () => {
+    expect(server.extractLinkPreviewMetadata(`<head><title>Workshop</title>
+      <link rel="Shortcut ICON" href="../media/logo.png"></head>`, url)).toMatchObject({
+      title: "Workshop", image: "https://example.com/media/logo.png",
+    });
+  });
+
+  it.each(["apple-touch-icon", "apple-touch-icon-precomposed"])(
+    "prefers %s to the favicon", (rel) => {
+      expect(server.extractLinkPreviewMetadata(`<head>
+        <link rel="icon" href="/favicon.ico">
+        <link rel="${rel}" href="/touch.png"></head>`, url).image)
+        .toBe("https://example.com/touch.png");
+    },
+  );
+
+  it.each(["og:image", "twitter:image"])("prefers %s to page icons", (property) => {
+    expect(server.extractLinkPreviewMetadata(`<head>
+      <link rel="apple-touch-icon" href="/touch.png">
+      <link rel="icon" href="/favicon.ico">
+      <meta property="${property}" content="/cover.jpg"></head>`, url).image)
+      .toBe("https://example.com/cover.jpg");
+  });
+
+  it("falls back to a safe icon when the social image cannot be used", () => {
+    expect(server.extractLinkPreviewMetadata(`<head>
+      <meta property="og:image" content="http://example.com/cover.jpg">
+      <link rel="icon" href="/favicon.png"></head>`, url).image)
+      .toBe("https://example.com/favicon.png");
+  });
+
+  it.each([
+    "javascript:alert(1)", "data:image/png;base64,fake", "https://127.0.0.1/icon.png",
+    "https://metadata.google.internal/icon.png", "http://example.com/icon.png",
+  ])("rejects unsafe icon %s and can use a later safe icon", (image) => {
+    const unsafeIcons = `<link rel="apple-touch-icon" href="${image}">
+      <link rel="icon" href="${image}">`;
+    expect(server.extractLinkPreviewMetadata(unsafeIcons, url).image).toBeUndefined();
+    expect(server.extractLinkPreviewMetadata(`${unsafeIcons}
+      <link rel="icon" href="/safe.png">`, url).image).toBe("https://example.com/safe.png");
+  });
+
+  it("does not read page icons from scripts, inert content, or unrelated link relations", () => {
+    expect(server.extractLinkPreviewMetadata(`<head>
+      <script>const fake = '<link rel="icon" href="/script.png">';</script>
+      <link rel="preload" href="/preload.png"></head><body>
+      <template><link rel="icon" href="/template.png"></template>
+      <noscript><link rel="icon" href="/noscript.png"></noscript></body>`, url).image)
+      .toBeUndefined();
+  });
+
   it("bounds metadata string lengths", () => {
     const result = server.extractLinkPreviewMetadata(`<head><title>${"a".repeat(1000)}</title>
       <meta name="description" content="${"b".repeat(1000)}"></head>`, url);
@@ -246,6 +297,21 @@ describe("link preview metadata", () => {
       title: "Title & text", description: "Description & text",
     });
   });
+
+  it.each(["script", "style", "p"])(
+    "preserves metadata around a large %s text node with many whitespace runs", (tag) => {
+      const html = `<html><head><title>Workshop</title>
+        <meta name="description" content="A workshop about learning">
+        <link rel="icon" href="/media/logo.png"></head><body>
+        <${tag}>${"a b c d;\n".repeat(40_000)}</${tag}>
+        <meta property="og:site_name" content="Workshop site"></body></html>`;
+      expect(Buffer.byteLength(html)).toBeLessThan(512 * 1024);
+      expect(server.extractLinkPreviewMetadata(html, url)).toMatchObject({
+        title: "Workshop", description: "A workshop about learning",
+        siteName: "Workshop site", image: "https://example.com/media/logo.png",
+      });
+    },
+  );
 });
 
 describe("link preview resource limits and caching", () => {
