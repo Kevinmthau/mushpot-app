@@ -8,10 +8,12 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
-import ReactMarkdown, { type Components } from "react-markdown";
+import type { Root } from "hast";
+import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { isSupportedVideoUrl } from "@/components/editor/image-upload-utils";
+import { LinkPreviewCard } from "@/components/editor/link-preview-card";
 import {
   SharedDocumentMedia,
   SharedMediaProvider,
@@ -19,6 +21,7 @@ import {
 import { getReadingTimeFromText } from "@/lib/document-stats";
 import { getDocumentDisplayTitle } from "@/lib/documents";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
+import { getStandaloneLinkPreviewUrl } from "@/lib/link-preview";
 import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
 import {
   appendFirstFrameFragment,
@@ -49,7 +52,40 @@ function isImageLikeElement(
   );
 }
 
-function SharedMarkdownParagraph({ children }: { children?: ReactNode }) {
+function rehypeLinkPreviews() {
+  return (tree: Root) => {
+    // Match the editor's top-level paragraph rule. Links in lists, quotes,
+    // tables, and other prose keep their existing inline presentation.
+    for (const paragraph of tree.children) {
+      if (paragraph.type !== "element" || paragraph.tagName !== "p") continue;
+      const children = paragraph.children.filter((child) =>
+        child.type !== "text" || child.value.trim() !== ""
+      );
+      if (children.length !== 1) continue;
+      const link = children[0];
+      if (
+        link.type !== "element" ||
+        link.tagName !== "a" ||
+        typeof link.properties.href !== "string" ||
+        !link.children.every((child) => child.type === "text")
+      ) continue;
+      const label = link.children.map((child) =>
+        child.type === "text" ? child.value : ""
+      ).join("");
+      const url = getStandaloneLinkPreviewUrl(link.properties.href, label);
+      if (url) paragraph.properties.dataLinkPreviewUrl = url;
+    }
+  };
+}
+
+function SharedMarkdownParagraph({ children, node }: {
+  children?: ReactNode;
+} & ExtraProps) {
+  const previewUrl = node?.properties.dataLinkPreviewUrl;
+  if (typeof previewUrl === "string") {
+    return <LinkPreviewCard url={previewUrl} />;
+  }
+
   const nodes = Children.toArray(children);
   const nextChildren: ReactNode[] = [];
 
@@ -130,7 +166,7 @@ const markdownComponents: Components = {
   a: ({ children, href }) => (
     <a
       href={href}
-      rel="noreferrer"
+      rel="noopener noreferrer"
       target="_blank"
       className="underline decoration-[var(--line)] underline-offset-4 transition hover:text-[var(--accent)]"
     >
@@ -190,6 +226,7 @@ export function SharedDocumentPageClient({
           <SharedMediaProvider documentId={documentId} token={shareToken}>
             <ReactMarkdown
               components={markdownComponents}
+              rehypePlugins={[rehypeLinkPreviews]}
               remarkPlugins={[remarkGfm]}
             >
               {content}

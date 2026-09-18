@@ -20,6 +20,7 @@ import {
 } from "@/components/editor/code-mirror-editor";
 import { useMediaUploadInsertion } from "@/components/editor/use-image-upload";
 import { markdownLinkPaste } from "@/components/editor/markdown-link-paste";
+import { markdownLinkPreviews } from "@/components/editor/markdown-link-preview";
 
 // iOS Safari does not reliably honor autocapitalize="sentences" inside
 // CodeMirror's contenteditable, so the first letter typed into an empty
@@ -115,6 +116,7 @@ export function EditorWorkspace({
       markdownLiveFormatting,
       mediaUploadExtensions,
       markdownLinkPaste,
+      markdownLinkPreviews,
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ autocapitalize: "sentences" }),
       autoCapitalizeSentences,
