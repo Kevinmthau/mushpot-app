@@ -264,7 +264,7 @@ function hideMarkdownWithoutLineBreaks(
   decorations: Range<Decoration>[],
 ) {
   // ViewPlugin replacements cannot span line breaks. Preserve those breaks
-  // when hiding fences and their language labels around a code block.
+  // when hiding link syntax or code fences and their language labels.
   while (from < to) {
     const line = view.state.doc.lineAt(from);
     const end = Math.min(to, line.to);
@@ -422,8 +422,8 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
             );
           }
 
-          decorations.push(hiddenMarkdownMarkDecoration.range(node.from, labelFrom));
-          decorations.push(hiddenMarkdownMarkDecoration.range(labelTo, node.to));
+          hideMarkdownWithoutLineBreaks(view, node.from, labelFrom, decorations);
+          hideMarkdownWithoutLineBreaks(view, labelTo, node.to, decorations);
           return;
         }
 
@@ -482,6 +482,16 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
         }
 
         if (node.name === "Image") {
+          // A media widget replaces the entire image source. Keep multiline
+          // images editable as source instead of consuming a line break from
+          // a ViewPlugin decoration, which would crash the editor.
+          if (
+            view.state.doc.lineAt(node.from).number !==
+            view.state.doc.lineAt(node.to).number
+          ) {
+            return false;
+          }
+
           const parsedImage = parseMarkdownImage(view, node.node, getReferences);
           if (!parsedImage) {
             return;
