@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildSharedDocumentPreview,
+  fetchSharedDocument,
   fetchSharedMediaUrl,
+  fetchSharedMediaUrls,
   normalizeSharedDocumentTitle,
 } from "@/lib/shared-document";
 
@@ -87,9 +89,10 @@ describe("fetchSharedMediaUrl", () => {
 
     await expect(
       fetchSharedMediaUrl("doc-id", "share-token", "/m/document-images/path"),
-    ).resolves.toBe(
-      "https://project-ref.supabase.co/storage/v1/object/sign/media",
-    );
+    ).resolves.toEqual({
+      status: "success",
+      data: "https://project-ref.supabase.co/storage/v1/object/sign/media",
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://project-ref.supabase.co/functions/v1/get-shared-doc",
       expect.objectContaining({
@@ -122,10 +125,10 @@ describe("fetchSharedMediaUrl", () => {
 
     await expect(
       fetchSharedMediaUrl("doc-id", "share-token", "/m/document-images/path"),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({ status: "not_found" });
     await expect(
       fetchSharedMediaUrl("doc-id", "share-token", "/m/document-images/path"),
-    ).resolves.toBeNull();
+    ).resolves.toEqual({ status: "unavailable" });
   });
 });
 
@@ -153,15 +156,16 @@ describe("fetchSharedMediaUrls", () => {
     await expect(
       fetchSharedMediaUrls("doc", "token", ["/m/one", "/m/two", "/m/three"]),
     ).resolves.toEqual({
-      urls: [
+      status: "success",
+      data: { urls: [
         {
           mediaUrl: "/m/one",
           signedUrl: "https://project.supabase.co/signed/one",
         },
-        { mediaUrl: "/m/two", signedUrl: null },
+        { mediaUrl: "/m/two", signedUrl: null, retry: true },
         { mediaUrl: "/m/three", signedUrl: null },
       ],
-      expiresIn: 300,
+      expiresIn: 300 },
     });
   });
 
@@ -180,8 +184,50 @@ describe("fetchSharedMediaUrls", () => {
         .mockResolvedValueOnce(new Response(null, { status: 404 })),
     );
     await expect(fetchSharedMediaUrls("doc", "token", ["/m/one"])).resolves
-      .toBeNull();
+      .toEqual({ status: "unavailable" });
     await expect(fetchSharedMediaUrls("doc", "token", ["/m/one"])).resolves
-      .toEqual({ urls: [], expiresIn: 0 });
+      .toEqual({ status: "not_found" });
+  });
+});
+
+
+describe("shared request failure outcomes", () => {
+  it("reserves missing outcomes for invalid or revoked shares across all request types", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    for (const status of [400, 404, 401, 403, 429, 500, 503]) {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status })));
+      const expected = { status: status === 400 || status === 404 ? "not_found" : "unavailable" };
+      expect(await fetchSharedDocument("doc", "token")).toEqual(expected);
+      expect(await fetchSharedMediaUrl("doc", "token", "/m/one")).toEqual(expected);
+      expect(await fetchSharedMediaUrls("doc", "token", ["/m/one"])).toEqual(expected);
+    }
+  });
+
+  it("validates document responses and treats malformed JSON and network failure as unavailable", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    const document = { title: "Title", content: "Body", updated_at: "2026-09-21T00:00:00Z" };
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json(document));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await fetchSharedDocument("doc", "token")).toEqual({ status: "success", data: document });
+    for (const invalid of [null, {}, { ...document, content: 1 }, { ...document, updated_at: "invalid" }]) {
+      fetcher.mockResolvedValueOnce(Response.json(invalid));
+      expect(await fetchSharedDocument("doc", "token")).toEqual({ status: "unavailable" });
+    }
+    fetcher.mockResolvedValueOnce(new Response("not json"));
+    expect(await fetchSharedDocument("doc", "token")).toEqual({ status: "unavailable" });
+    fetcher.mockRejectedValueOnce(new Error("Network unavailable"));
+    expect(await fetchSharedDocument("doc", "token")).toEqual({ status: "unavailable" });
+  });
+
+  it("never treats missing, duplicate, or malformed batch entries as access denials", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    const item = { mediaUrl: "/m/one", signedUrl: null };
+    for (const urls of [[], [item, item], [{ ...item, signedUrl: 1 }], [{ ...item, retry: "yes" }]]) {
+      vi.stubGlobal("fetch", vi.fn(async () => Response.json({ urls, expiresIn: 300 })));
+      expect(await fetchSharedMediaUrls("doc", "token", ["/m/one"])).toEqual({ status: "unavailable" });
+    }
   });
 });

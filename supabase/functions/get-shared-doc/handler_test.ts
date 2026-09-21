@@ -279,3 +279,42 @@ Deno.test("twenty images require one document read and one Storage signing call"
   assertEquals(harness.calls.length, 1);
   assertEquals(harness.calls[0].paths.length, 20);
 });
+
+Deno.test("database errors stay retryable for documents, individual media, and batches", async () => {
+  for (const throws of [false, true]) {
+    for (
+      const extra of [{}, { mediaUrl: REFERENCED_MEDIA_URL }, {
+        mediaUrls: [REFERENCED_MEDIA_URL],
+      }]
+    ) {
+      const { dependencies, signedUrlCalls } = createHarness();
+      const original = dependencies.createOperations();
+      dependencies.createOperations = () => ({
+        ...original,
+        getSharedDocument: () =>
+          throws
+            ? Promise.reject(new Error("database unavailable"))
+            : Promise.resolve({
+              data: null,
+              error: new Error("database unavailable"),
+            }),
+      });
+      const response = await handleSharedDocumentRequest(
+        new Request("https://functions.example/get-shared-doc", {
+          method: "POST",
+          body: JSON.stringify({
+            docId: DOCUMENT_ID,
+            token: SHARE_TOKEN,
+            ...extra,
+          }),
+        }),
+        dependencies,
+      );
+      assertEquals(response.status, 503);
+      assertEquals(await response.json(), {
+        error: "Shared document temporarily unavailable.",
+      });
+      assertEquals(signedUrlCalls, []);
+    }
+  }
+});

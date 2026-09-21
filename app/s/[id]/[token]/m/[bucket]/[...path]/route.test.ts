@@ -38,9 +38,10 @@ afterEach(() => {
 describe("shared document media route", () => {
   it("revalidates the share and redirects without caching", async () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
-    vi.mocked(fetchSharedMediaUrl).mockResolvedValue(
-      "https://project-ref.supabase.co/storage/v1/object/sign/document-images/photo.png?token=signed",
-    );
+    vi.mocked(fetchSharedMediaUrl).mockResolvedValue({
+      status: "success",
+      data: "https://project-ref.supabase.co/storage/v1/object/sign/document-images/photo.png?token=signed",
+    });
 
     const response = await requestMedia();
 
@@ -70,15 +71,24 @@ describe("shared document media route", () => {
     expect(response.status).toBe(404);
   });
 
+  it("returns retryable 503 for outages and 404 only for denied media", async () => {
+    vi.mocked(fetchSharedMediaUrl).mockResolvedValueOnce({ status: "unavailable" });
+    const outage = await requestMedia();
+    expect(outage.status).toBe(503);
+    expect(outage.headers.get("Retry-After")).toBe("30");
+    vi.mocked(fetchSharedMediaUrl).mockResolvedValueOnce({ status: "not_found" });
+    expect((await requestMedia()).status).toBe(404);
+  });
+
   it("refuses a signed URL from an unexpected origin", async () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.mocked(fetchSharedMediaUrl).mockResolvedValue(
-      "https://attacker.example/document-images/photo.png",
-    );
+    vi.mocked(fetchSharedMediaUrl).mockResolvedValue({
+      status: "success", data: "https://attacker.example/document-images/photo.png",
+    });
 
     const response = await requestMedia();
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(503);
   });
 });

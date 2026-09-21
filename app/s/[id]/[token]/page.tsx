@@ -26,7 +26,8 @@ export async function generateMetadata({
   params,
 }: SharedDocPageProps): Promise<Metadata> {
   const { id, token } = await params;
-  const document = await fetchSharedDocument(id, token);
+  const result = await fetchSharedDocument(id, token);
+  const document = result.status === "success" ? result.data : null;
   const origin = await resolveAppOrigin();
 
   if (!document) {
@@ -78,11 +79,12 @@ export async function generateMetadata({
 export default async function SharedDocumentPage({ params }: SharedDocPageProps) {
   const { id, token } = await params;
 
-  const document = await fetchSharedDocument(id, token);
-
-  if (!document) {
-    notFound();
+  const result = await fetchSharedDocument(id, token);
+  if (result.status === "not_found") notFound();
+  if (result.status === "unavailable") {
+    throw new Error("Shared document temporarily unavailable. Please try again.");
   }
+  const document = result.data;
 
   return (
     <SharedDocumentPageClient

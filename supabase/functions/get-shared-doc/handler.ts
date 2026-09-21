@@ -147,9 +147,24 @@ export async function handleSharedDocumentRequest(
   }
 
   const operations = createOperations(supabaseUrl, serviceRoleKey);
-  const { data, error } = await operations.getSharedDocument(docId, token);
+  let lookup: Awaited<
+    ReturnType<SharedDocumentOperations["getSharedDocument"]>
+  >;
+  try {
+    lookup = await operations.getSharedDocument(docId, token);
+  } catch {
+    return jsonResponse(request, {
+      error: "Shared document temporarily unavailable.",
+    }, 503);
+  }
+  const { data, error } = lookup;
+  if (error) {
+    return jsonResponse(request, {
+      error: "Shared document temporarily unavailable.",
+    }, 503);
+  }
 
-  if (error || !data) {
+  if (!data) {
     return jsonResponse(
       request,
       { error: "Invalid or expired share link." },

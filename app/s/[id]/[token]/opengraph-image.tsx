@@ -30,7 +30,14 @@ type SharedDocImageProps = {
 
 export default async function OpenGraphImage({ params }: SharedDocImageProps) {
   const { id, token } = await params;
-  const document = await fetchSharedDocument(id, token);
+  const result = await fetchSharedDocument(id, token);
+  if (result.status === "unavailable") {
+    return new Response("Shared document temporarily unavailable.", {
+      status: 503,
+      headers: { "Cache-Control": "no-store", "Retry-After": "30" },
+    });
+  }
+  const document = result.status === "success" ? result.data : null;
   const title = normalizeSharedDocumentTitle(document?.title ?? "Shared document");
   const excerpt = buildSharedDocumentPreview(document?.content ?? "", 220);
   const [regularFont, boldFont] = await Promise.all([
