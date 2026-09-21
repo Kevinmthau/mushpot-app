@@ -1,10 +1,5 @@
 import {
-  Children,
-  cloneElement,
   type ComponentPropsWithoutRef,
-  type CSSProperties,
-  isValidElement,
-  type ReactElement,
   type ReactNode,
 } from "react";
 import Link from "next/link";
@@ -22,7 +17,7 @@ import { getReadingTimeFromText } from "@/lib/document-stats";
 import { getDocumentDisplayTitle } from "@/lib/documents";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import { getStandaloneLinkPreviewUrl } from "@/lib/link-preview";
-import { parseImageWidthTokenFromText } from "@/lib/markdown/image-width";
+import { remarkImageWidth } from "@/lib/markdown/remark-image-width";
 import {
   appendFirstFrameFragment,
   parseVideoPosterFromTitle,
@@ -35,22 +30,6 @@ type SharedDocumentPageClientProps = {
   title: string;
   updatedAt: string;
 };
-
-type ImageLikeElementProps = {
-  src?: string;
-  style?: CSSProperties;
-};
-
-function isImageLikeElement(
-  node: ReactNode,
-): node is ReactElement<ImageLikeElementProps> {
-  return (
-    isValidElement(node) &&
-    typeof node.props === "object" &&
-    node.props !== null &&
-    "src" in node.props
-  );
-}
 
 function rehypeLinkPreviews() {
   return (tree: Root) => {
@@ -86,44 +65,7 @@ function SharedMarkdownParagraph({ children, node }: {
     return <LinkPreviewCard url={previewUrl} />;
   }
 
-  const nodes = Children.toArray(children);
-  const nextChildren: ReactNode[] = [];
-
-  for (let index = 0; index < nodes.length; index += 1) {
-    const child = nodes[index];
-
-    if (!isImageLikeElement(child)) {
-      nextChildren.push(child);
-      continue;
-    }
-
-    const trailingNode = nodes[index + 1];
-    if (typeof trailingNode !== "string") {
-      nextChildren.push(child);
-      continue;
-    }
-
-    const parsedWidthToken = parseImageWidthTokenFromText(trailingNode);
-    if (!parsedWidthToken) {
-      nextChildren.push(child);
-      continue;
-    }
-
-    const style: CSSProperties = {
-      ...child.props.style,
-      width: parsedWidthToken.width,
-    };
-    nextChildren.push(cloneElement(child, { style }));
-
-    const remainingText = trailingNode.slice(parsedWidthToken.consumedChars);
-    if (remainingText.length > 0) {
-      nextChildren.push(remainingText);
-    }
-
-    index += 1;
-  }
-
-  return <p>{nextChildren}</p>;
+  return <p>{children}</p>;
 }
 
 function SharedMarkdownImage({
@@ -227,7 +169,7 @@ export function SharedDocumentPageClient({
             <ReactMarkdown
               components={markdownComponents}
               rehypePlugins={[rehypeLinkPreviews]}
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={[remarkGfm, remarkImageWidth]}
             >
               {content}
             </ReactMarkdown>

@@ -7,15 +7,16 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import type { MarkdownParser } from "@lezer/markdown";
 import { decodeString } from "micromark-util-decode-string";
-import { normalizeIdentifier } from "micromark-util-normalize-identifier";
 import { createRoot, type Root } from "react-dom/client";
 
+import { shouldDisableLiveFormattingState } from "@/components/editor/markdown-formatting-context";
 import { LinkPreviewCard } from "@/components/editor/link-preview-card";
 import { getStandaloneLinkPreviewUrl } from "@/lib/link-preview";
 import {
+  parseMarkdownLinkDestination,
   parseMarkdownReferenceDefinitions,
   type MarkdownReferenceDefinitions,
-} from "@/lib/markdown/table";
+} from "@/lib/markdown/links";
 
 const roots = new WeakMap<HTMLElement, Root>();
 // Autolinking otherwise absorbs formatting within URL labels. Nested brackets
@@ -86,45 +87,21 @@ function paragraphUrl(
   }
   if (link.name !== "Link") return null;
 
-  let labelFrom: number | undefined;
-  let labelTo: number | undefined;
-  let destination: string | undefined;
-  let referenceLabel: string | undefined;
-  let hasInlineDestination = false;
-  for (let child = link.firstChild; child; child = child.nextSibling) {
-    const source = state.doc.sliceString(child.from, child.to);
-    if (child.name === "LinkMark" && source === "[") labelFrom = child.to;
-    if (child.name === "LinkMark" && source === "]") labelTo = child.from;
-    if (child.name === "URL" && labelTo !== undefined) destination = source;
-    if (child.name === "LinkLabel") referenceLabel = source.slice(1, -1);
-    if (child.name === "LinkMark" && source === "(") hasInlineDestination = true;
-  }
-  if (labelFrom === undefined || labelTo === undefined) return null;
-  const label = state.doc.sliceString(labelFrom, labelTo);
+  const parsedLink = parseMarkdownLinkDestination(
+    (from, to) => state.doc.sliceString(from, to), link, getReferences,
+  );
+  if (!parsedLink) return null;
+  const label = state.doc.sliceString(parsedLink.labelFrom, parsedLink.labelTo);
   if (linkLabelParser.parseInline(label, 0).some((node) =>
     !["Escape", "Entity"].includes(linkLabelParser.nodeSet.types[node.type].name)
   )) return null;
 
-  if (hasInlineDestination) {
-    if (!destination) return null;
-    if (destination.startsWith("<") && destination.endsWith(">")) {
-      destination = destination.slice(1, -1);
-    }
-    destination = decodeString(destination);
-  } else {
-    destination = getReferences().get(
-      normalizeIdentifier(referenceLabel || label),
-    )?.href;
-  }
-  return getStandaloneLinkPreviewUrl(
-    destination,
-    decodeString(label),
-  );
+  return getStandaloneLinkPreviewUrl(parsedLink.href, decodeString(label));
 }
 
 function buildLinkPreviews(state: EditorState) {
   // Match the editor's live-formatting budget for long documents.
-  if (state.doc.length > 20_000 || state.doc.lines > 400) return Decoration.none;
+  if (shouldDisableLiveFormattingState(state)) return Decoration.none;
   const decorations: Range<Decoration>[] = [];
   const tree = syntaxTree(state);
   let references: MarkdownReferenceDefinitions | undefined;
