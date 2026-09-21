@@ -160,10 +160,21 @@ export function shouldPreserveExistingDocument(
   existing: CachedDocumentRecord | undefined,
   incoming: CachedCompleteDocument,
 ) {
+  if (!isCompleteDocument(existing)) {
+    return false;
+  }
+
+  // Equal text can still represent a newer revert. Keep its revision and dirty
+  // state until it is acknowledged, so delayed intermediate edits stay stale.
   if (
-    !isCompleteDocument(existing) ||
-    !documentsHaveDifferentEditorState(existing, incoming)
+    existing._localUpdatedAt !== undefined &&
+    incoming._localUpdatedAt !== undefined &&
+    existing._localUpdatedAt > incoming._localUpdatedAt
   ) {
+    return true;
+  }
+
+  if (!documentsHaveDifferentEditorState(existing, incoming)) {
     return false;
   }
 
@@ -173,15 +184,12 @@ export function shouldPreserveExistingDocument(
     return true;
   }
 
-  // Local writes and save completions carry the timestamp of the snapshot they
-  // represent. If a newer snapshot is already cached, the older async result
-  // must not move the cache backward.
+  // Different content at the same local revision is not a confirmation of the
+  // cached snapshot. A clean completion must not replace it.
   return (
     existing._localUpdatedAt !== undefined &&
     incoming._localUpdatedAt !== undefined &&
-    (existing._localUpdatedAt > incoming._localUpdatedAt ||
-      (!incoming._dirty &&
-        existing._localUpdatedAt === incoming._localUpdatedAt))
+    !incoming._dirty &&
+    existing._localUpdatedAt === incoming._localUpdatedAt
   );
 }
-

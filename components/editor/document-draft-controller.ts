@@ -48,6 +48,7 @@ export class DocumentDraftController {
   private serialized: string;
   private saved: { content: string; title: string; updatedAt: string };
   private cachedDirty: boolean;
+  private localRevisionPending = false;
   private baseVersionUntrusted: boolean;
   private revision: number;
   private edited = false;
@@ -132,7 +133,7 @@ export class DocumentDraftController {
 
   private isDirty() {
     return hasUnsavedDocumentChanges({
-      cachedDraftIsDirty: this.cachedDirty,
+      cachedDraftIsDirty: this.cachedDirty || this.localRevisionPending,
       latestContent: this.getLatestContent(),
       latestTitle: normalizeDocumentTitle(this.view.title),
       savedContent: this.saved.content,
@@ -171,7 +172,7 @@ export class DocumentDraftController {
       return;
     if (result.status === "conflict") {
       this.cachedDirty = true;
-      this.publish({ saveStatus: "conflict" });
+      this.publish({ needsDraftRecovery: true, saveStatus: "conflict" });
       void this.cache();
       return;
     }
@@ -189,7 +190,13 @@ export class DocumentDraftController {
       updatedAt: result.updatedAt,
     };
     this.cachedDirty = false;
+    if (
+      snapshot._localUpdatedAt !== undefined &&
+      snapshot._localUpdatedAt >= this.revision
+    )
+      this.localRevisionPending = false;
     this.baseVersionUntrusted = false;
+    const hasPendingChanges = this.isDirty();
     this.publish({
       ...(!this.mutations.share && result.confirmedSnapshot
         ? {
@@ -198,12 +205,18 @@ export class DocumentDraftController {
           }
         : {}),
       needsDraftRecovery: false,
-      saveStatus: this.isDirty() ? "saving" : "saved",
+      saveStatus: hasPendingChanges ? "saving" : "saved",
       updatedAt: getMostRecentTimestamp(this.view.updatedAt, result.updatedAt),
     });
     // A newer local snapshot may have prevented the save's clean-cache write.
     // Keep that text dirty but advance it to this confirmed local save version.
     void this.cache();
+    // An edit may have reverted to the previous baseline while this request
+    // was in flight, so its debounce could already have found nothing to save.
+    if (hasPendingChanges)
+      this.schedule("save", 800, () => {
+        void this.save();
+      });
   };
 
   save = async () => {
@@ -226,7 +239,7 @@ export class DocumentDraftController {
       if (result.status === "retryable" || result.status === "cancelled")
         this.retry(generation);
       if (result.status === "superseded")
-        this.publish({ saveStatus: "conflict" });
+        this.publish({ needsDraftRecovery: true, saveStatus: "conflict" });
     } catch {
       if (persistenceGeneration === this.persistenceGeneration)
         this.retry(generation);
@@ -244,6 +257,9 @@ export class DocumentDraftController {
 
   private changed() {
     this.edited = true;
+    // A revert still supersedes intermediate snapshots that may be cached or
+    // in flight. Keep that intent dirty until its own revision is confirmed.
+    this.localRevisionPending = true;
     this.revision = Math.max(Date.now(), this.revision + 1);
     this.schedule("cache", 400, () => {
       void this.cache();
@@ -296,7 +312,7 @@ export class DocumentDraftController {
               document.title !== this.view.title)));
       if (overlaps) {
         this.cachedDirty = true;
-        this.publish({ saveStatus: "conflict" });
+        this.publish({ needsDraftRecovery: true, saveStatus: "conflict" });
         void this.cache();
       } else {
         const next = reconcileDraftHydration(
@@ -352,6 +368,7 @@ export class DocumentDraftController {
     body?: { content: string; title: string },
   ) => {
     this.edited = true;
+    this.revision = Math.max(Date.now(), this.revision + 1);
     this.mutations.share = true;
     this.publish({
       shareEnabled: enabled,

@@ -43,11 +43,16 @@ function setup() {
     >();
   const session = createDocumentWriteSession("owner");
   const scope = { session, cacheWriteToken: { owner: "owner", generation: 1 } };
+  const confirmCache = vi.fn(
+    async (_snapshot: PersistableDocumentSnapshot, result: PersistDocumentResult) =>
+      result,
+  );
   const coordinator = createDocumentWriteCoordinator({
+    confirmCache,
     persist,
     isCurrent: (_owner, scope) => scope.session?.active === true,
   });
-  return { coordinator, persist, scope, session };
+  return { coordinator, confirmCache, persist, scope, session };
 }
 
 function deferred<T>() {
@@ -103,6 +108,45 @@ describe("document write coordinator", () => {
       scope,
     );
     expect(next.status).toBe("conflict");
+    expect(persist).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a reverted revision when an intermediate background draft arrives late", async () => {
+    const { coordinator, persist, scope } = setup();
+    persist.mockResolvedValue(saved("v2"));
+    await coordinator.enqueue(base, scope);
+
+    // The user changes the body, then returns to the saved body. Confirming
+    // that later revision must supersede a delayed read of the interim edit.
+    await coordinator.enqueue({ ...base, _localUpdatedAt: 12 }, scope);
+    const stale = await coordinator.enqueue(
+      { ...base, content: "Intermediate edit", _localUpdatedAt: 11 },
+      scope,
+    );
+
+    expect(stale.status).toBe("superseded");
+    expect(persist).toHaveBeenCalledOnce();
+  });
+
+  it("does not lower the confirmed revision when an older duplicate arrives", async () => {
+    const { coordinator, confirmCache, persist, scope } = setup();
+    const latest = { ...base, updated_at: "v2", _localUpdatedAt: 12 };
+    persist.mockResolvedValue({ ...saved("v2"), confirmedSnapshot: latest });
+    await coordinator.enqueue({ ...base, _localUpdatedAt: 12 }, scope);
+    const duplicate = await coordinator.enqueue(base, scope);
+    expect(duplicate.confirmedSnapshot?._localUpdatedAt).toBe(12);
+    expect(confirmCache).toHaveBeenCalledWith(
+      expect.objectContaining({ _localUpdatedAt: 12 }),
+      expect.anything(),
+      scope,
+    );
+
+    const stale = await coordinator.enqueue(
+      { ...base, content: "Intermediate edit", _localUpdatedAt: 11 },
+      scope,
+    );
+
+    expect(stale.status).toBe("superseded");
     expect(persist).toHaveBeenCalledOnce();
   });
 

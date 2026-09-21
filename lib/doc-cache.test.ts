@@ -115,6 +115,42 @@ describe("owner-scoped document cache", () => {
     );
   });
 
+  it("retains a newer reverted draft until its own revision is acknowledged", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const reverted = buildDocument({ _dirty: true, _localUpdatedAt: 12 });
+    await cache.putCachedDocument(reverted);
+
+    // An older save or duplicate confirmation has the same text, but cannot
+    // clear the latest revision while an intermediate draft can still arrive.
+    const oldConfirmation = {
+      ...reverted,
+      _dirty: false,
+      _localUpdatedAt: 10,
+      updated_at: "2026-07-17T13:00:00.000Z",
+    };
+    expect(await cache.putCachedDocument(oldConfirmation)).toBe(false);
+    expect(await cache.getDirtyDocuments(OWNER)).toEqual([
+      expect.objectContaining({
+        content: reverted.content,
+        _dirty: true,
+        _localUpdatedAt: 12,
+        updated_at: reverted.updated_at,
+      }),
+    ]);
+
+    expect(await cache.putCachedDocument({
+      ...oldConfirmation,
+      _localUpdatedAt: 12,
+    })).toBe(true);
+    expect(await cache.getDirtyDocuments(OWNER)).toEqual([]);
+    expect(await cache.getCachedDocumentForOwner("document-a", OWNER)).toMatchObject({
+      _dirty: false,
+      _localUpdatedAt: 12,
+      updated_at: oldConfirmation.updated_at,
+    });
+  });
+
   it("keeps list-only rows as metadata that the editor cannot open offline", async () => {
     const cache = await loadDocumentCache();
     await cache.activateDocumentCacheForOwner(OWNER);

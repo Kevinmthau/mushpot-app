@@ -274,6 +274,69 @@ describe("draft controller", () => {
     );
   });
 
+  it("queues a revert while an older edit is still in flight", async () => {
+    const { controller, persist, cache, lifecycle } = setup();
+    cache.mockResolvedValue(false);
+    let finishSave!: (result: PersistDocumentResult) => void;
+    let finishRevert!: (result: PersistDocumentResult) => void;
+    persist
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishSave = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishRevert = resolve;
+        }),
+      );
+    controller.handleEditorChange(Text.of(["Temporary edit"]));
+    const saving = controller.save();
+
+    controller.handleEditorChange(Text.of([document.content]));
+    await vi.advanceTimersByTimeAsync(800);
+    expect(persist).toHaveBeenCalledTimes(2);
+
+    finishSave(saved);
+    await saving;
+    finishRevert({ ...saved, updatedAt: "2026-09-20T12:00:00Z" });
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: document.content,
+        updated_at: document.updated_at,
+      }),
+    );
+    expect(controller.getView().saveStatus).toBe("saved");
+    lifecycle.stop();
+  });
+
+  it("acknowledges a newer revert revision after an older save confirms the same body", async () => {
+    const initial = { ...document, _dirty: true, _localUpdatedAt: 10 };
+    const { controller, persist, cache, emit, lifecycle } = setup(initial);
+    controller.handleEditorChange(Text.of(["Intermediate edit"]));
+    controller.handleEditorChange(Text.of([document.content]));
+
+    emit({ snapshot: initial, result: saved });
+
+    expect(cache).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content: document.content, _dirty: true }),
+    );
+    await vi.advanceTimersByTimeAsync(800);
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: document.content,
+        updated_at: saved.updatedAt,
+        _localUpdatedAt: expect.any(Number),
+      }),
+    );
+    expect(persist.mock.calls[0][0]._localUpdatedAt).toBeGreaterThan(10);
+    expect(controller.getView().saveStatus).toBe("saved");
+    lifecycle.stop();
+  });
+
   it("survives setup-cleanup-setup and writes the latest draft on unmount before debounce", async () => {
     const { controller, lifecycle, cache, persist, unsubscribe } = setup();
     lifecycle.stop();
@@ -321,11 +384,11 @@ describe("draft controller", () => {
 
   it("adopts a sharing timestamp only with a matching confirmed body", async () => {
     const { controller, persist } = setup();
+    controller.handleEditorChange(Text.of(["Draft"]));
     controller.updateShareState(true, "token", "2026-09-20T10:30:00Z", {
       title: "Title",
       content: "Body",
     });
-    controller.handleEditorChange(Text.of(["Draft"]));
     await controller.save();
     expect(persist).toHaveBeenCalledWith(
       expect.objectContaining({ updated_at: "2026-09-20T10:30:00Z" }),

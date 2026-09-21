@@ -142,12 +142,43 @@ export function createDocumentWriteCoordinator({
           entry.versions.has(snapshot.updated_at)
         ) {
           if (sameContent(snapshot, saved.snapshot)) {
+            const confirmedSnapshot = {
+              ...snapshot,
+              _localUpdatedAt:
+                saved.snapshot._localUpdatedAt === undefined
+                  ? snapshot._localUpdatedAt
+                  : snapshot._localUpdatedAt === undefined
+                    ? saved.snapshot._localUpdatedAt
+                    : Math.max(
+                        snapshot._localUpdatedAt,
+                        saved.snapshot._localUpdatedAt,
+                      ),
+            };
             const result = confirmCache
-              ? await confirmCache(snapshot, saved.result, scope)
+              ? await confirmCache(confirmedSnapshot, saved.result, scope)
               : saved.result;
-            return isCurrent(snapshot.owner, scope)
-              ? result
-              : skippedDocumentWrite("cancelled", snapshot.title);
+            if (!isCurrent(snapshot.owner, scope)) {
+              return skippedDocumentWrite("cancelled", snapshot.title);
+            }
+            // A later edit can return to already-saved content. Retain its
+            // revision so a delayed intermediate draft cannot overwrite it.
+            const confirmedResult = result.confirmedSnapshot
+              ? {
+                  ...result,
+                  confirmedSnapshot: {
+                    ...result.confirmedSnapshot,
+                    _localUpdatedAt: confirmedSnapshot._localUpdatedAt,
+                  },
+                }
+              : result;
+            entry.saved = {
+              snapshot: {
+                ...saved.snapshot,
+                _localUpdatedAt: confirmedSnapshot._localUpdatedAt,
+              },
+              result: confirmedResult,
+            };
+            return confirmedResult;
           }
           // A delayed background read must never overwrite a newer save.
           // Missing/equal revision evidence cannot authorize a rebase.

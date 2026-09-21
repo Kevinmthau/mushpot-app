@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
+import { PrivateSessionProvider } from "@/components/pwa/private-session-provider";
 import type { EditorDocument } from "@/lib/documents";
 
 const mocks = vi.hoisted(() => ({
@@ -14,9 +15,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/document-sync", () => ({
+  normalizeDocumentTitle: (title: string) => title.trim() || "Untitled",
   persistDocumentSnapshot: mocks.persistDocumentSnapshot,
+  subscribeToDocumentWrites: () => () => {},
 }));
 vi.mock("@/lib/doc-cache", () => ({
+  getDocumentCacheWriteToken: () => ({ owner: "owner-a", generation: 1 }),
   putCachedDocument: mocks.putCachedDocument,
 }));
 
@@ -44,7 +48,11 @@ function Harness({ document }: { document: EditorDocument }) {
 }
 
 async function render(document: EditorDocument) {
-  await act(async () => root.render(createElement(Harness, { document })));
+  await act(async () => root.render(createElement(
+    PrivateSessionProvider,
+    { initialUserId: document.owner },
+    createElement(Harness, { document }),
+  )));
 }
 
 beforeEach(() => {
@@ -53,6 +61,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.putCachedDocument.mockResolvedValue(true);
   mocks.persistDocumentSnapshot.mockResolvedValue({
+    status: "conflict",
     ok: false,
     conflict: true,
     cacheUpdated: false,
@@ -89,9 +98,12 @@ describe("draft recovery state", () => {
         content: "More local work",
         _baseVersionUntrusted: true,
       }),
+      expect.objectContaining({ owner: "owner-a", generation: 1 }),
+      expect.objectContaining({ owner: "owner-a", active: true }),
     );
     expect(mocks.putCachedDocument).toHaveBeenLastCalledWith(
       expect.objectContaining({ content: "More local work", _dirty: true, _baseVersionUntrusted: true }),
+      expect.objectContaining({ owner: "owner-a", generation: 1 }),
     );
     expect(draft.needsDraftRecovery).toBe(true);
     expect(draft.getLatestTitle()).toBe("Revised offline notes");
@@ -109,6 +121,7 @@ describe("draft recovery state", () => {
 
   it("clears recovery after a read confirms the draft and uses the trusted revision for later edits", async () => {
     mocks.persistDocumentSnapshot.mockResolvedValue({
+      status: "saved",
       ok: true,
       conflict: false,
       cacheUpdated: true,
@@ -120,6 +133,8 @@ describe("draft recovery state", () => {
     expect(draft.needsDraftRecovery).toBe(false);
     expect(mocks.persistDocumentSnapshot).toHaveBeenLastCalledWith(
       expect.objectContaining({ _baseVersionUntrusted: true }),
+      expect.objectContaining({ owner: "owner-a", generation: 1 }),
+      expect.objectContaining({ owner: "owner-a", active: true }),
     );
 
     await act(async () => draft.handleEditorChange(Text.of(["Next online edit"])));
@@ -130,6 +145,8 @@ describe("draft recovery state", () => {
         updated_at: "2026-09-20T11:00:00.000Z",
         _baseVersionUntrusted: false,
       }),
+      expect.objectContaining({ owner: "owner-a", generation: 1 }),
+      expect.objectContaining({ owner: "owner-a", active: true }),
     );
     expect(draft.needsDraftRecovery).toBe(false);
   });
