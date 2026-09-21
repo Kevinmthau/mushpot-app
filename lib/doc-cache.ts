@@ -7,52 +7,31 @@
  * cannot read, write, or delete data after the session changes.
  */
 
-type CachedDocumentBase = {
-  id: string;
-  owner: string;
-  title: string;
-  updated_at: string;
-};
+import {
+  compareDocumentListItems,
+  isCachedDocumentNewerThanServerListItem,
+  isCompleteDocument,
+  mergeDocumentListMetadata,
+  shouldPreserveExistingDocument,
+  toDocumentListItem,
+  toMetadataDocument,
+  toStoredCompleteDocument,
+  type CachedCompleteDocument,
+  type CachedDocument,
+  type CachedDocumentListItem,
+  type CachedDocumentRecord,
+} from "@/lib/document-cache-record";
 
-/**
- * Complete editor data accepted by cache writers. `kind` remains optional at
- * this boundary so existing document mapping helpers do not need to know about
- * the storage representation.
- */
-export type CachedDocument = CachedDocumentBase & {
-  kind?: "complete";
-  content: string;
-  share_enabled: boolean;
-  share_token: string | null;
-  /** Timestamp of last local write – used to detect dirty docs. */
-  _localUpdatedAt?: number;
-  /** True when local changes have not been persisted to the server yet. */
-  _dirty?: boolean;
-  /** Numeric IndexedDB key for dirty-document lookups. */
-  _dirtyKey?: 1;
-};
-
-export type CachedCompleteDocument = CachedDocument & {
-  kind: "complete";
-};
-
-export type CachedMetadataDocument = CachedDocumentBase & {
-  kind: "metadata";
-};
-
-/** The discriminated record shape persisted in IndexedDB. */
-export type CachedDocumentRecord =
-  | CachedCompleteDocument
-  | CachedMetadataDocument;
-
-export type CachedDocumentListItem = {
-  id: string;
-  title: string;
-  updated_at: string;
-};
+export type {
+  CachedCompleteDocument,
+  CachedDocument,
+  CachedDocumentListItem,
+  CachedDocumentRecord,
+  CachedMetadataDocument,
+} from "@/lib/document-cache-record";
 
 const DB_NAME = "mushpot";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const DOCS_STORE = "documents";
 const META_STORE = "meta";
 const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
@@ -220,152 +199,23 @@ function isTokenAuthorized(
   );
 }
 
-function isCompleteDocument(
-  document: CachedDocumentRecord | null | undefined,
-): document is CachedCompleteDocument {
-  return document?.kind === "complete";
-}
-
-function toMetadataDocument(
-  document: CachedDocumentBase,
-): CachedMetadataDocument {
-  return {
-    id: document.id,
-    kind: "metadata",
-    owner: document.owner,
-    title: document.title,
-    updated_at: document.updated_at,
-  };
-}
-
-function toStoredCompleteDocument(
-  document: CachedDocument,
-): CachedCompleteDocument {
-  const storedDocument: CachedCompleteDocument = {
-    ...document,
-    kind: "complete",
-  };
-
-  if (storedDocument._dirty) {
-    storedDocument._dirtyKey = 1;
-  } else {
-    delete storedDocument._dirtyKey;
-  }
-
-  return storedDocument;
-}
-
-function documentsHaveDifferentEditorState(
-  left: CachedCompleteDocument,
-  right: CachedCompleteDocument,
-) {
-  const leftTitle = left.title.trim() || "Untitled";
-  const rightTitle = right.title.trim() || "Untitled";
-
-  return (
-    leftTitle !== rightTitle ||
-    left.content !== right.content ||
-    left.share_enabled !== right.share_enabled ||
-    left.share_token !== right.share_token
-  );
-}
-
-function isCachedDocumentNewerThanServerListItem(
-  cachedDocument: CachedDocumentRecord,
-  serverDocument: CachedDocumentListItem,
-) {
-  const cachedUpdatedAt = Date.parse(cachedDocument.updated_at);
-  const serverUpdatedAt = Date.parse(serverDocument.updated_at);
-
-  return (
-    !Number.isNaN(cachedUpdatedAt) &&
-    (Number.isNaN(serverUpdatedAt) || cachedUpdatedAt > serverUpdatedAt)
-  );
-}
-
-function getVisibleDocumentUpdatedAt(
-  cachedDocument: CachedDocumentRecord,
-  serverDocument: CachedDocumentListItem | undefined,
-) {
-  if (
-    !serverDocument ||
-    !isCompleteDocument(cachedDocument) ||
-    cachedDocument._dirty !== true ||
-    isCachedDocumentNewerThanServerListItem(
-      cachedDocument,
-      serverDocument,
-    )
-  ) {
-    return cachedDocument.updated_at;
-  }
-
-  // Keep the dirty record's optimistic-concurrency timestamp in IndexedDB,
-  // while letting fresher server metadata drive list display and ordering.
-  return serverDocument.updated_at;
-}
-
-function shouldPreserveExistingDocument(
-  existing: CachedDocumentRecord | undefined,
-  incoming: CachedCompleteDocument,
-) {
-  if (
-    !isCompleteDocument(existing) ||
-    !documentsHaveDifferentEditorState(existing, incoming)
-  ) {
-    return false;
-  }
-
-  // Never let a remote reconciliation or completed save replace different,
-  // unsynced local content.
-  if (!incoming._dirty && existing._dirty) {
-    return true;
-  }
-
-  // Local writes and save completions carry the timestamp of the snapshot they
-  // represent. If a newer snapshot is already cached, the older async result
-  // must not move the cache backward.
-  return (
-    existing._localUpdatedAt !== undefined &&
-    incoming._localUpdatedAt !== undefined &&
-    (existing._localUpdatedAt > incoming._localUpdatedAt ||
-      (!incoming._dirty &&
-        existing._localUpdatedAt === incoming._localUpdatedAt))
-  );
-}
-
 /**
- * v2 did not distinguish a list placeholder from a real empty document.
- * Preserve records that are definitely complete (dirty or non-empty) and
- * migrate ambiguous clean empty records to metadata so they must be fetched
- * before the editor can use them.
+ * Before v5, list refreshes could advance a body's revision without fetching it.
+ * Clean legacy snapshots must be fetched again. Never discard unsynced text:
+ * preserve dirty snapshots but require a read-only confirmation before saving.
  */
 function migrateExistingDocuments(store: IDBObjectStore) {
   const request = store.openCursor();
-
   request.onsuccess = () => {
     const cursor = request.result;
-    if (!cursor) {
-      return;
-    }
-
+    if (!cursor) return;
     const existing = cursor.value as CachedDocumentRecord | CachedDocument;
-    let migrated: CachedDocumentRecord;
-
-    if (existing.kind === "metadata") {
-      migrated = toMetadataDocument(existing);
-    } else if (
-      existing.kind === "complete" ||
-      existing._dirty === true ||
-      existing.content !== ""
-    ) {
-      migrated = toStoredCompleteDocument(existing);
-    } else {
-      migrated = toMetadataDocument(existing);
-    }
-
+    const migrated = existing.kind !== "metadata" && existing._dirty === true
+      ? toStoredCompleteDocument({ ...existing, _baseVersionUntrusted: true })
+      : toMetadataDocument(existing);
     const updateRequest = cursor.update(migrated);
     updateRequest.onsuccess = () => cursor.continue();
-    updateRequest.onerror = () => cursor.continue();
+    // A failed migration aborts the upgrade, rather than leaving unsafe records.
   };
 }
 
@@ -385,7 +235,7 @@ function openDB(): Promise<IDBDatabase> {
       } else {
         const store = request.transaction!.objectStore(DOCS_STORE);
         ensureDocumentIndexes(store);
-        if (event.oldVersion < 3) {
+        if (event.oldVersion < 5) {
           migrateExistingDocuments(store);
         }
       }
@@ -537,11 +387,7 @@ export async function getCachedDocumentListForOwner(
         }
 
         const document = cursor.value as CachedDocumentRecord;
-        documents.push({
-          id: document.id,
-          title: document.title,
-          updated_at: document.updated_at,
-        });
+        documents.push(toDocumentListItem(document));
         cursor.continue();
       };
       request.onerror = () => reject(request.error);
@@ -566,9 +412,9 @@ export async function getCachedDocumentListForOwner(
         )
         .map((tombstone) => tombstone.documentId),
     );
-    return documents.filter(
-      (document) => !deletedDocumentIds.has(document.id),
-    );
+    return documents
+      .filter((document) => !deletedDocumentIds.has(document.id))
+      .sort(compareDocumentListItems);
   } catch {
     return [];
   }
@@ -643,7 +489,14 @@ export async function putCachedDocument(
       !shouldPreserveExistingDocument(existingDocument, incomingDocument);
 
     if (stored) {
-      documentStore.put(incomingDocument);
+      documentStore.put(
+        mergeDocumentListMetadata(
+          incomingDocument,
+          isCompleteDocument(existingDocument)
+            ? existingDocument._listMetadata
+            : undefined,
+        ),
+      );
     }
 
     await transactionDone;
@@ -996,20 +849,20 @@ export async function syncDocumentList(
     }
 
     for (const serverDocument of serverDocuments) {
-      if (
-        dirtyIds.has(serverDocument.id) ||
-        deletedDocumentIds.has(serverDocument.id)
-      ) {
+      if (deletedDocumentIds.has(serverDocument.id)) {
         continue;
       }
 
       const existingDocument = existingById.get(serverDocument.id);
+      const existingListItem = existingDocument
+        ? toDocumentListItem(existingDocument)
+        : undefined;
       if (
-        existingDocument &&
-        ((existingDocument.title === serverDocument.title &&
-          existingDocument.updated_at === serverDocument.updated_at) ||
+        existingListItem &&
+        ((existingListItem.title === serverDocument.title &&
+          existingListItem.updated_at === serverDocument.updated_at) ||
           isCachedDocumentNewerThanServerListItem(
-            existingDocument,
+            existingListItem,
             serverDocument,
           ))
       ) {
@@ -1017,12 +870,11 @@ export async function syncDocumentList(
       }
 
       if (isCompleteDocument(existingDocument)) {
-        const nextDocument = toStoredCompleteDocument({
-          ...existingDocument,
+        const nextDocument = mergeDocumentListMetadata(existingDocument, {
           title: serverDocument.title,
           updated_at: serverDocument.updated_at,
         });
-        documentStore.put(nextDocument);
+        if (nextDocument !== existingDocument) documentStore.put(nextDocument);
         reconciledById.set(serverDocument.id, nextDocument);
       } else {
         const nextDocument = toMetadataDocument({
@@ -1041,24 +893,8 @@ export async function syncDocumentList(
     await transactionDone;
 
     return Array.from(reconciledById.values())
-      .map((document) => {
-        const serverDocument = serverById.get(document.id);
-
-        return {
-          id: document.id,
-          title: document.title,
-          updated_at: getVisibleDocumentUpdatedAt(
-            document,
-            serverDocument,
-          ),
-        };
-      })
-      .sort((left, right) => {
-        const updatedAtComparison = right.updated_at.localeCompare(
-          left.updated_at,
-        );
-        return updatedAtComparison || right.id.localeCompare(left.id);
-      });
+      .map(toDocumentListItem)
+      .sort(compareDocumentListItems);
   } catch {
     // Cache reconciliation is best-effort.
     return null;
