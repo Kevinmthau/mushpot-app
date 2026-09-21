@@ -1,518 +1,127 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { EditorView } from "@codemirror/view";
+import { useCallback, useLayoutEffect, useMemo, useState } from "react";
+import { EditorView, ViewPlugin } from "@codemirror/view";
 
 import {
   buildEmbeddedMediaMarkdown,
-  DOCUMENT_IMAGE_BUCKET,
-  ensureStorageFileNameMatchesMediaKind,
-  getDocumentMediaBucket,
-  getSupportedMediaKind,
-  inferMediaMimeType,
   isSupportedMediaFile,
-  MAX_IMAGE_SIZE_BYTES,
-  MAX_VIDEO_SIZE_BYTES,
-  normalizeMediaMimeType,
-  sanitizeMediaAltText,
-  sanitizeStorageFileName,
   SUPPORTED_MEDIA_FORMATS_LABEL,
-  type SupportedMediaKind,
 } from "@/components/editor/image-upload-utils";
-import { generateVideoPosterImage } from "@/components/editor/video-poster-utils";
-import { buildDocumentMediaUrl } from "@/lib/document-media";
-import { buildVideoPosterTitle } from "@/lib/markdown/video-poster";
-import {
-  getSupabaseBrowserClient,
-  type SupabaseBrowserClient,
-} from "@/lib/supabase/client";
+import { uploadDocumentMedia } from "@/components/editor/media-upload";
 
 type UseMediaUploadInsertionParams = {
   documentId: string;
   owner: string;
 };
 
-const RESUMABLE_UPLOAD_THRESHOLD_BYTES = 6 * 1024 * 1024;
-const TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024;
+type UploadInsertion = {
+  controller: AbortController;
+  pos: number;
+  view: EditorView;
+};
 
-function getMediaUploadLimit(kind: SupportedMediaKind) {
-  return kind === "video" ? MAX_VIDEO_SIZE_BYTES : MAX_IMAGE_SIZE_BYTES;
-}
-
-function formatFileSize(bytes: number) {
-  const megabytes = bytes / (1024 * 1024);
-  const roundedMegabytes = Math.round(megabytes);
-
-  if (Math.abs(megabytes - roundedMegabytes) < 0.05) {
-    return `${roundedMegabytes}MB`;
-  }
-
-  return `${megabytes.toFixed(1)}MB`;
-}
-
-function capitalize(value: string) {
-  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
-}
-
-function getUploadLimitExceededMessage(
-  file: File,
-  kind: SupportedMediaKind,
-  limit: number,
-) {
-  const suggestion =
-    kind === "video"
-      ? "Compress the file or upload a shorter clip."
-      : "Compress the file or choose a smaller image.";
-  return `${file.name || "File"} is ${formatFileSize(file.size)}. ${capitalize(kind)} uploads are limited to ${formatFileSize(limit)}. ${suggestion}`;
-}
-
-function getRequiredEnvValue(name: string, value: string | undefined) {
-  if (!value) {
-    throw new Error(`Missing ${name} environment variable.`);
-  }
-
-  return value;
-}
-
-function getResumableUploadEndpoint(supabaseUrlValue: string) {
-  const supabaseUrl = new URL(supabaseUrlValue);
-  const hostParts = supabaseUrl.hostname.split(".");
-
-  if (
-    hostParts.length === 3 &&
-    hostParts[1] === "supabase" &&
-    hostParts[2] === "co"
-  ) {
-    supabaseUrl.hostname = `${hostParts[0]}.storage.supabase.co`;
-  }
-
-  supabaseUrl.pathname = "/storage/v1/upload/resumable";
-  supabaseUrl.search = "";
-  supabaseUrl.hash = "";
-
-  return supabaseUrl.toString();
-}
-
-async function uploadMediaWithResumableUpload({
-  bucket,
-  contentType,
-  file,
-  path,
-  supabase,
-}: {
-  bucket: string;
-  contentType: string | undefined;
-  file: File;
-  path: string;
-  supabase: SupabaseBrowserClient;
-}) {
-  const supabaseUrl = getRequiredEnvValue(
-    "NEXT_PUBLIC_SUPABASE_URL",
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-  );
-  const supabaseAnonKey = getRequiredEnvValue(
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  );
-  const { Upload } = await import("tus-js-client");
-  let uploadedPath = path;
-
-  await new Promise<void>((resolve, reject) => {
-    const pathFolder = path.slice(0, path.lastIndexOf("/") + 1);
-    const upload = new Upload(file, {
-      endpoint: getResumableUploadEndpoint(supabaseUrl),
-      retryDelays: [0, 3000, 5000, 10000, 20000],
-      headers: {
-        apikey: supabaseAnonKey,
-      },
-      async onBeforeRequest(request) {
-        const {
-          data: { session },
-          error: sessionError,
-        } = await supabase.auth.getSession();
-
-        if (sessionError) {
-          throw sessionError;
-        }
-
-        if (!session?.access_token) {
-          throw new Error("Missing Supabase session for upload.");
-        }
-
-        request.setHeader("authorization", `Bearer ${session.access_token}`);
-      },
-      uploadDataDuringCreation: true,
-      storeFingerprintForResuming: true,
-      removeFingerprintOnSuccess: true,
-      chunkSize: TUS_CHUNK_SIZE_BYTES,
-      metadata: {
-        bucketName: bucket,
-        objectName: path,
-        contentType: contentType || file.type || "application/octet-stream",
-        cacheControl: "300",
-      },
-      onError(error) {
-        reject(error);
-      },
-      onSuccess() {
-        resolve();
-      },
-    });
-
-    upload
-      .findPreviousUploads()
-      .then((previousUploads) => {
-        const previousUpload = previousUploads.find(
-          (candidate) =>
-            candidate.metadata.bucketName === bucket &&
-            candidate.metadata.objectName.startsWith(pathFolder),
-        );
-
-        if (previousUpload) {
-          uploadedPath = previousUpload.metadata.objectName;
-          upload.options.metadata = {
-            ...upload.options.metadata,
-            bucketName: bucket,
-            objectName: uploadedPath,
-          };
-          upload.resumeFromPreviousUpload(previousUpload);
-        }
-
-        upload.start();
-      })
-      .catch(reject);
-  });
-
-  return uploadedPath;
-}
-
-async function uploadMediaToStorage({
-  bucket,
-  contentType,
-  file,
-  path,
-  supabase,
-}: {
-  bucket: string;
-  contentType: string | undefined;
-  file: File;
-  path: string;
-  supabase: SupabaseBrowserClient;
-}) {
-  if (file.size > RESUMABLE_UPLOAD_THRESHOLD_BYTES) {
-    return uploadMediaWithResumableUpload({
-      bucket,
-      contentType,
-      file,
-      path,
-      supabase,
-    });
-  }
-
-  const { error } = await supabase.storage.from(bucket).upload(path, file, {
-    cacheControl: "300",
-    contentType,
-    upsert: false,
-  });
-
-  if (error) {
-    throw error;
-  }
-
-  return path;
-}
-
-async function uploadVideoPosterImage({
-  documentId,
-  owner,
-  poster,
-  randomId,
-  supabase,
-}: {
-  documentId: string;
-  owner: string;
-  poster: File;
-  randomId: string;
-  supabase: SupabaseBrowserClient;
-}) {
-  try {
-    const path = `${owner}/${documentId}/${randomId}-poster.jpg`;
-    const uploadedPath = await uploadMediaToStorage({
-      bucket: DOCUMENT_IMAGE_BUCKET,
-      contentType: "image/jpeg",
-      file: poster,
-      path,
-      supabase,
-    });
-    return buildDocumentMediaUrl(DOCUMENT_IMAGE_BUCKET, uploadedPath);
-  } catch (error) {
-    console.error("Video poster upload failed", error);
-    return null;
-  }
-}
-
-export function isolateVideoPosterImagePromise(
-  posterImagePromise: Promise<File | null>,
-) {
-  return posterImagePromise.catch((error) => {
-    // Attach the rejection handler as soon as extraction starts. Waiting until
-    // after the video upload would leave this promise abandoned when the upload
-    // fails or the editor unmounts first.
-    console.error("Video poster generation failed", error);
-    return null;
-  });
-}
-
-export async function resolveVideoPosterTitle({
-  documentId,
-  owner,
-  posterImagePromise,
-  randomId,
-  supabase,
-}: {
-  documentId: string;
-  owner: string;
-  posterImagePromise: Promise<File | null>;
-  randomId: string;
-  supabase: SupabaseBrowserClient;
-}) {
-  try {
-    const posterImage = await posterImagePromise;
-    if (!posterImage) {
-      return undefined;
-    }
-
-    const posterUrl = await uploadVideoPosterImage({
-      documentId,
-      owner,
-      poster: posterImage,
-      randomId,
-      supabase,
-    });
-    return posterUrl ? buildVideoPosterTitle(posterUrl) : undefined;
-  } catch (error) {
-    // Poster extraction is best-effort. A rejected extraction promise must
-    // never turn an already uploaded video into a reported upload failure.
-    console.error("Video poster generation failed", error);
-    return undefined;
-  }
-}
-
-function getErrorValue(error: unknown, key: string) {
-  if (typeof error !== "object" || error === null || !(key in error)) {
-    return null;
-  }
-
-  return (error as Record<string, unknown>)[key];
-}
-
-function getUploadErrorStatusCode(error: unknown) {
-  for (const key of ["status", "statusCode"]) {
-    const value = getErrorValue(error, key);
-
-    if (typeof value === "number") {
-      return value;
-    }
-
-    if (typeof value === "string") {
-      const parsedValue = Number.parseInt(value, 10);
-      if (!Number.isNaN(parsedValue)) {
-        return parsedValue;
-      }
-    }
-  }
-
-  return null;
-}
-
-function getUploadErrorText(error: unknown) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  const message = getErrorValue(error, "message");
-
-  if (typeof message === "string") {
-    return message;
-  }
-
-  return null;
-}
-
-function isStorageMaximumSizeError(error: unknown) {
-  const message = getUploadErrorText(error)?.toLowerCase() ?? "";
-  return (
-    getUploadErrorStatusCode(error) === 413 ||
-    message.includes("response code: 413") ||
-    message.includes("maximum size exceeded")
-  );
-}
-
-function getUploadErrorMessage(
-  error: unknown,
-  file: File,
-  kind: SupportedMediaKind,
-  limit: number,
-) {
-  if (isStorageMaximumSizeError(error)) {
-    if (file.size > limit) {
-      return getUploadLimitExceededMessage(file, kind, limit);
-    }
-
-    console.error(
-      `Storage rejected ${kind} upload as too large despite file size ${formatFileSize(file.size)} being under the Mushpot ${kind} limit of ${formatFileSize(limit)}. The Supabase global Storage limit may be lower than the Mushpot limit.`,
-    );
-    return `${file.name || "File"} is too large to upload.`;
-  }
-
-  return getUploadErrorText(error);
+function createUploadScope() {
+  return {
+    lifetime: null as object | null,
+    jobs: new Set<UploadInsertion>(),
+    views: new Set<EditorView>(),
+  };
 }
 
 export function useMediaUploadInsertion({
   documentId,
   owner,
 }: UseMediaUploadInsertionParams) {
-  const [uploadingMediaCount, setUploadingMediaCount] = useState(0);
-  const mountedRef = useRef(true);
-  const trackedInsertPositionsRef = useRef(new Set<{ pos: number }>());
+  const scope = useMemo(() => ({
+    ...createUploadScope(), documentId, owner,
+  }), [documentId, owner]);
+  const [uploading, setUploading] = useState({ scope, count: 0 });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // Every setup gets a new lifetime, including React StrictMode's replay.
+    // An old completion cannot become current again after cleanup.
+    scope.lifetime = {};
     return () => {
-      mountedRef.current = false;
+      scope.lifetime = null;
+      for (const job of scope.jobs) job.controller.abort();
+      scope.jobs.clear();
     };
-  }, []);
+  }, [scope]);
+
+  const viewLifecycle = useMemo(() => ViewPlugin.fromClass(class {
+    constructor(private readonly view: EditorView) {
+      scope.views.add(view);
+    }
+
+    destroy() {
+      scope.views.delete(this.view);
+      for (const job of scope.jobs) {
+        if (job.view === this.view) job.controller.abort();
+      }
+    }
+  }), [scope]);
 
   const insertPositionTracker = useMemo(
-    () =>
-      EditorView.updateListener.of((update) => {
-        if (!update.docChanged) {
-          return;
+    () => EditorView.updateListener.of((update) => {
+      if (!update.docChanged) return;
+      for (const job of scope.jobs) {
+        if (job.view === update.view) {
+          job.pos = update.changes.mapPos(job.pos, 1);
         }
-
-        for (const tracked of trackedInsertPositionsRef.current) {
-          tracked.pos = update.changes.mapPos(tracked.pos, 1);
-        }
-      }),
-    [],
+      }
+    }),
+    [scope],
   );
 
   const insertUploadedMedia = useCallback(
     async (view: EditorView, files: File[], initialInsertPosition: number) => {
-      if (files.length === 0) {
-        return;
-      }
+      const lifetime = scope.lifetime;
+      if (!files.length || !lifetime || !scope.views.has(view)) return;
 
-      setUploadingMediaCount((count) => count + files.length);
-
-      const trackedInsertPosition = { pos: initialInsertPosition };
-      trackedInsertPositionsRef.current.add(trackedInsertPosition);
+      const job = { controller: new AbortController(), pos: initialInsertPosition, view };
+      const { signal } = job.controller;
+      const isCurrent = () => !signal.aborted && scope.lifetime === lifetime;
+      scope.jobs.add(job);
+      setUploading((current) => ({
+        scope,
+        count: (current.scope === scope ? current.count : 0) + files.length,
+      }));
       const failures: string[] = [];
       try {
         for (const file of files) {
-          const mediaKind = getSupportedMediaKind(file);
-          if (!mediaKind) {
-            failures.push(
-              `${file.name || "File"} is not a supported media file. Allowed formats: ${SUPPORTED_MEDIA_FORMATS_LABEL}.`,
-            );
+          if (!isCurrent()) return;
+          const result = await uploadDocumentMedia({ documentId, owner, file, signal });
+          if (!isCurrent() || result.status === "cancelled") return;
+          if (result.status === "failed") {
+            failures.push(result.message);
             continue;
           }
 
-          const uploadLimit = getMediaUploadLimit(mediaKind);
-          if (file.size > uploadLimit) {
-            failures.push(getUploadLimitExceededMessage(file, mediaKind, uploadLimit));
-            continue;
-          }
-
-          try {
-            const supabase = await getSupabaseBrowserClient();
-            const inferredMimeType = inferMediaMimeType(file.name);
-            const normalizedMimeType = file.type
-              ? normalizeMediaMimeType(file.type)?.mimeType
-              : null;
-            const contentType = normalizedMimeType || inferredMimeType || undefined;
-            const safeName = ensureStorageFileNameMatchesMediaKind(
-              sanitizeStorageFileName(file.name),
-              mediaKind,
-              contentType,
-            );
-            const randomId = crypto.randomUUID();
-            const path = `${owner}/${documentId}/${randomId}-${safeName}`;
-            const bucket = getDocumentMediaBucket(mediaKind);
-
-            const posterImagePromise =
-              mediaKind === "video"
-                ? isolateVideoPosterImagePromise(generateVideoPosterImage(file))
-                : Promise.resolve(null);
-
-            const uploadedPath = await uploadMediaToStorage({
-              bucket,
-              contentType,
-              file,
-              path,
-              supabase,
-            });
-
-            if (!mountedRef.current) {
-              return;
-            }
-
-            const mediaUrl = buildDocumentMediaUrl(bucket, uploadedPath);
-
-            const posterTitle = await resolveVideoPosterTitle({
-              documentId,
-              owner,
-              posterImagePromise,
-              randomId,
-              supabase,
-            });
-
-            if (!mountedRef.current) {
-              return;
-            }
-
-            const insertPosition = trackedInsertPosition.pos;
-            const markdownMedia = buildEmbeddedMediaMarkdown(
-              view,
-              insertPosition,
-              sanitizeMediaAltText(file.name, mediaKind),
-              mediaUrl,
-              posterTitle,
-            );
-            view.dispatch({
-              changes: {
-                from: insertPosition,
-                to: insertPosition,
-                insert: markdownMedia,
-              },
-              selection: {
-                anchor: insertPosition + markdownMedia.length,
-              },
-            });
-          } catch (error) {
-            console.error("Media upload failed", error);
-            const message = getUploadErrorMessage(
-              error,
-              file,
-              mediaKind,
-              uploadLimit,
-            );
-            failures.push(
-              message
-                ? `Failed to upload ${file.name || "a file"}: ${message}`
-                : `Failed to upload ${file.name || "a file"}.`,
-            );
-          }
+          const insertPosition = job.pos;
+          const markdownMedia = buildEmbeddedMediaMarkdown(
+            view, insertPosition, result.media.altText, result.media.url,
+            result.media.posterTitle,
+          );
+          view.dispatch({
+            changes: { from: insertPosition, to: insertPosition, insert: markdownMedia },
+            selection: { anchor: insertPosition + markdownMedia.length },
+          });
         }
       } finally {
-        trackedInsertPositionsRef.current.delete(trackedInsertPosition);
-        setUploadingMediaCount((count) => Math.max(0, count - files.length));
+        scope.jobs.delete(job);
+        if (scope.lifetime === lifetime) {
+          setUploading((current) => current.scope === scope
+            ? { scope, count: Math.max(0, current.count - files.length) }
+            : current);
+        }
       }
 
-      if (failures.length > 0) {
+      if (isCurrent() && failures.length > 0) {
         window.alert(failures.join("\n"));
       }
     },
-    [documentId, owner],
+    [documentId, owner, scope],
   );
 
   const mediaUploadExtensions = useMemo(
@@ -573,12 +182,13 @@ export function useMediaUploadInsertion({
         },
       }),
       insertPositionTracker,
+      viewLifecycle,
     ],
-    [insertPositionTracker, insertUploadedMedia],
+    [insertPositionTracker, insertUploadedMedia, viewLifecycle],
   );
 
   return {
     mediaUploadExtensions,
-    uploadingMediaCount,
+    uploadingMediaCount: uploading.scope === scope ? uploading.count : 0,
   };
 }
