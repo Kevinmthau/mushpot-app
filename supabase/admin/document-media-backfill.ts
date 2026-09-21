@@ -1,9 +1,12 @@
-export const DOCUMENT_MEDIA_BUCKETS = [
-  "document-images",
-  "document-videos",
-] as const;
+import {
+  buildDocumentMediaUrl,
+  type DocumentMediaBucket,
+  MEDIA_URL_CANDIDATE_PATTERN,
+  parseDocumentMediaCandidate,
+} from "../functions/_shared/document-media-core.ts";
 
-export type DocumentMediaBucket = (typeof DOCUMENT_MEDIA_BUCKETS)[number];
+export { DOCUMENT_MEDIA_BUCKETS } from "../functions/_shared/document-media-core.ts";
+export type { DocumentMediaBucket } from "../functions/_shared/document-media-core.ts";
 
 export type MediaReference = {
   bucket: DocumentMediaBucket;
@@ -43,146 +46,34 @@ type Occurrence = {
   start: number;
 };
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MEDIA_URL_CANDIDATE_PATTERN = /https?:\/\/[^\s<>"')]+|\/m\/[^\s<>"')]+/g;
-const LEGACY_PUBLIC_PATH_PREFIXES = [
-  "/storage/v1/object/public/",
-  "/storage/v1/render/image/public/",
-] as const;
-
-function isBucket(value: string): value is DocumentMediaBucket {
-  return DOCUMENT_MEDIA_BUCKETS.includes(value as DocumentMediaBucket);
-}
-
-function isSafeSegment(value: string) {
-  return (
-    value.length > 0 &&
-    value !== "." &&
-    value !== ".." &&
-    !value.includes("/") &&
-    !value.includes("\\") &&
-    !value.includes("\0")
-  );
-}
-
-function decodeSegments(value: string) {
-  const decoded: string[] = [];
-
-  for (const encoded of value.split("/")) {
-    try {
-      const segment = decodeURIComponent(encoded);
-      if (!isSafeSegment(segment)) {
-        return null;
-      }
-      decoded.push(segment);
-    } catch {
-      return null;
-    }
-  }
-
-  return decoded;
-}
-
-function encodeSegments(segments: string[]) {
-  return segments
-    .map((segment) =>
-      encodeURIComponent(segment).replace(
-        /[!'()*]/g,
-        (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
-      )
-    )
-    .join("/");
-}
-
-function isExpectedStorageOrigin(candidate: URL, supabase: URL) {
-  if (candidate.origin === supabase.origin) {
-    return true;
-  }
-
-  const projectHost = supabase.hostname.match(/^([a-z0-9-]+)\.supabase\.co$/i);
-  return Boolean(
-    projectHost &&
-      candidate.protocol === "https:" &&
-      candidate.port === "" &&
-      candidate.hostname === `${projectHost[1]}.storage.supabase.co`,
-  );
-}
-
 function parseCandidate(
   value: string,
-  supabaseUrlValue: string,
+  supabaseUrl: string,
 ): { blocker?: string; media?: ParsedCandidate; related: boolean } {
-  let segments: string[] | null = null;
-
-  if (value.startsWith("/m/")) {
-    let stableUrl: URL;
-    try {
-      stableUrl = new URL(value, "https://mushpot.invalid");
-    } catch {
-      return {
-        blocker: `Malformed local media URL: ${value}`,
-        related: true,
-      };
-    }
-    segments = decodeSegments(stableUrl.pathname.slice("/m/".length));
-  } else {
-    let candidateUrl: URL;
-    let supabaseUrl: URL;
-    try {
-      candidateUrl = new URL(value);
-      supabaseUrl = new URL(supabaseUrlValue);
-    } catch {
-      return { related: false };
-    }
-
-    if (!isExpectedStorageOrigin(candidateUrl, supabaseUrl)) {
-      return { related: false };
-    }
-
-    const prefix = LEGACY_PUBLIC_PATH_PREFIXES.find((item) =>
-      candidateUrl.pathname.startsWith(item)
-    );
-    if (!prefix) {
-      return { related: false };
-    }
-    segments = decodeSegments(candidateUrl.pathname.slice(prefix.length));
+  const candidate = parseDocumentMediaCandidate(value, supabaseUrl);
+  if (candidate.status === "unrelated") return { related: false };
+  if (candidate.status === "invalid") {
+    const label = candidate.reason === "local-url"
+      ? "local media URL"
+      : candidate.reason === "path"
+      ? "document media path"
+      : "document media URL";
+    return { blocker: `Malformed ${label}: ${value}`, related: true };
   }
-
-  if (!segments || segments.length < 4 || !isBucket(segments[0])) {
-    return {
-      blocker: `Malformed document media URL: ${value}`,
-      related: true,
-    };
-  }
-
-  const [bucket, ownerId, documentId, ...fileSegments] = segments;
-  if (
-    !UUID_PATTERN.test(ownerId) ||
-    !UUID_PATTERN.test(documentId) ||
-    fileSegments.length === 0
-  ) {
-    return {
-      blocker: `Malformed document media path: ${value}`,
-      related: true,
-    };
-  }
-
+  const media = candidate.media;
   return {
-    media: {
-      bucket,
-      documentId: documentId.toLowerCase(),
-      fileSegments,
-      originalUrl: value,
-      ownerId: ownerId.toLowerCase(),
-      path: [ownerId, documentId, ...fileSegments].join("/"),
-    },
     related: true,
+    media: {
+      bucket: media.bucket,
+      documentId: media.documentId.toLowerCase(),
+      ownerId: media.ownerId.toLowerCase(),
+      fileSegments: media.storagePath.split("/").slice(2),
+      originalUrl: value,
+      // Storage object names retain their original case even though migration
+      // ownership comparisons intentionally normalize UUID identifiers.
+      path: media.storagePath,
+    },
   };
-}
-
-function stableMediaUrl(bucket: DocumentMediaBucket, path: string) {
-  return `/m/${bucket}/${encodeSegments(path.split("/"))}`;
 }
 
 export function analyzeDocumentMedia({
@@ -244,7 +135,7 @@ export function analyzeDocumentMedia({
 
     occurrences.push({
       end: start + match[0].length,
-      replacement: stableMediaUrl(media.bucket, destinationPath),
+      replacement: buildDocumentMediaUrl(media.bucket, destinationPath),
       start,
     });
   }

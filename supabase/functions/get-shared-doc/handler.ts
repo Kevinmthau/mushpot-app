@@ -1,3 +1,8 @@
+import {
+  DOCUMENT_MEDIA_BATCH_MAX_URLS,
+  DOCUMENT_MEDIA_MAX_URL_LENGTH,
+  type SharedMediaBatchResponse,
+} from "../_shared/document-media-core.ts";
 import { getCorsHeaders, isCorsOriginAllowed } from "../_shared/cors.ts";
 import {
   buildSharedDocumentMediaUrl,
@@ -139,8 +144,11 @@ export async function handleSharedDocumentRequest(
     (mediaUrl !== undefined && typeof mediaUrl !== "string") ||
     (mediaUrls !== undefined && (
       mediaUrl !== undefined || !Array.isArray(mediaUrls) ||
-      mediaUrls.length === 0 || mediaUrls.length > 50 ||
-      mediaUrls.some((url) => typeof url !== "string" || url.length > 4096)
+      mediaUrls.length === 0 ||
+      mediaUrls.length > DOCUMENT_MEDIA_BATCH_MAX_URLS ||
+      mediaUrls.some((url) =>
+        typeof url !== "string" || url.length > DOCUMENT_MEDIA_MAX_URL_LENGTH
+      )
     ))
   ) {
     return jsonResponse(request, { error: "Invalid share link." }, 400);
@@ -215,13 +223,16 @@ export async function handleSharedDocumentRequest(
         // One unavailable bucket must not prevent the remaining media loading.
       }
     }));
-    return jsonResponse(request, {
-      urls: Array.from(
-        results,
-        ([mediaUrl, result]) => ({ mediaUrl, ...result }),
-      ),
-      expiresIn: DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
-    });
+    return jsonResponse(
+      request,
+      {
+        urls: Array.from(
+          results,
+          ([mediaUrl, result]) => ({ mediaUrl, ...result }),
+        ),
+        expiresIn: DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
+      } satisfies SharedMediaBatchResponse,
+    );
   }
 
   if (mediaUrl !== undefined) {

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 
+import {
+  DOCUMENT_MEDIA_BATCH_MAX_URLS,
+  DOCUMENT_MEDIA_MAX_URL_LENGTH,
+} from "@/lib/document-media";
 import { fetchSharedMediaUrls } from "@/lib/shared-document";
 
 export const dynamic = "force-dynamic";
@@ -24,8 +28,8 @@ export async function POST(request: Request, context: {
   if (
     typeof body !== "object" || body === null || !("mediaUrls" in body) ||
     !Array.isArray(body.mediaUrls) || body.mediaUrls.length === 0 ||
-    body.mediaUrls.length > 50 ||
-    body.mediaUrls.some((url) => typeof url !== "string" || url.length > 4096)
+    body.mediaUrls.length > DOCUMENT_MEDIA_BATCH_MAX_URLS ||
+    body.mediaUrls.some((url) => typeof url !== "string" || url.length > DOCUMENT_MEDIA_MAX_URL_LENGTH)
   ) {
     return NextResponse.json({ error: "Invalid media batch." }, {
       status: 400,
