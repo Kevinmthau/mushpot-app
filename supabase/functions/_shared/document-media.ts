@@ -1,7 +1,16 @@
-export const DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS = 5 * 60;
+import {
+  buildDocumentMediaUrl,
+  type DocumentMediaBucket,
+  isDocumentMediaBucket,
+  isUuid,
+  MEDIA_URL_CANDIDATE_PATTERN,
+  parseDocumentMediaUrl,
+} from "./document-media-core.ts";
+
+export { DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS } from "./document-media-core.ts";
 
 export type SharedDocumentMediaReference = {
-  bucket: "document-images" | "document-videos";
+  bucket: DocumentMediaBucket;
   path: string;
 };
 
@@ -25,128 +34,7 @@ type BuildSharedDocumentMediaUrlOptions = {
   token: string;
 };
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHARE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{64}$/;
-const MEDIA_URL_CANDIDATE_PATTERN = /https?:\/\/[^\s<>"')]+|\/m\/[^\s<>"')]+/g;
-const LEGACY_PUBLIC_PATH_PREFIXES = [
-  "/storage/v1/object/public/",
-  "/storage/v1/render/image/public/",
-] as const;
-
-function isDocumentMediaBucket(
-  value: string,
-): value is SharedDocumentMediaReference["bucket"] {
-  return value === "document-images" || value === "document-videos";
-}
-
-function isSafePathSegment(value: string) {
-  return (
-    value.length > 0 &&
-    value !== "." &&
-    value !== ".." &&
-    !value.includes("/") &&
-    !value.includes("\\") &&
-    !value.includes("\0")
-  );
-}
-
-function decodePathSegments(value: string) {
-  const segments: string[] = [];
-
-  for (const encodedSegment of value.split("/")) {
-    let segment: string;
-
-    try {
-      segment = decodeURIComponent(encodedSegment);
-    } catch {
-      return null;
-    }
-
-    if (!isSafePathSegment(segment)) {
-      return null;
-    }
-
-    segments.push(segment);
-  }
-
-  return segments;
-}
-
-function encodePathSegments(segments: string[]) {
-  if (segments.some((segment) => !isSafePathSegment(segment))) {
-    throw new Error("Invalid shared document media path.");
-  }
-
-  return segments
-    .map((segment) =>
-      encodeURIComponent(segment).replace(
-        /[!'()*]/g,
-        (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
-      )
-    )
-    .join("/");
-}
-
-function isExpectedSupabaseStorageOrigin(
-  candidateUrl: URL,
-  supabaseUrl: URL,
-) {
-  if (candidateUrl.origin === supabaseUrl.origin) {
-    return true;
-  }
-
-  const projectHostMatch = supabaseUrl.hostname.match(
-    /^([a-z0-9-]+)\.supabase\.co$/i,
-  );
-  return Boolean(
-    projectHostMatch &&
-      candidateUrl.protocol === "https:" &&
-      candidateUrl.port === "" &&
-      candidateUrl.hostname ===
-        `${projectHostMatch[1]}.storage.supabase.co`,
-  );
-}
-
-function parseCandidateSegments(
-  value: string,
-  supabaseUrlValue: string,
-) {
-  if (value.startsWith("/m/")) {
-    let stableUrl: URL;
-
-    try {
-      stableUrl = new URL(value, "https://mushpot.invalid");
-    } catch {
-      return null;
-    }
-
-    return decodePathSegments(stableUrl.pathname.slice("/m/".length));
-  }
-
-  let candidateUrl: URL;
-  let supabaseUrl: URL;
-
-  try {
-    candidateUrl = new URL(value);
-    supabaseUrl = new URL(supabaseUrlValue);
-  } catch {
-    return null;
-  }
-
-  if (!isExpectedSupabaseStorageOrigin(candidateUrl, supabaseUrl)) {
-    return null;
-  }
-
-  const prefix = LEGACY_PUBLIC_PATH_PREFIXES.find((candidatePrefix) =>
-    candidateUrl.pathname.startsWith(candidatePrefix)
-  );
-  if (!prefix) {
-    return null;
-  }
-
-  return decodePathSegments(candidateUrl.pathname.slice(prefix.length));
-}
 
 export function parseSharedDocumentMediaReference(
   value: string,
@@ -156,29 +44,13 @@ export function parseSharedDocumentMediaReference(
     supabaseUrl,
   }: ParseSharedDocumentMediaReferenceOptions,
 ): SharedDocumentMediaReference | null {
-  if (!UUID_PATTERN.test(ownerId) || !UUID_PATTERN.test(documentId)) {
+  const media = parseDocumentMediaUrl(value, supabaseUrl);
+  // Sharing authorizes exact owner/document paths; legacy backfill rules must
+  // never relax this comparison or authorize a different document's object.
+  if (!media || media.ownerId !== ownerId || media.documentId !== documentId) {
     return null;
   }
-
-  const segments = parseCandidateSegments(value, supabaseUrl);
-  if (!segments || segments.length < 4) {
-    return null;
-  }
-
-  const [bucket, pathOwnerId, pathDocumentId, ...fileSegments] = segments;
-  if (
-    !isDocumentMediaBucket(bucket) ||
-    pathOwnerId !== ownerId ||
-    pathDocumentId !== documentId ||
-    fileSegments.length === 0
-  ) {
-    return null;
-  }
-
-  return {
-    bucket,
-    path: [pathOwnerId, pathDocumentId, ...fileSegments].join("/"),
-  };
+  return { bucket: media.bucket, path: media.storagePath };
 }
 
 export function buildSharedDocumentMediaUrl({
@@ -189,19 +61,23 @@ export function buildSharedDocumentMediaUrl({
   const pathSegments = reference.path.split("/");
 
   if (
-    !UUID_PATTERN.test(documentId) ||
+    !isUuid(documentId) ||
     !SHARE_TOKEN_PATTERN.test(token) ||
     !isDocumentMediaBucket(reference.bucket) ||
     pathSegments.length < 3 ||
-    !UUID_PATTERN.test(pathSegments[0]) ||
+    !isUuid(pathSegments[0]) ||
     pathSegments[1] !== documentId
   ) {
     throw new Error("Invalid shared document media URL.");
   }
 
-  return `/s/${documentId}/${token}/m/${reference.bucket}/${
-    encodePathSegments(pathSegments)
-  }`;
+  try {
+    return `/s/${documentId}/${token}${
+      buildDocumentMediaUrl(reference.bucket, reference.path)
+    }`;
+  } catch {
+    throw new Error("Invalid shared document media path.");
+  }
 }
 
 function getSharedDocumentMediaReferenceKey(

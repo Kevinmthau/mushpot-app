@@ -1,3 +1,9 @@
+import {
+  DOCUMENT_MEDIA_BATCH_MAX_URLS,
+  DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
+  type SharedMediaUrlResult,
+} from "@/lib/document-media";
+
 type ResolvedMedia = { url: string | null; expiresAt: number };
 type PendingMedia = {
   resolve: (value: ResolvedMedia) => void;
@@ -64,11 +70,11 @@ export function createSharedMediaResolver(
     timer = undefined;
     if (running || queue.size === 0) return;
     running = true;
-    const sources = Array.from(queue).slice(0, 50);
+    const sources = Array.from(queue).slice(0, DOCUMENT_MEDIA_BATCH_MAX_URLS);
     sources.forEach((url) => queue.delete(url));
     const startedAt = Date.now();
     let urls:
-      | Array<{ mediaUrl: string; signedUrl: string | null; retry?: boolean }>
+      | SharedMediaUrlResult[]
       | null = null;
     let expiresIn = 0;
     try {
@@ -85,7 +91,7 @@ export function createSharedMediaResolver(
             typeof body.expiresIn === "number"
           ) {
             urls = body.urls;
-            expiresIn = Math.max(0, Math.min(300, body.expiresIn));
+            expiresIn = Math.max(0, Math.min(DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS, body.expiresIn));
           }
         } else if (response.status === 503 || response.status === 404) {
           batchUnavailable = true;

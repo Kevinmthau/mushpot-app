@@ -91,3 +91,43 @@ Deno.test("ignores unrelated external URLs", () => {
     rewrittenContent: content,
   });
 });
+
+Deno.test("normalizes UUID ownership comparisons while preserving source object case", () => {
+  const owner = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const sourceDocument = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const path =
+    `${owner.toUpperCase()}/${sourceDocument.toUpperCase()}/photo.png`;
+  const analysis = analyzeDocumentMedia({
+    content: `![photo](/m/document-images/${path})`,
+    documentId: DOCUMENT,
+    ownerId: owner,
+    supabaseUrl: SUPABASE_URL,
+  });
+  assertEquals(analysis.blockers, []);
+  assertEquals(analysis.copies, [{
+    bucket: "document-images",
+    sourcePath: path,
+    destinationPath: `${owner}/${DOCUMENT}/${sourceDocument}/photo.png`,
+  }]);
+  assertEquals(analysis.references[0].path, path);
+});
+
+Deno.test("retains malformed-media diagnostics and ignores non-public storage URLs", () => {
+  const malformed = `/m/document-images/not-an-owner/${DOCUMENT}/photo.png`;
+  const wrongBucket = `/m/avatars/${OWNER}/${DOCUMENT}/photo.png`;
+  const signed =
+    `${SUPABASE_URL}/storage/v1/object/sign/document-images/${OWNER}/${DOCUMENT}/photo.png?token=signature`;
+  const content = [malformed, wrongBucket, signed].join("\n");
+  const analysis = analyzeDocumentMedia({
+    content,
+    documentId: DOCUMENT,
+    ownerId: OWNER,
+    supabaseUrl: SUPABASE_URL,
+  });
+  assertEquals(analysis.blockers, [
+    `Malformed document media path: ${malformed}`,
+    `Malformed document media URL: ${wrongBucket}`,
+  ]);
+  assertEquals(analysis.references, []);
+  assertEquals(analysis.rewrittenContent, content);
+});

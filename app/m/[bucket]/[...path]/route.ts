@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { parseDocumentMediaRoute } from "@/lib/document-media";
+import { DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS, parseDocumentMediaRoute } from "@/lib/document-media";
 import { queryWithCloneStatusFallback } from "@/lib/supabase/clone-status-compat";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-const SIGNED_MEDIA_URL_TTL_SECONDS = 5 * 60;
 const MEDIA_RESPONSE_HEADERS = {
   "Cache-Control": "private, no-store, max-age=0",
   "Referrer-Policy": "no-referrer",
@@ -79,7 +78,7 @@ export async function GET(_request: Request, context: MediaRouteContext) {
 
   const { data: signedData, error: signedUrlError } = await supabase.storage
     .from(media.bucket)
-    .createSignedUrl(media.storagePath, SIGNED_MEDIA_URL_TTL_SECONDS);
+    .createSignedUrl(media.storagePath, DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS);
 
   if (signedUrlError || !signedData?.signedUrl) {
     if (signedUrlError) {

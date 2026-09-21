@@ -2,6 +2,10 @@ import { cache } from "react";
 import { headers } from "next/headers";
 
 import { resolveAppOriginFromHeaders } from "@/lib/app-url";
+import {
+  DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
+  type SharedMediaBatchResponse,
+} from "@/lib/document-media";
 
 export type SharedDocument = {
   title: string;
@@ -17,10 +21,7 @@ export type SharedDocumentResult<T> =
   | { status: "not_found" }
   | { status: "unavailable" };
 
-export type SharedMediaBatch = {
-  urls: Array<{ mediaUrl: string; signedUrl: string | null; retry?: boolean }>;
-  expiresIn: number;
-};
+export type SharedMediaBatch = SharedMediaBatchResponse;
 
 async function requestSharedDocument<T>(
   body: Record<string, string | string[]>,
@@ -149,7 +150,7 @@ export async function fetchSharedMediaUrls(
       typeof payload !== "object" || payload === null ||
       !("urls" in payload) || !Array.isArray(payload.urls) ||
       !("expiresIn" in payload) || typeof payload.expiresIn !== "number" ||
-      !Number.isFinite(payload.expiresIn) || payload.expiresIn <= 0 || payload.expiresIn > 300
+      !Number.isFinite(payload.expiresIn) || payload.expiresIn <= 0 || payload.expiresIn > DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS
     ) return null;
 
     const requested = new Set(mediaUrls);

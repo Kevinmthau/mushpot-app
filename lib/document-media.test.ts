@@ -1,3 +1,12 @@
+import {
+  encodeDocumentMediaPath,
+  parseDocumentMediaCandidate,
+} from "@/supabase/functions/_shared/document-media-core";
+import {
+  DOCUMENT_MEDIA_ENCODING_FIXTURES,
+  DOCUMENT_MEDIA_INVALID_PATH_FIXTURES,
+  DOCUMENT_MEDIA_PARSE_FIXTURES,
+} from "@/supabase/functions/_shared/document-media-core.fixtures";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -141,5 +150,24 @@ describe("normalizeDocumentMediaUrl", () => {
     expect(
       normalizeDocumentMediaUrl(`${SUPABASE_URL}/other/path.png`, SUPABASE_URL),
     ).toBe(`${SUPABASE_URL}/other/path.png`);
+  });
+});
+
+// Run the exact Edge Function fixture corpus through the Next.js adapter too.
+// Empty configuration is explicit so local environment files cannot affect it.
+describe("cross-runtime media contract", () => {
+  it.each(DOCUMENT_MEDIA_PARSE_FIXTURES)("$name", (fixture) => {
+    const configuration = fixture.supabaseUrl ?? "";
+    expect(parseDocumentMediaCandidate(fixture.url, configuration)).toEqual(fixture.expected);
+    expect(parseDocumentMediaUrl(fixture.url, configuration)).toEqual(
+      fixture.expected.status === "media" ? fixture.expected.media : null,
+    );
+  });
+  it.each(DOCUMENT_MEDIA_ENCODING_FIXTURES)("encodes $path", ({ path, encoded }) => {
+    expect(encodeDocumentMediaPath(path)).toBe(encoded);
+    expect(buildDocumentMediaUrl("document-images", path)).toBe(`/m/document-images/${encoded}`);
+  });
+  it.each(DOCUMENT_MEDIA_INVALID_PATH_FIXTURES)("rejects %s", (path) => {
+    expect(() => encodeDocumentMediaPath(path)).toThrow("Invalid document media path");
   });
 });
