@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  parseMarkdownReferenceDefinitions,
-  parseMarkdownTable,
-} from "@/lib/markdown/table";
+import { parseMarkdownReferenceDefinitions } from "@/lib/markdown/links";
+import { parseMarkdownTable } from "@/lib/markdown/table";
 
 function inlineText(
   content: NonNullable<ReturnType<typeof parseMarkdownTable>>["header"][number]["content"],
