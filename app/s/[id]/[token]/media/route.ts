@@ -35,12 +35,16 @@ export async function POST(request: Request, context: {
   const { id, token } = await context.params;
   try {
     const result = await fetchSharedMediaUrls(id, token, body.mediaUrls);
-    if (result) return NextResponse.json(result, { headers });
+    if (result.status === "success") return NextResponse.json(result.data, { headers });
+    if (result.status === "not_found") {
+      // Preserve the browser's denial contract for revoked shares.
+      return NextResponse.json({ urls: [], expiresIn: 0 }, { headers });
+    }
   } catch (error) {
     console.error("[shared-document-media] batch signing failed", error);
   }
   return NextResponse.json({ error: "Batch signing unavailable." }, {
     status: 503,
-    headers,
+    headers: { ...headers, "Retry-After": "30" },
   });
 }

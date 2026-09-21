@@ -12,27 +12,56 @@ export type SharedDocument = {
 const DEFAULT_SHARED_DOCUMENT_DESCRIPTION =
   "Open this shared document in Mushpot.";
 
-async function requestSharedDocument(
+export type SharedDocumentResult<T> =
+  | { status: "success"; data: T }
+  | { status: "not_found" }
+  | { status: "unavailable" };
+
+export type SharedMediaBatch = {
+  urls: Array<{ mediaUrl: string; signedUrl: string | null; retry?: boolean }>;
+  expiresIn: number;
+};
+
+async function requestSharedDocument<T>(
   body: Record<string, string | string[]>,
-) {
+  parse: (payload: unknown) => T | null,
+): Promise<SharedDocumentResult<T>> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) return { status: "unavailable" };
 
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.",
-    );
+  try {
+    const response = await fetch(`${supabaseUrl}/functions/v1/get-shared-doc`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: supabaseAnonKey,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.status === 404 || response.status === 400) return { status: "not_found" };
+    if (!response.ok) return { status: "unavailable" };
+    const data = parse(await response.json());
+    return data === null ? { status: "unavailable" } : { status: "success", data };
+  } catch {
+    // Network, timeout, configuration, and malformed responses are retryable.
+    // Never log the bearer token or a signed media URL.
+    return { status: "unavailable" };
   }
+}
 
-  return fetch(`${supabaseUrl}/functions/v1/get-shared-doc`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: supabaseAnonKey,
-    },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
+function parseSignedUrl(value: unknown) {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const url = new URL(value);
+    return url.origin === new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).origin
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function truncateText(value: string, maxLength: number) {
@@ -79,44 +108,28 @@ export function buildSharedDocumentPreview(content: string, maxLength = 180) {
 }
 
 export const fetchSharedDocument = cache(
-  async (id: string, token: string): Promise<SharedDocument | null> => {
-    const response = await requestSharedDocument({ docId: id, token });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    return (await response.json()) as SharedDocument;
-  },
+  async (id: string, token: string): Promise<SharedDocumentResult<SharedDocument>> =>
+    requestSharedDocument({ docId: id, token }, (payload) => {
+      if (
+        typeof payload !== "object" || payload === null ||
+        !("title" in payload) || typeof payload.title !== "string" ||
+        !("content" in payload) || typeof payload.content !== "string" ||
+        !("updated_at" in payload) || typeof payload.updated_at !== "string" ||
+        !Number.isFinite(Date.parse(payload.updated_at))
+      ) return null;
+      return { title: payload.title, content: payload.content, updated_at: payload.updated_at };
+    }),
 );
 
 export async function fetchSharedMediaUrl(
   id: string,
   token: string,
   mediaUrl: string,
-) {
-  const response = await requestSharedDocument({
-    docId: id,
-    mediaUrl,
-    token,
+): Promise<SharedDocumentResult<string>> {
+  return requestSharedDocument({ docId: id, mediaUrl, token }, (payload) => {
+    if (typeof payload !== "object" || payload === null || !("signedUrl" in payload)) return null;
+    return parseSignedUrl(payload.signedUrl);
   });
-
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload: unknown = await response.json();
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    !("signedUrl" in payload) ||
-    typeof payload.signedUrl !== "string" ||
-    payload.signedUrl.length === 0
-  ) {
-    return null;
-  }
-
-  return payload.signedUrl;
 }
 
 export async function resolveAppOrigin() {
@@ -128,46 +141,40 @@ export async function fetchSharedMediaUrls(
   id: string,
   token: string,
   mediaUrls: string[],
-) {
-  const response = await requestSharedDocument({ docId: id, token, mediaUrls });
-  if (response.status === 404) return { urls: [], expiresIn: 0 };
-  if (!response.ok) return null;
-  const payload: unknown = await response.json();
-  // Older edge deployments ignore mediaUrls and return the document. Signal the
-  // browser to use the existing single-media route until the edge is upgraded.
-  if (
-    typeof payload !== "object" || payload === null ||
-    !("urls" in payload) || !Array.isArray(payload.urls) ||
-    !("expiresIn" in payload) || typeof payload.expiresIn !== "number" ||
-    payload.expiresIn <= 0 || payload.expiresIn > 300
-  ) return null;
-
-  const origin = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).origin;
-  const requested = new Set(mediaUrls);
-  const urls: Array<
-    { mediaUrl: string; signedUrl: string | null; retry?: boolean }
-  > = [];
-  for (const item of payload.urls) {
+): Promise<SharedDocumentResult<SharedMediaBatch>> {
+  return requestSharedDocument({ docId: id, token, mediaUrls }, (payload) => {
+    // Older deployments return a document rather than a batch. Keep the
+    // existing browser fallback by reporting that response as unavailable.
     if (
-      typeof item !== "object" || item === null ||
-      typeof item.mediaUrl !== "string" || !requested.has(item.mediaUrl)
+      typeof payload !== "object" || payload === null ||
+      !("urls" in payload) || !Array.isArray(payload.urls) ||
+      !("expiresIn" in payload) || typeof payload.expiresIn !== "number" ||
+      !Number.isFinite(payload.expiresIn) || payload.expiresIn <= 0 || payload.expiresIn > 300
     ) return null;
-    let signedUrl: string | null = null;
-    if (typeof item.signedUrl === "string") {
-      try {
-        const parsed = new URL(item.signedUrl);
-        if (parsed.origin === origin) signedUrl = parsed.href;
-      } catch {
-        /* Invalid signing responses must not become external redirects. */
-      }
+
+    const requested = new Set(mediaUrls);
+    const seen = new Set<string>();
+    const urls: SharedMediaBatch["urls"] = [];
+    for (const item of payload.urls) {
+      if (
+        typeof item !== "object" || item === null ||
+        typeof item.mediaUrl !== "string" || !requested.has(item.mediaUrl) ||
+        seen.has(item.mediaUrl) ||
+        (item.signedUrl !== null && typeof item.signedUrl !== "string") ||
+        (item.retry !== undefined && typeof item.retry !== "boolean")
+      ) return null;
+      seen.add(item.mediaUrl);
+      const signedUrl = parseSignedUrl(item.signedUrl);
+      urls.push({
+        mediaUrl: item.mediaUrl,
+        signedUrl,
+        ...((item.retry === true || (item.signedUrl !== null && signedUrl === null))
+          ? { retry: true }
+          : {}),
+      });
     }
-    urls.push({
-      mediaUrl: item.mediaUrl,
-      signedUrl,
-      ...(item.retry === true && item.signedUrl === null
-        ? { retry: true }
-        : {}),
-    });
-  }
-  return { urls, expiresIn: payload.expiresIn };
+    // An omitted entry is a broken response, not evidence that access was denied.
+    if (seen.size !== requested.size) return null;
+    return { urls, expiresIn: payload.expiresIn };
+  });
 }

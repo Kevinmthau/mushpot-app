@@ -16,6 +16,7 @@ export type PersistableDocumentSnapshot = Pick<
   | "share_token"
   | "updated_at"
   | "_localUpdatedAt"
+  | "_baseVersionUntrusted"
 >;
 
 export type PersistDocumentResult = {
@@ -84,22 +85,26 @@ export async function persistDocumentSnapshot(
     let updatedDocument: PersistedDocumentMetadata | null = null;
     let updateError: unknown = null;
 
-    try {
-      const { data, error } = await supabase
-        .from("documents")
-        .update({
-          title: persistedTitle,
-          content: snapshot.content,
-        })
-        .eq("id", snapshot.id)
-        .eq("owner", snapshot.owner)
-        .eq("updated_at", snapshot.updated_at)
-        .select(DOCUMENT_SAVE_SELECT)
-        .maybeSingle();
-      updatedDocument = data;
-      updateError = error;
-    } catch (error) {
-      updateError = error;
+    // Legacy dirty content has no trustworthy CAS baseline. Only read it back;
+    // matching remote content can be acknowledged, divergent text needs recovery.
+    if (!snapshot._baseVersionUntrusted) {
+      try {
+        const { data, error } = await supabase
+          .from("documents")
+          .update({
+            title: persistedTitle,
+            content: snapshot.content,
+          })
+          .eq("id", snapshot.id)
+          .eq("owner", snapshot.owner)
+          .eq("updated_at", snapshot.updated_at)
+          .select(DOCUMENT_SAVE_SELECT)
+          .maybeSingle();
+        updatedDocument = data;
+        updateError = error;
+      } catch (error) {
+        updateError = error;
+      }
     }
 
     if (!updateError && updatedDocument?.updated_at) {
@@ -111,6 +116,7 @@ export async function persistDocumentSnapshot(
           share_enabled: updatedDocument.share_enabled,
           share_token: updatedDocument.share_token,
           _dirty: false,
+          _baseVersionUntrusted: false,
           _localUpdatedAt: cacheSnapshotAt,
         },
         cacheWriteToken,
@@ -161,6 +167,7 @@ export async function persistDocumentSnapshot(
           share_enabled: currentDocument.share_enabled,
           share_token: currentDocument.share_token,
           _dirty: false,
+          _baseVersionUntrusted: false,
           _localUpdatedAt: cacheSnapshotAt,
         },
         cacheWriteToken,
@@ -176,7 +183,7 @@ export async function persistDocumentSnapshot(
     }
 
     if (!recoveryError) {
-      if (currentDocument?.updated_at === snapshot.updated_at) {
+      if (!snapshot._baseVersionUntrusted && currentDocument?.updated_at === snapshot.updated_at) {
         lastError =
           updateError ??
           new Error("The document update did not return a persisted row.");

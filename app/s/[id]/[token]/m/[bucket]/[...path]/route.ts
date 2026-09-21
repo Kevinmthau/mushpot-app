@@ -26,7 +26,7 @@ type SharedMediaRouteContext = {
 function textResponse(message: string, status: number) {
   return new NextResponse(message, {
     status,
-    headers: MEDIA_RESPONSE_HEADERS,
+    headers: { ...MEDIA_RESPONSE_HEADERS, ...(status === 503 ? { "Retry-After": "30" } : {}) },
   });
 }
 
@@ -45,21 +45,20 @@ export async function GET(
     return textResponse("Media not found.", 404);
   }
 
-  let signedUrlValue: string | null;
+  let signedUrlValue: string;
 
   try {
-    signedUrlValue = await fetchSharedMediaUrl(
+    const result = await fetchSharedMediaUrl(
       id,
       token,
       buildDocumentMediaUrl(media.bucket, media.storagePath),
     );
+    if (result.status === "not_found") return textResponse("Media not found.", 404);
+    if (result.status === "unavailable") return textResponse("Unable to load media.", 503);
+    signedUrlValue = result.data;
   } catch (error) {
     console.error("[shared-document-media] signing request failed", error);
-    return textResponse("Unable to load media.", 500);
-  }
-
-  if (!signedUrlValue) {
-    return textResponse("Media not found.", 404);
+    return textResponse("Unable to load media.", 503);
   }
 
   let signedUrl: URL;
@@ -71,14 +70,14 @@ export async function GET(
       process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
     ).origin;
   } catch {
-    return textResponse("Unable to load media.", 500);
+    return textResponse("Unable to load media.", 503);
   }
 
   if (signedUrl.origin !== supabaseOrigin) {
     console.error(
       "[shared-document-media] refused an unexpected signed URL origin",
     );
-    return textResponse("Unable to load media.", 500);
+    return textResponse("Unable to load media.", 503);
   }
 
   return NextResponse.redirect(signedUrl, {

@@ -11,6 +11,7 @@ import type {
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { DraftRecoveryNotice } from "@/components/editor/draft-recovery-notice";
 import { useDocumentClone } from "@/components/editor/use-document-clone";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { EditorPreviewFallback } from "@/components/editor/editor-loading";
@@ -102,6 +103,7 @@ function EditorClientInner({
     handleTitleChange,
     isDeleting,
     markDeleting,
+    needsDraftRecovery,
     readingTime,
     resetDeletingState,
     shareEnabled,
@@ -265,6 +267,13 @@ function EditorClientInner({
   return (
     <div className="min-h-dvh pb-14 sm:pb-20">
       <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
+        {needsDraftRecovery ? (
+          <DraftRecoveryNotice
+            isCloning={isCloning}
+            isDeleting={isDeleting}
+            onSaveCopy={handleCloneClick}
+          />
+        ) : null}
         <input
           ref={titleInputRef}
           value={title}

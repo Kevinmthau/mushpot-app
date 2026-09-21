@@ -64,12 +64,14 @@ describe("toEditorDocument", () => {
         makeEditorDocument({
           _dirty: true,
           _localUpdatedAt: 42,
+          _baseVersionUntrusted: true,
         }),
       ),
     ).toEqual(
       expect.objectContaining({
         _dirty: true,
         _localUpdatedAt: 42,
+        _baseVersionUntrusted: true,
       }),
     );
   });
@@ -94,6 +96,7 @@ describe("areEditorDocumentsEqual", () => {
       { share_token: "token" },
       { _dirty: true },
       { _localUpdatedAt: 42 },
+      { _baseVersionUntrusted: true },
     ];
 
     for (const override of fields) {
