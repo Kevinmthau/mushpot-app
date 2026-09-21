@@ -20,7 +20,8 @@ This is a Next.js App Router project with TypeScript, Tailwind v4, Supabase, and
 - Use `lib/documents.ts` for document select strings, list/editor document shapes, display titles, and cache/editor mapping helpers.
 - `components/documents/use-document-list.ts` owns the cache-first document list flow.
 - `components/editor/use-editor-document.ts` owns cache-first editor loading, session validation, and server reconciliation.
-- `components/editor/use-document-draft.ts` owns local draft state, debounced cache writes, autosave retries, and share-state timestamp handling.
+- `components/editor/document-draft-controller.ts` owns draft hydration, debounced cache writes, autosave scheduling, lifecycle flushes, and conflict state. `use-document-draft.ts` connects it to React without serializing CodeMirror text on every keystroke.
+- `lib/document-write-coordinator.ts` serializes foreground/background writes per owner, document, cache generation, and private-session lifetime. Only confirmed local saves may advance queued CAS baselines; conflicts preserve local text and stop retries.
 - Keep `lib/doc-cache.ts` browser-only/best-effort IndexedDB logic and keep Supabase persistence in `lib/document-sync.ts` or feature hooks.
 - If changing Markdown image behavior, keep `components/editor/image-upload-utils.ts`, live editor rendering, and shared-document rendering aligned.
 
@@ -33,7 +34,7 @@ This is a Next.js App Router project with TypeScript, Tailwind v4, Supabase, and
 - `npm run build`: create production build (required before merge)
 - `npm run start`: run built app locally
 
-Use `npm run lint && npm run typecheck && npm run build` before opening a PR.
+Use `npm run lint && npm run typecheck && npm run test && npm run build` before opening a PR.
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript (`.ts`/`.tsx`), 2-space indentation, semicolons enabled.
@@ -45,10 +46,13 @@ Use `npm run lint && npm run typecheck && npm run build` before opening a PR.
 - When changing document rendering or sharing behavior, keep editor output and shared-document rendering aligned.
 
 ## Testing Guidelines
-There is no dedicated test framework configured yet. Current quality gate is:
+Vitest covers browser-independent logic and mounted React lifecycle behavior (jsdom); fake-indexeddb covers cache reconciliation. Current quality gate is:
 - lint (`npm run lint`)
 - TypeScript (`npm run typecheck`)
+- Vitest (`npm run test`)
 - production build (`npm run build`)
+
+For Edge Function or admin Deno changes, also run `npm run check:edge` (format, lint, typecheck, and tests). Database policy changes can be verified with `npm run test:db` against a local Supabase stack.
 
 When adding tests, colocate them near feature code and use clear names like `feature-name.test.ts`.
 Manual verification matters for auth, autosave/sync, sharing, and image uploads when those areas are touched.

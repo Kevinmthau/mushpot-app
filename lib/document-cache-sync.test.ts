@@ -13,6 +13,38 @@ beforeEach(() => {
 });
 
 describe("list refresh, offline editing, and reconnect", () => {
+  it("retains confirmed share-only changes in a previously cached clean draft", async () => {
+    const cache = await import("@/lib/doc-cache");
+    const { DocumentDraftController } = await import("@/components/editor/document-draft-controller");
+    const snapshot = {
+      id: "document-a", owner: "owner-a", title: "Notes", content: "Body",
+      updated_at: "2026-09-20T10:00:00.000Z", share_enabled: false, share_token: null,
+      _dirty: false, _localUpdatedAt: Date.now(),
+    };
+    await cache.activateDocumentCacheForOwner(snapshot.owner);
+    await cache.putCachedDocument(snapshot);
+    const persist = vi.fn();
+    const controller = new DocumentDraftController(snapshot, true, {
+      cache: (document) => cache.putCachedDocument(document),
+      persist,
+    });
+
+    controller.updateShareState(true, "first-token", "2026-09-20T11:00:00.000Z", snapshot);
+    await controller.flushLatestDraft();
+    expect(await cache.getCachedDocumentForOwner(snapshot.id, snapshot.owner)).toMatchObject({
+      share_enabled: true, share_token: "first-token", _dirty: false,
+      updated_at: "2026-09-20T11:00:00.000Z",
+    });
+
+    controller.updateShareState(true, "rotated-token", "2026-09-20T12:00:00.000Z", snapshot);
+    await controller.flushLatestDraft();
+    expect(await cache.getCachedDocumentForOwner(snapshot.id, snapshot.owner)).toMatchObject({
+      share_enabled: true, share_token: "rotated-token", _dirty: false,
+      updated_at: "2026-09-20T12:00:00.000Z",
+    });
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it("keeps the body's old revision so reconnect cannot overwrite a newer remote body", async () => {
     const cache = await import("@/lib/doc-cache");
     const { loadEditorDocument } = await import("@/components/editor/use-editor-document");

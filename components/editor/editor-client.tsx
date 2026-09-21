@@ -12,6 +12,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useRouter } from "next/navigation";
 
 import { DraftRecoveryNotice } from "@/components/editor/draft-recovery-notice";
+import { DraftSyncNotice } from "@/components/editor/draft-sync-notice";
 import { useDocumentClone } from "@/components/editor/use-document-clone";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { EditorPreviewFallback } from "@/components/editor/editor-loading";
@@ -52,6 +53,7 @@ type ShareUpdateHandler = (
   enabled: boolean,
   token: string | null,
   updatedAt: string,
+  body?: { title: string; content: string },
 ) => void;
 
 export function applyShareUpdateWithLocalEditSignal(
@@ -60,9 +62,10 @@ export function applyShareUpdateWithLocalEditSignal(
   enabled: boolean,
   token: string | null,
   updatedAt: string,
+  body?: { title: string; content: string },
 ) {
   onLocalEdit?.();
-  updateShareState(enabled, token, updatedAt);
+  updateShareState(enabled, token, updatedAt, body);
 }
 
 export async function navigateToDocumentsAfterDraftFlush(
@@ -94,6 +97,7 @@ function EditorClientInner({
   const pendingEditorFocusRef = useRef(false);
   const isNavigatingHomeRef = useRef(false);
   const {
+    saveStatus,
     formattedUpdated,
     flushLatestDraft,
     getLatestContent,
@@ -172,13 +176,14 @@ function EditorClientInner({
   );
 
   const handleShareUpdated = useCallback<ShareUpdateHandler>(
-    (enabled, token, updatedAt) => {
+    (enabled, token, updatedAt, body) => {
       applyShareUpdateWithLocalEditSignal(
         onLocalEdit,
         updateShareState,
         enabled,
         token,
         updatedAt,
+        body,
       );
     },
     [onLocalEdit, updateShareState],
@@ -267,7 +272,7 @@ function EditorClientInner({
   return (
     <div className="min-h-dvh pb-14 sm:pb-20">
       <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
-        {needsDraftRecovery ? (
+        {needsDraftRecovery && saveStatus !== "conflict" ? (
           <DraftRecoveryNotice
             isCloning={isCloning}
             isDeleting={isDeleting}
@@ -337,6 +342,15 @@ function EditorClientInner({
             {isDeleting ? "Deleting..." : "DELETE"}
           </button>
         </div>
+
+        <DraftSyncNotice
+          status={saveStatus}
+          isCloning={isCloning}
+          isDeleting={isDeleting}
+          onSaveCopy={handleCloneClick}
+          getLatestTitle={getLatestTitle}
+          getLatestContent={getLatestContent}
+        />
 
         <div className="pb-24">
           <EditorWorkspaceLoader

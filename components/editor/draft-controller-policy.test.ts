@@ -1,16 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  applyConfirmedShareUpdate,
   createInitialDraftPersistenceGate,
   createDraftPageLifecycleHandlers,
   hasUnsavedDocumentChanges,
   openInitialDraftPersistenceGate,
   reconcileDraftHydration,
   requestInitialDraftPersistence,
-  scheduleFailedDraftSaveRetry,
-  settleDraftSaveQueue,
-} from "@/components/editor/use-document-draft";
+} from "@/components/editor/draft-controller-policy";
 
 function createLifecycle(isDeleting = false) {
   const calls: string[] = [];
@@ -40,40 +37,6 @@ function createLifecycle(isDeleting = false) {
 }
 
 describe("draft page lifecycle", () => {
-  it("consumes a queued snapshot while scheduling a retry after failure", () => {
-    const events: string[] = [];
-    const queue = {
-      current: {
-        content: "Older queued body",
-        title: "Older queued title",
-      },
-    };
-
-    expect(
-      scheduleFailedDraftSaveRetry(queue, () => {
-        events.push("retry");
-      }),
-    ).toBe(true);
-    expect(queue.current).toBeNull();
-    expect(events).toEqual(["retry"]);
-
-    expect(
-      scheduleFailedDraftSaveRetry(queue, () => {
-        events.push("unexpected-retry");
-      }),
-    ).toBe(false);
-    expect(events).toEqual(["retry"]);
-
-    const newerSnapshot = {
-      content: "Newest body",
-      title: "Newest title",
-    };
-    queue.current = newerSnapshot;
-
-    expect(settleDraftSaveQueue(queue, true)).toBe(newerSnapshot);
-    expect(queue.current).toBeNull();
-  });
-
   it("defers a clean-cache autosave until the remote body has merged", () => {
     const gate = createInitialDraftPersistenceGate(false);
     const persistedSnapshots: Array<{ content: string; title: string }> = [];
@@ -288,18 +251,6 @@ describe("draft page lifecycle", () => {
       title: "Remote title",
       updatedAt: "2026-08-17T14:00:00.000Z",
     });
-  });
-
-  it("protects a confirmed share update from later hydration replacement", () => {
-    const didEditSinceHydration = { current: false };
-    const observedGuardValues: boolean[] = [];
-
-    applyConfirmedShareUpdate(didEditSinceHydration, () => {
-      observedGuardValues.push(didEditSinceHydration.current);
-    });
-
-    expect(observedGuardValues).toEqual([true]);
-    expect(didEditSinceHydration.current).toBe(true);
   });
 
   it("keeps a hydrated cached draft dirty until a server save succeeds", () => {

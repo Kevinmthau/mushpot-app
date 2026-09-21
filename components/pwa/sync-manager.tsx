@@ -9,7 +9,7 @@ import { usePrivateSession } from "@/components/pwa/private-session-provider";
  * app becomes visible again. Also retries every 30 seconds.
  */
 export function SyncManager() {
-  const { userId } = usePrivateSession();
+  const { userId, writeSession } = usePrivateSession();
 
   useEffect(() => {
     if (!userId) {
@@ -26,7 +26,7 @@ export function SyncManager() {
 
       try {
         const { flushDirtyDocuments } = await import("@/lib/document-sync");
-        await flushDirtyDocuments(owner);
+        await flushDirtyDocuments(owner, writeSession);
       } catch {
         // Best-effort — will retry on next trigger
       } finally {
@@ -58,7 +58,7 @@ export function SyncManager() {
       document.removeEventListener("visibilitychange", handleVisibility);
       clearInterval(intervalId);
     };
-  }, [userId]);
+  }, [userId, writeSession]);
 
   return null;
 }

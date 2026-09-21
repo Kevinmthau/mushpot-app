@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  flushDirtyDocuments,
   normalizeDocumentTitle,
-  persistDocumentSnapshot,
 } from "@/lib/document-sync";
+
+let flushDirtyDocuments: typeof import("@/lib/document-sync").flushDirtyDocuments;
+let persistDocumentSnapshot: typeof import("@/lib/document-sync").persistDocumentSnapshot;
 
 const mocks = vi.hoisted(() => ({
   getDocumentCacheWriteToken: vi.fn(),
@@ -51,8 +52,10 @@ describe("normalizeDocumentTitle", () => {
 });
 
 describe("flushDirtyDocuments", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetAllMocks();
+    vi.resetModules();
+    ({ flushDirtyDocuments, persistDocumentSnapshot } = await import("@/lib/document-sync"));
     mocks.getDocumentCacheWriteToken.mockReturnValue({
       generation: 4,
       owner: "active-owner",
@@ -321,6 +324,8 @@ describe("flushDirtyDocuments", () => {
       "title, content, share_enabled, share_token, updated_at",
     );
     expect(result).toEqual({
+      status: "saved",
+      confirmedSnapshot: expect.objectContaining({ content: "Keep", updated_at: "2026-07-17T12:00:00.000Z", share_token: "server-share-token" }),
       cacheUpdated: true,
       conflict: false,
       ok: true,
@@ -335,6 +340,19 @@ describe("flushDirtyDocuments", () => {
       }),
       expect.anything(),
     );
+  });
+
+  it("retries clean-cache confirmation for identical saves without another network update", async () => {
+    mocks.putCachedDocument.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const snapshot = {
+      id: "active-document", owner: "active-owner", title: "Active", content: "Keep",
+      share_enabled: false, share_token: null, updated_at: "2026-07-17T11:00:00.000Z", _localUpdatedAt: 100,
+    };
+    expect((await persistDocumentSnapshot(snapshot)).cacheUpdated).toBe(false);
+    expect((await persistDocumentSnapshot(snapshot)).cacheUpdated).toBe(true);
+    expect(mocks.update).toHaveBeenCalledOnce();
+    expect(mocks.putCachedDocument).toHaveBeenCalledTimes(2);
+    expect(mocks.putCachedDocument).toHaveBeenLastCalledWith(expect.objectContaining({ _dirty: false, updated_at: "2026-07-17T12:00:00.000Z" }), expect.anything());
   });
 
   it("retains the dirty cache entry on a true concurrent-write conflict", async () => {
@@ -364,6 +382,7 @@ describe("flushDirtyDocuments", () => {
     });
 
     expect(result).toEqual({
+      status: "conflict",
       cacheUpdated: false,
       conflict: true,
       ok: false,

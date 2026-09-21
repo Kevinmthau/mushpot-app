@@ -1,4 +1,9 @@
 import {
+  createDocumentWriteCoordinator,
+  skippedDocumentWrite,
+  type DocumentWriteSession,
+} from "@/lib/document-write-coordinator";
+import {
   getDocumentCacheWriteToken,
   getDirtyDocuments,
   putCachedDocument,
@@ -20,6 +25,8 @@ export type PersistableDocumentSnapshot = Pick<
 >;
 
 export type PersistDocumentResult = {
+  status: "saved" | "retryable" | "conflict" | "cancelled" | "superseded";
+  confirmedSnapshot?: PersistableDocumentSnapshot;
   cacheUpdated: boolean;
   conflict: boolean;
   ok: boolean;
@@ -69,10 +76,12 @@ function hasPersistedEditorState(
   return document.title === persistedTitle && document.content === content;
 }
 
-export async function persistDocumentSnapshot(
+async function writeDocumentSnapshot(
   snapshot: PersistableDocumentSnapshot,
-  cacheWriteToken: DocumentCacheWriteToken | null =
-    getDocumentCacheWriteToken(snapshot.owner),
+  cacheWriteToken: DocumentCacheWriteToken | null = getDocumentCacheWriteToken(
+    snapshot.owner,
+  ),
+  session?: DocumentWriteSession,
 ): Promise<PersistDocumentResult> {
   const persistedTitle = normalizeDocumentTitle(snapshot.title);
   const cacheSnapshotAt = snapshot._localUpdatedAt ?? Date.now();
@@ -82,6 +91,9 @@ export async function persistDocumentSnapshot(
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < SAVE_RETRY_DELAYS_MS.length; attempt += 1) {
+    if (!isCurrentWrite(snapshot.owner, { cacheWriteToken, session })) {
+      return skippedDocumentWrite("cancelled", snapshot.title);
+    }
     let updatedDocument: PersistedDocumentMetadata | null = null;
     let updateError: unknown = null;
 
@@ -107,6 +119,10 @@ export async function persistDocumentSnapshot(
       }
     }
 
+    if (!isCurrentWrite(snapshot.owner, { cacheWriteToken, session })) {
+      return skippedDocumentWrite("cancelled", snapshot.title);
+    }
+
     if (!updateError && updatedDocument?.updated_at) {
       const cacheUpdated = await putCachedDocument(
         {
@@ -123,6 +139,15 @@ export async function persistDocumentSnapshot(
       );
 
       return {
+        status: "saved",
+        confirmedSnapshot: {
+          ...snapshot,
+          _baseVersionUntrusted: false,
+          title: persistedTitle,
+          updated_at: updatedDocument.updated_at,
+          share_enabled: updatedDocument.share_enabled,
+          share_token: updatedDocument.share_token,
+        },
         cacheUpdated,
         conflict: false,
         ok: true,
@@ -150,14 +175,14 @@ export async function persistDocumentSnapshot(
       recoveryError = error;
     }
 
+    if (!isCurrentWrite(snapshot.owner, { cacheWriteToken, session })) {
+      return skippedDocumentWrite("cancelled", snapshot.title);
+    }
+
     if (
       !recoveryError &&
       currentDocument?.updated_at &&
-      hasPersistedEditorState(
-        currentDocument,
-        persistedTitle,
-        snapshot.content,
-      )
+      hasPersistedEditorState(currentDocument, persistedTitle, snapshot.content)
     ) {
       const cacheUpdated = await putCachedDocument(
         {
@@ -174,6 +199,15 @@ export async function persistDocumentSnapshot(
       );
 
       return {
+        status: "saved",
+        confirmedSnapshot: {
+          ...snapshot,
+          _baseVersionUntrusted: false,
+          title: persistedTitle,
+          updated_at: currentDocument.updated_at,
+          share_enabled: currentDocument.share_enabled,
+          share_token: currentDocument.share_token,
+        },
         cacheUpdated,
         conflict: false,
         ok: true,
@@ -183,12 +217,16 @@ export async function persistDocumentSnapshot(
     }
 
     if (!recoveryError) {
-      if (!snapshot._baseVersionUntrusted && currentDocument?.updated_at === snapshot.updated_at) {
+      if (
+        !snapshot._baseVersionUntrusted &&
+        currentDocument?.updated_at === snapshot.updated_at
+      ) {
         lastError =
           updateError ??
           new Error("The document update did not return a persisted row.");
       } else {
         return {
+          status: "conflict",
           cacheUpdated: false,
           conflict: true,
           ok: false,
@@ -205,7 +243,7 @@ export async function persistDocumentSnapshot(
 
     if (attempt < SAVE_RETRY_DELAYS_MS.length - 1) {
       await new Promise((resolve) => {
-        window.setTimeout(resolve, SAVE_RETRY_DELAYS_MS[attempt]);
+        globalThis.setTimeout(resolve, SAVE_RETRY_DELAYS_MS[attempt]);
       });
     }
   }
@@ -213,6 +251,7 @@ export async function persistDocumentSnapshot(
   console.error("persistDocumentSnapshot failed after retries", lastError);
 
   return {
+    status: "retryable",
     cacheUpdated: false,
     conflict: false,
     ok: false,
@@ -221,8 +260,55 @@ export async function persistDocumentSnapshot(
   };
 }
 
+function isCurrentWrite(
+  owner: string,
+  {
+    cacheWriteToken,
+    session,
+  }: {
+    cacheWriteToken: DocumentCacheWriteToken | null;
+    session?: DocumentWriteSession;
+  },
+) {
+  if (session && (!session.active || session.owner !== owner)) return false;
+  const current = getDocumentCacheWriteToken(owner);
+  return cacheWriteToken === null
+    ? current === null
+    : current?.owner === cacheWriteToken.owner &&
+        current?.generation === cacheWriteToken.generation;
+}
+
+const writeCoordinator = createDocumentWriteCoordinator({
+  isCurrent: isCurrentWrite,
+  persist: (snapshot, { cacheWriteToken, session }) =>
+    writeDocumentSnapshot(snapshot, cacheWriteToken, session),
+  confirmCache: async (snapshot, result, { cacheWriteToken }) => {
+    if (!result.confirmedSnapshot) return result;
+    const cacheUpdated = await putCachedDocument(
+      {
+        ...result.confirmedSnapshot,
+        _localUpdatedAt: snapshot._localUpdatedAt,
+        _dirty: false,
+      },
+      cacheWriteToken,
+    );
+    return { ...result, cacheUpdated };
+  },
+});
+
+export const subscribeToDocumentWrites = writeCoordinator.subscribe;
+
+export function persistDocumentSnapshot(
+  snapshot: PersistableDocumentSnapshot,
+  cacheWriteToken = getDocumentCacheWriteToken(snapshot.owner),
+  session?: DocumentWriteSession,
+) {
+  return writeCoordinator.enqueue(snapshot, { cacheWriteToken, session });
+}
+
 export async function flushDirtyDocuments(
   owner: string,
+  session?: DocumentWriteSession,
 ): Promise<FlushDirtyDocumentsResult> {
   const cacheWriteToken = getDocumentCacheWriteToken(owner);
   if (!cacheWriteToken) {
@@ -236,9 +322,9 @@ export async function flushDirtyDocuments(
 
   let dirtyDocuments: CachedDocument[];
   try {
-    dirtyDocuments = (
-      await getDirtyDocuments(owner, cacheWriteToken)
-    ).filter((document) => document.owner === owner);
+    dirtyDocuments = (await getDirtyDocuments(owner, cacheWriteToken)).filter(
+      (document) => document.owner === owner,
+    );
   } catch (error) {
     console.error("Unable to inspect cached drafts", error);
     return {
@@ -252,10 +338,15 @@ export async function flushDirtyDocuments(
   const results = await Promise.all(
     dirtyDocuments.map(async (document) => {
       try {
-        return await persistDocumentSnapshot(document, cacheWriteToken);
+        return await persistDocumentSnapshot(
+          document,
+          cacheWriteToken,
+          session,
+        );
       } catch (error) {
         console.error("Unable to flush cached document", error);
         return {
+          status: "retryable",
           cacheUpdated: false,
           conflict: false,
           ok: false,
