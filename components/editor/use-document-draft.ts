@@ -2,7 +2,10 @@
 
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
-import { DocumentDraftController } from "@/components/editor/document-draft-controller";
+import {
+  DocumentDraftController,
+  type DraftPersistenceOptions,
+} from "@/components/editor/document-draft-controller";
 import type { EditorDocument } from "@/components/editor/editor-types";
 import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import { getDocumentCacheWriteToken, putCachedDocument } from "@/lib/doc-cache";
@@ -11,53 +14,65 @@ import {
   persistDocumentSnapshot,
   subscribeToDocumentWrites,
 } from "@/lib/document-sync";
+import type { DocumentWriteSession } from "@/lib/document-write-coordinator";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
+
+function createDraftPersistence(
+  owner: string,
+  writeSession: DocumentWriteSession,
+): DraftPersistenceOptions {
+  const ownsDraft = () => writeSession.active && writeSession.owner === owner;
+  let cacheWriteToken = ownsDraft() ? getDocumentCacheWriteToken(owner) : null;
+  const resolveCacheToken = () => {
+    // Adopt the first available generation after IndexedDB recovery, but
+    // never cross a revocation within this authentication lifetime.
+    if (cacheWriteToken === null && ownsDraft()) {
+      cacheWriteToken = getDocumentCacheWriteToken(owner);
+    }
+    return cacheWriteToken;
+  };
+  return {
+    canPersist: () => {
+      const captured = resolveCacheToken();
+      const current = getDocumentCacheWriteToken(owner);
+      return ownsDraft() && captured?.generation === current?.generation;
+    },
+    cache: (snapshot) =>
+      ownsDraft()
+        ? putCachedDocument(snapshot, resolveCacheToken())
+        : Promise.resolve(false),
+    persist: (snapshot) =>
+      persistDocumentSnapshot(snapshot, resolveCacheToken(), writeSession),
+    subscribe: (listener) =>
+      subscribeToDocumentWrites((event, scope) => {
+        if (scope.session === writeSession) listener(event);
+      }),
+  };
+}
 
 export function useDocumentDraft(
   initialDocument: EditorDocument,
   hasResolvedRemoteState: boolean,
 ) {
   const { writeSession } = usePrivateSession();
-  // The editor is keyed by document id; one controller follows that mounted
-  // editor and its authentication lifetime, including StrictMode replay.
-  const [controller] = useState(() => {
-    let cacheWriteToken = getDocumentCacheWriteToken(initialDocument.owner);
-    const resolveCacheToken = () => {
-      // IndexedDB can become available after this editor mounts. Adopt its
-      // first generation once; never cross a revoked generation afterward.
-      if (cacheWriteToken === null && writeSession.active) {
-        cacheWriteToken = getDocumentCacheWriteToken(initialDocument.owner);
-      }
-      return cacheWriteToken;
-    };
-    return new DocumentDraftController(
-      initialDocument,
-      hasResolvedRemoteState,
-      {
-        canPersist: () => {
-          const captured = resolveCacheToken();
-          const current = getDocumentCacheWriteToken(initialDocument.owner);
-          return (
-            writeSession.active && captured?.generation === current?.generation
-          );
-        },
-        cache: (snapshot) =>
-          writeSession.active
-            ? putCachedDocument(snapshot, resolveCacheToken())
-            : Promise.resolve(false),
-        persist: (snapshot) =>
-          persistDocumentSnapshot(snapshot, resolveCacheToken(), writeSession),
-        subscribe: (listener) =>
-          subscribeToDocumentWrites((event, scope) => {
-            if (scope.session === writeSession) listener(event);
-          }),
-      },
-    );
-  });
+  const persistence = useMemo(
+    () => createDraftPersistence(initialDocument.owner, writeSession),
+    [initialDocument.owner, writeSession],
+  );
+  // Preserve the draft if authentication renews while this editor stays mounted.
+  const [controller] = useState(
+    () =>
+      new DocumentDraftController(
+        initialDocument,
+        hasResolvedRemoteState,
+        persistence,
+      ),
+  );
   const [view, setView] = useState(controller.getView);
   const deferredContent = useDeferredValue(view.contentForStats);
 
   useEffect(() => {
+    controller.setPersistence(persistence);
     const lifecycle = controller.start((next) => {
       setView(next);
     });
@@ -70,7 +85,7 @@ export function useDocumentDraft(
       document.removeEventListener("visibilitychange", handleVisibility);
       lifecycle.stop();
     };
-  }, [controller]);
+  }, [controller, persistence]);
 
   useEffect(() => {
     controller.hydrate(initialDocument, hasResolvedRemoteState);

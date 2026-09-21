@@ -4,7 +4,7 @@
 
 Only versions confirmed by this coordinator can advance queued local drafts. Legacy drafts marked with an untrusted base version remain read-only at the persistence boundary until the same body is confirmed remotely; controller edits and sharing updates preserve that marker. A delayed older background snapshot is skipped. Conflicts preserve the local version, stop automatic writes, and offer **Save as a copy** (the existing media-aware clone flow) and **Download my draft**. A conflict never advances the content's concurrency timestamp, including after sharing changes.
 
-Cache writes are best-effort. A rejected clean-cache confirmation can be retried without repeating the network update. An editor that mounts while IndexedDB is unavailable can adopt the first recovered cache generation; it cannot cross a later revocation. Explicit sign-out retires the write session immediately.
+Cache writes are best-effort. A rejected clean-cache confirmation can be retried without repeating the network update. An editor that mounts while IndexedDB is unavailable can adopt the first recovered cache generation; it cannot cross a later revocation. Explicit sign-out retires the write session immediately. If authentication renews while an editor stays mounted, the controller retains its text and rebinds persistence to the new lifetime; completions from the retired lifetime cannot change the new draft baseline.
 
 ## Verification
 

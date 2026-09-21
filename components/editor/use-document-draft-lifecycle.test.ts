@@ -10,6 +10,7 @@ import {
   PrivateSessionProvider,
   usePrivateSession,
 } from "@/components/pwa/private-session-provider";
+import type { PersistDocumentResult } from "@/lib/document-sync";
 import type { EditorDocument } from "@/lib/documents";
 
 const mocks = vi.hoisted(() => ({
@@ -175,6 +176,119 @@ describe("mounted draft lifecycle", () => {
     );
     await act(async () => root.unmount());
   });
+
+  it("rebinds a renewed session without losing edits or accepting an old save completion", async () => {
+    const root = createRoot(document.createElement("div"));
+    let finishOldSave!: (result: PersistDocumentResult) => void;
+    mocks.persist.mockReturnValueOnce(
+      new Promise<PersistDocumentResult>((resolve) => {
+        finishOldSave = resolve;
+      }),
+    );
+    await act(async () =>
+      root.render(
+        createElement(
+          PrivateSessionProvider,
+          { initialUserId: "owner" },
+          createElement(Harness),
+        ),
+      ),
+    );
+    await act(async () => {
+      api.handleEditorChange(Text.of(["Text from the first session"]));
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    const retiredSession = session.writeSession;
+    await act(async () => {
+      api.handleEditorChange(Text.of(["Keep edits made before renewal"]));
+      session.clearUserId();
+      session.setUserId("owner");
+    });
+    const renewedSession = session.writeSession;
+    expect(renewedSession).not.toBe(retiredSession);
+    expect(retiredSession.active).toBe(false);
+    expect(api.getLatestContent()).toBe("Keep edits made before renewal");
+    expect(mocks.cache).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: "Keep edits made before renewal",
+        _dirty: true,
+      }),
+      expect.anything(),
+    );
+    await act(async () => {
+      api.handleEditorChange(
+        Text.of(["Continue writing in the renewed session"]),
+      );
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    expect(mocks.persist).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: "Continue writing in the renewed session",
+      }),
+      expect.anything(),
+      renewedSession,
+    );
+    expect(api.saveStatus).toBe("saved");
+    await act(async () =>
+      finishOldSave({
+        status: "saved",
+        ok: true,
+        conflict: false,
+        cacheUpdated: true,
+        persistedTitle: "Title",
+        updatedAt: "2026-09-20T12:00:00Z",
+      }),
+    );
+    expect(api.getLatestContent()).toBe(
+      "Continue writing in the renewed session",
+    );
+    expect(api.saveStatus).toBe("saved");
+    expect(mocks.cache).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: "Continue writing in the renewed session",
+        _dirty: false,
+        updated_at: "2026-09-20T11:00:00Z",
+      }),
+      expect.anything(),
+    );
+    await act(async () => root.unmount());
+  });
+
+  it.each([null, { owner: "owner", generation: 1 }])(
+    "keeps local text outside a different owner's session with cache token %j",
+    async (cacheToken) => {
+      mocks.getToken.mockReturnValue(cacheToken);
+      const root = createRoot(document.createElement("div"));
+      await act(async () =>
+        root.render(
+          createElement(
+            PrivateSessionProvider,
+            { initialUserId: "owner" },
+            createElement(Harness),
+          ),
+        ),
+      );
+      await act(async () => {
+        api.handleEditorChange(Text.of(["Original owner's pending text"]));
+        session.setUserId("different-owner");
+      });
+      expect(api.getLatestContent()).toBe("Original owner's pending text");
+      expect(session.writeSession.owner).toBe("different-owner");
+      await act(async () => {
+        api.handleEditorChange(
+          Text.of(["Retain text until the route unmounts"]),
+        );
+        await vi.advanceTimersByTimeAsync(800);
+      });
+      expect(api.getLatestContent()).toBe(
+        "Retain text until the route unmounts",
+      );
+      expect(mocks.cache).not.toHaveBeenCalled();
+      expect(mocks.persist).not.toHaveBeenCalled();
+      await act(async () => root.unmount());
+      expect(mocks.cache).not.toHaveBeenCalled();
+    },
+  );
 
   it("renders a conflict without losing text and retires the session synchronously on sign-out", async () => {
     const container = document.createElement("div");

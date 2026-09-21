@@ -32,7 +32,7 @@ export type DraftViewState = {
   updatedAt: string;
 };
 
-type ControllerOptions = {
+export type DraftPersistenceOptions = {
   canPersist?: () => boolean;
   cache: (document: CachedDocument) => Promise<boolean>;
   persist: (
@@ -58,11 +58,12 @@ export class DocumentDraftController {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private active = false;
   private generation = 0;
+  private persistenceGeneration = 0;
 
   constructor(
     private document: EditorDocument,
     resolved: boolean,
-    private options: ControllerOptions,
+    private options: DraftPersistenceOptions,
   ) {
     this.source = this.serializedSource = this.serialized = document.content;
     this.saved = {
@@ -84,6 +85,14 @@ export class DocumentDraftController {
       title: document.title,
       updatedAt: document.updated_at,
     };
+  }
+
+  /** Rebind authentication without replacing the user's in-memory draft. */
+  setPersistence(options: DraftPersistenceOptions) {
+    if (this.options !== options) {
+      this.options = options;
+      this.persistenceGeneration += 1;
+    }
   }
 
   getView = () => this.view;
@@ -208,16 +217,19 @@ export class DocumentDraftController {
     if (!requestInitialDraftPersistence(this.gate)) return;
     const snapshot = this.snapshot();
     const generation = this.generation;
+    const persistenceGeneration = this.persistenceGeneration;
     this.publish({ saveStatus: "saving" });
     try {
       const result = await this.options.persist(snapshot);
+      if (persistenceGeneration !== this.persistenceGeneration) return;
       this.acceptWrite({ snapshot, result });
       if (result.status === "retryable" || result.status === "cancelled")
         this.retry(generation);
       if (result.status === "superseded")
         this.publish({ saveStatus: "conflict" });
     } catch {
-      this.retry(generation);
+      if (persistenceGeneration === this.persistenceGeneration)
+        this.retry(generation);
     }
   };
 
@@ -387,11 +399,17 @@ export class DocumentDraftController {
     this.active = true;
     this.listeners.add(listener);
     listener(this.view);
-    const unsubscribe = this.options.subscribe?.(this.acceptWrite);
-    if (this.cachedDirty)
+    const persistenceGeneration = this.persistenceGeneration;
+    const unsubscribe = this.options.subscribe?.((event) => {
+      if (persistenceGeneration === this.persistenceGeneration)
+        this.acceptWrite(event);
+    });
+    if (this.isDirty()) {
+      void this.cache();
       this.schedule("save", 800, () => {
         void this.save();
       });
+    }
     const lifecycle = createDraftPageLifecycleHandlers({
       clearScheduledWork: this.clearScheduledWork,
       isDeleting: () => this.view.isDeleting,
