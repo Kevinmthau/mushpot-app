@@ -60,6 +60,7 @@ type UseDocumentDraftResult = {
   handleTitleChange: (nextTitle: string) => void;
   isDeleting: boolean;
   markDeleting: () => void;
+  needsDraftRecovery: boolean;
   readingTime: number;
   resetDeletingState: () => void;
   shareEnabled: boolean;
@@ -265,6 +266,9 @@ export function useDocumentDraft(
   const [shareEnabled, setShareEnabled] = useState(initialDocument.share_enabled);
   const [shareToken, setShareToken] = useState(initialDocument.share_token);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [needsDraftRecovery, setNeedsDraftRecovery] = useState(
+    initialDocument._baseVersionUntrusted === true,
+  );
 
   const saveTimeoutRef = useRef<number | null>(null);
   const localCacheTimeoutRef = useRef<number | null>(null);
@@ -502,6 +506,7 @@ export function useDocumentDraft(
     setIsDeleting(reconciled.isDeleting);
     cachedDraftIsDirtyRef.current = initialDocument._dirty === true;
     baseVersionUntrustedRef.current = initialDocument._baseVersionUntrusted === true;
+    setNeedsDraftRecovery(initialDocument._baseVersionUntrusted === true);
     lastSavedRef.current = {
       title: reconciled.savedTitle,
       content: reconciled.savedContent,
@@ -571,6 +576,9 @@ export function useDocumentDraft(
           }
 
           if (!result.ok || !result.updatedAt) {
+            if (result.conflict) {
+              setNeedsDraftRecovery(true);
+            }
             shouldRetryQueuedSave = true;
             return false;
           }
@@ -582,6 +590,7 @@ export function useDocumentDraft(
           lastSavedUpdatedAtRef.current = result.updatedAt;
           cachedDraftIsDirtyRef.current = false;
           baseVersionUntrustedRef.current = false;
+          setNeedsDraftRecovery(false);
           const resolvedUpdatedAt = applyUpdatedAt(result.updatedAt);
 
           if (
@@ -811,6 +820,7 @@ export function useDocumentDraft(
     handleTitleChange,
     isDeleting,
     markDeleting,
+    needsDraftRecovery,
     readingTime,
     resetDeletingState,
     shareEnabled,
