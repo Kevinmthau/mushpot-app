@@ -21,8 +21,11 @@ function getPosterCanvasSize(width: number, height: number) {
   };
 }
 
-export async function generateVideoPosterImage(file: File): Promise<File | null> {
-  if (typeof document === "undefined") {
+export async function generateVideoPosterImage(
+  file: File,
+  signal?: AbortSignal,
+): Promise<File | null> {
+  if (typeof document === "undefined" || signal?.aborted) {
     return null;
   }
 
@@ -37,6 +40,7 @@ export async function generateVideoPosterImage(file: File): Promise<File | null>
         return;
       }
       settled = true;
+      signal?.removeEventListener("abort", abort);
       window.clearTimeout(timeoutId);
       video.removeAttribute("src");
       video.load();
@@ -45,10 +49,13 @@ export async function generateVideoPosterImage(file: File): Promise<File | null>
     };
 
     const timeoutId = window.setTimeout(() => finish(null), POSTER_GENERATION_TIMEOUT_MS);
+    const abort = () => finish(null);
+    signal?.addEventListener("abort", abort, { once: true });
 
     video.addEventListener("error", () => finish(null));
 
     video.addEventListener("loadedmetadata", () => {
+      if (settled) return;
       const seekTime = Number.isFinite(video.duration)
         ? Math.min(0.1, video.duration)
         : 0.1;
@@ -60,6 +67,7 @@ export async function generateVideoPosterImage(file: File): Promise<File | null>
     });
 
     video.addEventListener("seeked", () => {
+      if (settled) return;
       try {
         if (!video.videoWidth || !video.videoHeight) {
           finish(null);
@@ -83,6 +91,7 @@ export async function generateVideoPosterImage(file: File): Promise<File | null>
         context.drawImage(video, 0, 0, width, height);
         canvas.toBlob(
           (blob) => {
+            if (settled) return;
             if (!blob) {
               finish(null);
               return;

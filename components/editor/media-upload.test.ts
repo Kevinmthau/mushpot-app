@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isolateVideoPosterImagePromise,
   resolveVideoPosterTitle,
-} from "@/components/editor/use-image-upload";
+} from "@/components/editor/media-upload";
 import type { SupabaseBrowserClient } from "@/lib/supabase/client";
 
 function createDeferred<T>() {
