@@ -65,3 +65,35 @@ describe("list refresh, offline editing, and reconnect", () => {
     expect(await cache.getCachedDocumentForOwner(snapshot.id, snapshot.owner)).toMatchObject({ content: draft.content, _dirty: true });
   });
 });
+
+it("never updates from an untrusted legacy revision and only confirms identical server content", async () => {
+  const cache = await import("@/lib/doc-cache");
+  const { persistDocumentSnapshot } = await import("@/lib/document-sync");
+  const draft = {
+    id: "legacy", owner: "owner-a", title: "Draft", content: "Offline content",
+    updated_at: "2026-09-20T11:00:00.000Z", share_enabled: false, share_token: null,
+    _dirty: true, _baseVersionUntrusted: true,
+  };
+  await cache.activateDocumentCacheForOwner(draft.owner);
+  await cache.putCachedDocument(draft);
+  const update = vi.fn();
+  const maybeSingle = vi.fn().mockResolvedValue({ data: { ...draft, content: "New remote content" }, error: null });
+  const query = { eq: () => query, maybeSingle };
+  from.mockReturnValue({ update, select: () => query });
+  expect(await persistDocumentSnapshot(draft)).toMatchObject({ ok: false, conflict: true });
+  expect(update).not.toHaveBeenCalled();
+  expect(await cache.getCachedDocumentForOwner(draft.id, draft.owner)).toMatchObject({
+    content: draft.content, _dirty: true, _baseVersionUntrusted: true,
+  });
+  // A new persistence lifetime may discover this exact draft already exists remotely.
+  vi.resetModules();
+  const reloadedCache = await import("@/lib/doc-cache");
+  await reloadedCache.activateDocumentCacheForOwner(draft.owner);
+  const reloadedSync = await import("@/lib/document-sync");
+  maybeSingle.mockResolvedValue({ data: { ...draft }, error: null });
+  expect(await reloadedSync.persistDocumentSnapshot(draft)).toMatchObject({ ok: true, conflict: false });
+  expect(update).not.toHaveBeenCalled();
+  expect(await reloadedCache.getCachedDocumentForOwner(draft.id, draft.owner)).toMatchObject({
+    _dirty: false, _baseVersionUntrusted: false,
+  });
+});

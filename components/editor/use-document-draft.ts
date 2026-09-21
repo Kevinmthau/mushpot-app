@@ -286,6 +286,7 @@ export function useDocumentDraft(
     ),
   );
   const cachedDraftIsDirtyRef = useRef(initialDocument._dirty === true);
+  const baseVersionUntrustedRef = useRef(initialDocument._baseVersionUntrusted === true);
   const latestTitleRef = useRef(initialDocument.title);
   const latestContentRef = useRef<Text | string>(initialDocument.content);
   const latestContentTextRef = useRef(initialDocument.content);
@@ -410,6 +411,7 @@ export function useDocumentDraft(
       share_token: shareTokenRef.current,
       _localUpdatedAt: Date.now(),
       _dirty: isDirty,
+      _baseVersionUntrusted: baseVersionUntrustedRef.current,
     };
 
     return putCachedDocument(doc);
@@ -499,6 +501,7 @@ export function useDocumentDraft(
     isDeletingRef.current = reconciled.isDeleting;
     setIsDeleting(reconciled.isDeleting);
     cachedDraftIsDirtyRef.current = initialDocument._dirty === true;
+    baseVersionUntrustedRef.current = initialDocument._baseVersionUntrusted === true;
     lastSavedRef.current = {
       title: reconciled.savedTitle,
       content: reconciled.savedContent,
@@ -560,6 +563,7 @@ export function useDocumentDraft(
               share_enabled: shareEnabledToSave,
               share_token: shareTokenToSave,
               updated_at: latestUpdatedAtRef.current,
+              _baseVersionUntrusted: baseVersionUntrustedRef.current,
             });
           } catch {
             shouldRetryQueuedSave = true;
@@ -577,6 +581,7 @@ export function useDocumentDraft(
           };
           lastSavedUpdatedAtRef.current = result.updatedAt;
           cachedDraftIsDirtyRef.current = false;
+          baseVersionUntrustedRef.current = false;
           const resolvedUpdatedAt = applyUpdatedAt(result.updatedAt);
 
           if (

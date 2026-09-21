@@ -31,7 +31,7 @@ export type {
 } from "@/lib/document-cache-record";
 
 const DB_NAME = "mushpot";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const DOCS_STORE = "documents";
 const META_STORE = "meta";
 const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
@@ -200,38 +200,22 @@ function isTokenAuthorized(
 }
 
 /**
- * v2 did not distinguish a list placeholder from a real empty document.
- * Preserve records that are definitely complete (dirty or non-empty) and
- * migrate ambiguous clean empty records to metadata so they must be fetched
- * before the editor can use them.
+ * Before v5, list refreshes could advance a body's revision without fetching it.
+ * Clean legacy snapshots must be fetched again. Never discard unsynced text:
+ * preserve dirty snapshots but require a read-only confirmation before saving.
  */
 function migrateExistingDocuments(store: IDBObjectStore) {
   const request = store.openCursor();
-
   request.onsuccess = () => {
     const cursor = request.result;
-    if (!cursor) {
-      return;
-    }
-
+    if (!cursor) return;
     const existing = cursor.value as CachedDocumentRecord | CachedDocument;
-    let migrated: CachedDocumentRecord;
-
-    if (existing.kind === "metadata") {
-      migrated = toMetadataDocument(existing);
-    } else if (
-      existing.kind === "complete" ||
-      existing._dirty === true ||
-      existing.content !== ""
-    ) {
-      migrated = toStoredCompleteDocument(existing);
-    } else {
-      migrated = toMetadataDocument(existing);
-    }
-
+    const migrated = existing.kind !== "metadata" && existing._dirty === true
+      ? toStoredCompleteDocument({ ...existing, _baseVersionUntrusted: true })
+      : toMetadataDocument(existing);
     const updateRequest = cursor.update(migrated);
     updateRequest.onsuccess = () => cursor.continue();
-    updateRequest.onerror = () => cursor.continue();
+    // A failed migration aborts the upgrade, rather than leaving unsafe records.
   };
 }
 
@@ -251,7 +235,7 @@ function openDB(): Promise<IDBDatabase> {
       } else {
         const store = request.transaction!.objectStore(DOCS_STORE);
         ensureDocumentIndexes(store);
-        if (event.oldVersion < 3) {
+        if (event.oldVersion < 5) {
           migrateExistingDocuments(store);
         }
       }

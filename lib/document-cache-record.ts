@@ -19,6 +19,8 @@ export type CachedDocument = CachedDocumentBase & {
   _localUpdatedAt?: number;
   /** True when local changes have not been persisted to the server yet. */
   _dirty?: boolean;
+  /** Legacy cache revisions may have come from metadata without the body. */
+  _baseVersionUntrusted?: boolean;
   /** Numeric IndexedDB key for dirty-document lookups. */
   _dirtyKey?: 1;
   /** List metadata never changes the content snapshot or its server revision. */

@@ -17,7 +17,7 @@ export type EditorDocument = Pick<
   | "share_enabled"
   | "share_token"
 > &
-  Pick<CachedDocument, "_dirty" | "_localUpdatedAt">;
+  Pick<CachedDocument, "_dirty" | "_localUpdatedAt" | "_baseVersionUntrusted">;
 
 export function getDocumentDisplayTitle(title: string) {
   return title || "Untitled";
@@ -41,6 +41,9 @@ export function toEditorDocument(document: EditorDocument): EditorDocument {
     share_token: document.share_token,
   };
 
+  if (document._baseVersionUntrusted !== undefined) {
+    editorDocument._baseVersionUntrusted = document._baseVersionUntrusted;
+  }
   if (document._dirty !== undefined) {
     editorDocument._dirty = document._dirty;
   }
@@ -64,6 +67,7 @@ export function areEditorDocumentsEqual(
     left.share_enabled === right.share_enabled &&
     left.share_token === right.share_token &&
     left._dirty === right._dirty &&
-    left._localUpdatedAt === right._localUpdatedAt
+    left._localUpdatedAt === right._localUpdatedAt &&
+    left._baseVersionUntrusted === right._baseVersionUntrusted
   );
 }

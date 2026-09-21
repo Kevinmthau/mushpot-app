@@ -757,7 +757,7 @@ describe("owner-scoped document cache", () => {
     ]);
   });
 
-  it("migrates v2 dirty/non-empty rows as complete and ambiguous empty rows as metadata", async () => {
+  it("invalidates legacy clean snapshots and preserves dirty text with untrusted revisions", async () => {
     await seedPreviousCache([
       buildDocument({ id: "non-empty" }),
       buildDocument({
@@ -777,13 +777,14 @@ describe("owner-scoped document cache", () => {
 
     expect(
       await cache.getCachedDocumentRecordForOwner("non-empty", OWNER),
-    ).toEqual(expect.objectContaining({ kind: "complete" }));
+    ).toEqual(expect.objectContaining({ kind: "metadata" }));
     expect(
       await cache.getCachedDocumentRecordForOwner("dirty-empty", OWNER),
     ).toEqual(
       expect.objectContaining({
         _dirty: true,
         kind: "complete",
+        _baseVersionUntrusted: true,
       }),
     );
     expect(
@@ -802,7 +803,7 @@ describe("owner-scoped document cache", () => {
     ]);
   });
 
-  it("upgrades v3 indexes without rewriting bodies or losing empty complete documents", async () => {
+  it("upgrades v3 complete snapshots without trusting potentially mixed revisions", async () => {
     await seedPreviousCache([
       buildDocument({ id: "dirty", kind: "complete", _dirty: true, _dirtyKey: 1 }),
       buildDocument({ id: "empty", kind: "complete", content: "" }),
@@ -813,14 +814,29 @@ describe("owner-scoped document cache", () => {
     const openCursor = vi.spyOn(IDBObjectStore.prototype, "openCursor");
     await cache.activateDocumentCacheForOwner(OWNER);
 
-    expect(openCursor).not.toHaveBeenCalled();
+    expect(openCursor).toHaveBeenCalled();
     expect(await cache.getDirtyDocuments(OWNER)).toEqual([
       expect.objectContaining({ id: "dirty", _dirty: true }),
     ]);
     expect(await cache.getCachedDocumentForOwner("empty", OWNER)).toEqual(
-      expect.objectContaining({ kind: "complete", content: "" }),
+      null,
     );
     expect(await cache.getCachedDocumentForOwner("metadata", OWNER)).toBeNull();
+  });
+
+  it("migrates v4 mixed body/version records without dropping offline drafts", async () => {
+    const stale = buildDocument({ kind: "complete", content: "Old body", updated_at: "2026-07-19T12:00:00.000Z" });
+    await seedPreviousCache([
+      { ...stale, id: "clean" },
+      { ...stale, id: "dirty", _dirty: true, _dirtyKey: 1 },
+    ], 4);
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    expect(await cache.getCachedDocumentForOwner("clean", OWNER)).toBeNull();
+    expect(await cache.getCachedDocumentForOwner("dirty", OWNER)).toMatchObject({
+      content: "Old body", _dirty: true, _baseVersionUntrusted: true,
+    });
+    expect(await cache.getCachedDocumentListForOwner(OWNER)).toHaveLength(2);
   });
 
   it("keeps cache activation best-effort while an older tab blocks the upgrade", async () => {
@@ -853,7 +869,7 @@ describe("owner-scoped document cache", () => {
     }
 
     // This request runs after the pending upgrade and confirms it has finished.
-    const upgradedDatabase = await waitForRequest(indexedDB.open("mushpot", 4));
+    const upgradedDatabase = await waitForRequest(indexedDB.open("mushpot", 5));
     upgradedDatabase.close();
     await cache.activateDocumentCacheForOwner(OWNER);
     expect(cache.getDocumentCacheWriteToken(OWNER)).not.toBeNull();
