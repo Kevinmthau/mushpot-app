@@ -107,6 +107,35 @@ Deno.test("valid shares can sign an exactly referenced object", async () => {
   }]);
 });
 
+Deno.test("authorized single media stays retryable when signing fails or returns no URL", async () => {
+  const failures: SharedDocumentOperations["createSignedUrl"][] = [
+    () =>
+      Promise.resolve({ data: null, error: new Error("Storage unavailable") }),
+    () => Promise.resolve({ data: null, error: null }),
+    () => Promise.resolve({ data: { signedUrl: "" }, error: null }),
+    () => Promise.reject(new Error("Storage connection failed")),
+  ];
+  for (const createSignedUrl of failures) {
+    const { dependencies } = createHarness();
+    const original = dependencies.createOperations();
+    dependencies.createOperations = () => ({ ...original, createSignedUrl });
+
+    const response = await handleSharedDocumentRequest(
+      createMediaRequest(REFERENCED_MEDIA_URL),
+      dependencies,
+    );
+
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), {
+      error: "Shared document media temporarily unavailable.",
+    });
+    assertEquals(
+      response.headers.get("Cache-Control"),
+      "private, no-store, max-age=0",
+    );
+  }
+});
+
 function createBatchHarness() {
   const mediaUrls = [
     REFERENCED_MEDIA_URL,
@@ -117,6 +146,7 @@ function createBatchHarness() {
   let reads = 0;
   let revoked = false;
   let failImages = false;
+  let imageBucketFailure: "error" | "throw" | undefined;
   const operations: SharedDocumentOperations = {
     getSharedDocument: () => {
       reads++;
@@ -135,6 +165,15 @@ function createBatchHarness() {
     },
     createSignedUrls: (bucket, paths, expiresIn) => {
       calls.push({ bucket, paths, expiresIn });
+      if (bucket === "document-images" && imageBucketFailure) {
+        if (imageBucketFailure === "throw") {
+          return Promise.reject(new Error("Storage connection failed"));
+        }
+        return Promise.resolve({
+          data: null,
+          error: new Error("Storage unavailable"),
+        });
+      }
       return Promise.resolve({
         data: paths.map((path) => ({
           path,
@@ -156,6 +195,9 @@ function createBatchHarness() {
     },
     failImages() {
       failImages = true;
+    },
+    failImageBucket(failure: "error" | "throw") {
+      imageBucketFailure = failure;
     },
     request(body: Record<string, unknown>) {
       return handleSharedDocumentRequest(
@@ -246,6 +288,29 @@ Deno.test("per-object signing errors do not discard the other bucket", async () 
   assertEquals(typeof urls[1].signedUrl, "string");
 });
 
+Deno.test("batch signing service failures preserve retryable media and the other bucket", async () => {
+  for (const failure of ["error", "throw"] as const) {
+    const harness = createBatchHarness();
+    harness.failImageBucket(failure);
+    const response = await harness.request({
+      mediaUrls: [...harness.mediaUrls, UNREFERENCED_MEDIA_URL],
+    });
+    assertEquals(response.status, 200);
+    const { urls } = await response.json();
+    assertEquals(urls[0], {
+      mediaUrl: harness.mediaUrls[0],
+      signedUrl: null,
+      retry: true,
+    });
+    assertEquals(typeof urls[1].signedUrl, "string");
+    assertEquals(urls[2], {
+      mediaUrl: UNREFERENCED_MEDIA_URL,
+      signedUrl: null,
+      retry: false,
+    });
+  }
+});
+
 Deno.test("malformed, ambiguous and oversized batches are rejected before document lookup", async () => {
   for (
     const body of [
@@ -278,4 +343,43 @@ Deno.test("twenty images require one document read and one Storage signing call"
   assertEquals(harness.reads, 1);
   assertEquals(harness.calls.length, 1);
   assertEquals(harness.calls[0].paths.length, 20);
+});
+
+Deno.test("database errors stay retryable for documents, individual media, and batches", async () => {
+  for (const throws of [false, true]) {
+    for (
+      const extra of [{}, { mediaUrl: REFERENCED_MEDIA_URL }, {
+        mediaUrls: [REFERENCED_MEDIA_URL],
+      }]
+    ) {
+      const { dependencies, signedUrlCalls } = createHarness();
+      const original = dependencies.createOperations();
+      dependencies.createOperations = () => ({
+        ...original,
+        getSharedDocument: () =>
+          throws
+            ? Promise.reject(new Error("database unavailable"))
+            : Promise.resolve({
+              data: null,
+              error: new Error("database unavailable"),
+            }),
+      });
+      const response = await handleSharedDocumentRequest(
+        new Request("https://functions.example/get-shared-doc", {
+          method: "POST",
+          body: JSON.stringify({
+            docId: DOCUMENT_ID,
+            token: SHARE_TOKEN,
+            ...extra,
+          }),
+        }),
+        dependencies,
+      );
+      assertEquals(response.status, 503);
+      assertEquals(await response.json(), {
+        error: "Shared document temporarily unavailable.",
+      });
+      assertEquals(signedUrlCalls, []);
+    }
+  }
 });

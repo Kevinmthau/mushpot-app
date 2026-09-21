@@ -46,7 +46,7 @@ describe("shared media batch route", () => {
       }],
       expiresIn: 300,
     };
-    vi.mocked(fetchSharedMediaUrls).mockResolvedValue(result);
+    vi.mocked(fetchSharedMediaUrls).mockResolvedValue({ status: "success", data: result });
     const response = await POST(request({ mediaUrls: ["/m/a"] }), context());
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe(
@@ -58,8 +58,8 @@ describe("shared media batch route", () => {
   });
 
   it("signals old edge deployments with 503 and preserves revoked-share denials", async () => {
-    vi.mocked(fetchSharedMediaUrls).mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ urls: [], expiresIn: 0 });
+    vi.mocked(fetchSharedMediaUrls).mockResolvedValueOnce({ status: "unavailable" })
+      .mockResolvedValueOnce({ status: "not_found" });
     const unavailable = await POST(request({ mediaUrls: ["/m/a"] }), context());
     expect(unavailable.status).toBe(503);
     expect(unavailable.headers.get("Cache-Control")).toContain("no-store");

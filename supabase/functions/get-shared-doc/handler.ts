@@ -147,9 +147,24 @@ export async function handleSharedDocumentRequest(
   }
 
   const operations = createOperations(supabaseUrl, serviceRoleKey);
-  const { data, error } = await operations.getSharedDocument(docId, token);
+  let lookup: Awaited<
+    ReturnType<SharedDocumentOperations["getSharedDocument"]>
+  >;
+  try {
+    lookup = await operations.getSharedDocument(docId, token);
+  } catch {
+    return jsonResponse(request, {
+      error: "Shared document temporarily unavailable.",
+    }, 503);
+  }
+  const { data, error } = lookup;
+  if (error) {
+    return jsonResponse(request, {
+      error: "Shared document temporarily unavailable.",
+    }, 503);
+  }
 
-  if (error || !data) {
+  if (!data) {
     return jsonResponse(
       request,
       { error: "Invalid or expired share link." },
@@ -227,21 +242,25 @@ export async function handleSharedDocumentRequest(
       return jsonResponse(request, { error: "Media not found." }, 404);
     }
 
-    const { data: signedData, error: signedError } = await operations
-      .createSignedUrl(
-        media.bucket,
-        media.path,
-        DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
-      );
+    try {
+      const { data: signedData, error: signedError } = await operations
+        .createSignedUrl(
+          media.bucket,
+          media.path,
+          DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
+        );
 
-    if (signedError || !signedData?.signedUrl) {
-      if (signedError) {
-        console.error("Unable to sign shared document media", signedError);
+      if (!signedError && signedData?.signedUrl) {
+        return jsonResponse(request, { signedUrl: signedData.signedUrl });
       }
-      return jsonResponse(request, { error: "Media not found." }, 404);
+    } catch {
+      // Authorization already succeeded. A signing outage is retryable and
+      // must not be reported as a denied reference or expose signed URLs.
     }
 
-    return jsonResponse(request, { signedUrl: signedData.signedUrl });
+    return jsonResponse(request, {
+      error: "Shared document media temporarily unavailable.",
+    }, 503);
   }
 
   const content = await rewriteSharedDocumentMediaUrls(data.content, {
