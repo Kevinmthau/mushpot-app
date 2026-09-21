@@ -13,6 +13,7 @@ export {
   DOCUMENT_VIDEO_BUCKET,
   isDocumentMediaBucket,
   isUuid,
+  MEDIA_URL_CANDIDATE_PATTERN,
   parseDocumentMediaRoute,
   type DocumentMediaBucket,
   type DocumentMediaRoute,

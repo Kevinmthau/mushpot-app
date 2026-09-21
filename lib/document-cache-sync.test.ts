@@ -91,7 +91,7 @@ describe("list refresh, offline editing, and reconnect", () => {
     expect(offlineDocument).toMatchObject({ content: snapshot.content, updated_at: snapshot.updated_at });
     const draft = { ...offlineDocument, content: "Original body with offline edits", _dirty: true };
     await cache.putCachedDocument(draft);
-    expect(await persistDocumentSnapshot(draft)).toMatchObject({ ok: false, conflict: true });
+    expect(await persistDocumentSnapshot(draft)).toMatchObject({ status: "conflict" });
     expect(updateVersions).toEqual([snapshot.updated_at]);
     expect(remote.content).toBe("New remote body");
     expect(await cache.getCachedDocumentForOwner(snapshot.id, snapshot.owner)).toMatchObject({ content: draft.content, _dirty: true });
@@ -112,7 +112,7 @@ it("never updates from an untrusted legacy revision and only confirms identical 
   const maybeSingle = vi.fn().mockResolvedValue({ data: { ...draft, content: "New remote content" }, error: null });
   const query = { eq: () => query, maybeSingle };
   from.mockReturnValue({ update, select: () => query });
-  expect(await persistDocumentSnapshot(draft)).toMatchObject({ ok: false, conflict: true });
+  expect(await persistDocumentSnapshot(draft)).toMatchObject({ status: "conflict" });
   expect(update).not.toHaveBeenCalled();
   expect(await cache.getCachedDocumentForOwner(draft.id, draft.owner)).toMatchObject({
     content: draft.content, _dirty: true, _baseVersionUntrusted: true,
@@ -123,7 +123,7 @@ it("never updates from an untrusted legacy revision and only confirms identical 
   await reloadedCache.activateDocumentCacheForOwner(draft.owner);
   const reloadedSync = await import("@/lib/document-sync");
   maybeSingle.mockResolvedValue({ data: { ...draft }, error: null });
-  expect(await reloadedSync.persistDocumentSnapshot(draft)).toMatchObject({ ok: true, conflict: false });
+  expect(await reloadedSync.persistDocumentSnapshot(draft)).toMatchObject({ status: "saved" });
   expect(update).not.toHaveBeenCalled();
   expect(await reloadedCache.getCachedDocumentForOwner(draft.id, draft.owner)).toMatchObject({
     _dirty: false, _baseVersionUntrusted: false,

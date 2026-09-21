@@ -1,6 +1,7 @@
 import {
   DOCUMENT_MEDIA_BATCH_MAX_URLS,
   DOCUMENT_MEDIA_MAX_URL_LENGTH,
+  isUuid,
   type SharedMediaBatchResponse,
 } from "../_shared/document-media-core.ts";
 import { getCorsHeaders, isCorsOriginAllowed } from "../_shared/cors.ts";
@@ -65,8 +66,6 @@ type SharedDocumentRequestDependencies = {
   getEnvironmentValue: (name: string) => string | undefined;
 };
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHARE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{64}$/;
 
 function jsonResponse(
@@ -139,7 +138,7 @@ export async function handleSharedDocumentRequest(
   const mediaUrls = body.mediaUrls;
 
   if (
-    !UUID_PATTERN.test(docId) ||
+    !isUuid(docId) ||
     !SHARE_TOKEN_PATTERN.test(token) ||
     (mediaUrl !== undefined && typeof mediaUrl !== "string") ||
     (mediaUrls !== undefined && (

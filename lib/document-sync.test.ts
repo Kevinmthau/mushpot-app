@@ -282,7 +282,7 @@ describe("flushDirtyDocuments", () => {
 
     await expect(persistence).resolves.toEqual(
       expect.objectContaining({
-        ok: true,
+        status: "saved",
         updatedAt: "2026-07-17T12:00:00.000Z",
       }),
     );
@@ -327,8 +327,6 @@ describe("flushDirtyDocuments", () => {
       status: "saved",
       confirmedSnapshot: expect.objectContaining({ content: "Keep", updated_at: "2026-07-17T12:00:00.000Z", share_token: "server-share-token" }),
       cacheUpdated: true,
-      conflict: false,
-      ok: true,
       persistedTitle: "Active",
       updatedAt: "2026-07-17T12:00:00.000Z",
     });
@@ -384,8 +382,6 @@ describe("flushDirtyDocuments", () => {
     expect(result).toEqual({
       status: "conflict",
       cacheUpdated: false,
-      conflict: true,
-      ok: false,
       persistedTitle: "Active",
       updatedAt: "2026-07-17T12:00:00.000Z",
     });

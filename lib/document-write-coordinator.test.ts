@@ -7,6 +7,7 @@ import {
 import type {
   PersistableDocumentSnapshot,
   PersistDocumentResult,
+  SavedDocumentResult,
 } from "@/lib/document-sync";
 
 const base: PersistableDocumentSnapshot = {
@@ -19,18 +20,15 @@ const base: PersistableDocumentSnapshot = {
   share_token: null,
   _localUpdatedAt: 10,
 };
-const saved = (version: string): PersistDocumentResult => ({
+const saved = (version: string): SavedDocumentResult => ({
   status: "saved",
-  ok: true,
-  conflict: false,
+  confirmedSnapshot: { ...base, updated_at: version },
   cacheUpdated: true,
   persistedTitle: "Title",
   updatedAt: version,
 });
 const conflict: PersistDocumentResult = {
   status: "conflict",
-  ok: false,
-  conflict: true,
   cacheUpdated: false,
   persistedTitle: "Title",
   updatedAt: "another-device-version",
@@ -44,7 +42,7 @@ function setup() {
   const session = createDocumentWriteSession("owner");
   const scope = { session, cacheWriteToken: { owner: "owner", generation: 1 } };
   const confirmCache = vi.fn(
-    async (_snapshot: PersistableDocumentSnapshot, result: PersistDocumentResult) =>
+    async (_snapshot: PersistableDocumentSnapshot, result: SavedDocumentResult) =>
       result,
   );
   const coordinator = createDocumentWriteCoordinator({
@@ -134,7 +132,10 @@ describe("document write coordinator", () => {
     persist.mockResolvedValue({ ...saved("v2"), confirmedSnapshot: latest });
     await coordinator.enqueue({ ...base, _localUpdatedAt: 12 }, scope);
     const duplicate = await coordinator.enqueue(base, scope);
-    expect(duplicate.confirmedSnapshot?._localUpdatedAt).toBe(12);
+    expect(duplicate).toMatchObject({
+      status: "saved",
+      confirmedSnapshot: { _localUpdatedAt: 12 },
+    });
     expect(confirmCache).toHaveBeenCalledWith(
       expect.objectContaining({ _localUpdatedAt: 12 }),
       expect.anything(),

@@ -10,7 +10,11 @@ import {
   PrivateSessionProvider,
   usePrivateSession,
 } from "@/components/pwa/private-session-provider";
-import type { PersistDocumentResult } from "@/lib/document-sync";
+import type {
+  PersistableDocumentSnapshot,
+  PersistDocumentResult,
+  SavedDocumentResult,
+} from "@/lib/document-sync";
 import type { EditorDocument } from "@/lib/documents";
 
 const mocks = vi.hoisted(() => ({
@@ -38,6 +42,24 @@ const initialDocument: EditorDocument = {
   share_enabled: false,
   share_token: null,
 };
+function savedResult(
+  snapshot: PersistableDocumentSnapshot,
+  updatedAt = "2026-09-20T11:00:00Z",
+): SavedDocumentResult {
+  const persistedTitle = snapshot.title.trim() || "Untitled";
+  return {
+    status: "saved",
+    cacheUpdated: true,
+    persistedTitle,
+    updatedAt,
+    confirmedSnapshot: {
+      ...snapshot,
+      title: persistedTitle,
+      updated_at: updatedAt,
+      _baseVersionUntrusted: false,
+    },
+  };
+}
 let api: ReturnType<typeof useDocumentDraft>;
 let session: ReturnType<typeof usePrivateSession>;
 function Harness() {
@@ -55,14 +77,9 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.cache.mockResolvedValue(true);
   mocks.getToken.mockReturnValue({ owner: "owner", generation: 1 });
-  mocks.persist.mockResolvedValue({
-    status: "saved",
-    ok: true,
-    conflict: false,
-    cacheUpdated: true,
-    persistedTitle: "Title",
-    updatedAt: "2026-09-20T11:00:00Z",
-  });
+  mocks.persist.mockImplementation(
+    async (snapshot: PersistableDocumentSnapshot) => savedResult(snapshot),
+  );
   mocks.subscribe.mockReturnValue(() => {});
 });
 afterEach(() => {
@@ -230,14 +247,10 @@ describe("mounted draft lifecycle", () => {
     );
     expect(api.saveStatus).toBe("saved");
     await act(async () =>
-      finishOldSave({
-        status: "saved",
-        ok: true,
-        conflict: false,
-        cacheUpdated: true,
-        persistedTitle: "Title",
-        updatedAt: "2026-09-20T12:00:00Z",
-      }),
+      finishOldSave(savedResult(
+        mocks.persist.mock.calls[0][0],
+        "2026-09-20T12:00:00Z",
+      )),
     );
     expect(api.getLatestContent()).toBe(
       "Continue writing in the renewed session",
@@ -295,12 +308,10 @@ describe("mounted draft lifecycle", () => {
     const root = createRoot(container);
     mocks.persist.mockResolvedValue({
       status: "conflict",
-      ok: false,
-      conflict: true,
       cacheUpdated: false,
       persistedTitle: "Title",
       updatedAt: "2026-09-20T11:00:00Z",
-    });
+    } satisfies PersistDocumentResult);
     await act(async () =>
       root.render(
         createElement(

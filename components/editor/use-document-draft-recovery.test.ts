@@ -8,6 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
 import { PrivateSessionProvider } from "@/components/pwa/private-session-provider";
 import type { EditorDocument } from "@/lib/documents";
+import type {
+  PersistableDocumentSnapshot,
+  PersistDocumentResult,
+} from "@/lib/document-sync";
 
 const mocks = vi.hoisted(() => ({
   persistDocumentSnapshot: vi.fn(),
@@ -62,12 +66,10 @@ beforeEach(() => {
   mocks.putCachedDocument.mockResolvedValue(true);
   mocks.persistDocumentSnapshot.mockResolvedValue({
     status: "conflict",
-    ok: false,
-    conflict: true,
     cacheUpdated: false,
     persistedTitle: legacyDraft.title,
     updatedAt: "2026-09-20T11:00:00.000Z",
-  });
+  } satisfies PersistDocumentResult);
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -120,14 +122,19 @@ describe("draft recovery state", () => {
   });
 
   it("clears recovery after a read confirms the draft and uses the trusted revision for later edits", async () => {
-    mocks.persistDocumentSnapshot.mockResolvedValue({
-      status: "saved",
-      ok: true,
-      conflict: false,
-      cacheUpdated: true,
-      persistedTitle: legacyDraft.title,
-      updatedAt: "2026-09-20T11:00:00.000Z",
-    });
+    mocks.persistDocumentSnapshot.mockImplementation(
+      async (snapshot: PersistableDocumentSnapshot) => ({
+        status: "saved",
+        cacheUpdated: true,
+        persistedTitle: snapshot.title,
+        updatedAt: "2026-09-20T11:00:00.000Z",
+        confirmedSnapshot: {
+          ...snapshot,
+          updated_at: "2026-09-20T11:00:00.000Z",
+          _baseVersionUntrusted: false,
+        },
+      } satisfies PersistDocumentResult),
+    );
     await render(legacyDraft);
     await act(async () => draft.flushLatestDraft());
     expect(draft.needsDraftRecovery).toBe(false);

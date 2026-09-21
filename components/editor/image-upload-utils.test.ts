@@ -3,17 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   ensureStorageFileNameMatchesMediaKind,
   getSupportedMediaKind,
-  inferImageMimeType,
   inferMediaMimeType,
-  inferVideoMimeType,
-  isSupportedImageFile,
   isSupportedMediaFile,
-  isSupportedVideoFile,
   isSupportedVideoUrl,
   normalizeImageMimeType,
   normalizeMediaMimeType,
   normalizeVideoMimeType,
-  sanitizeImageAltText,
   sanitizeMediaAltText,
   sanitizeStorageFileName,
 } from "@/components/editor/image-upload-utils";
@@ -25,21 +20,14 @@ function file(name: string, type = "") {
 describe("inferMediaMimeType", () => {
   it("maps known extensions case-insensitively", () => {
     expect(inferMediaMimeType("photo.JPG")).toBe("image/jpeg");
+    expect(inferMediaMimeType("a.png")).toBe("image/png");
+    expect(inferMediaMimeType("a.mp4")).toBe("video/mp4");
     expect(inferMediaMimeType("clip.mov")).toBe("video/quicktime");
   });
 
   it("returns null for unknown or missing extensions", () => {
     expect(inferMediaMimeType("notes.txt")).toBeNull();
     expect(inferMediaMimeType("noextension")).toBeNull();
-  });
-});
-
-describe("inferImageMimeType / inferVideoMimeType", () => {
-  it("only returns a MIME type matching the requested media kind", () => {
-    expect(inferImageMimeType("a.png")).toBe("image/png");
-    expect(inferImageMimeType("a.mp4")).toBeNull();
-    expect(inferVideoMimeType("a.mp4")).toBe("video/mp4");
-    expect(inferVideoMimeType("a.png")).toBeNull();
   });
 });
 
@@ -97,19 +85,14 @@ describe("getSupportedMediaKind", () => {
   });
 });
 
-describe("isSupportedMediaFile predicates", () => {
-  it("reports support per media kind", () => {
+describe("isSupportedMediaFile", () => {
+  it("accepts images and videos and rejects unsupported files", () => {
     const image = file("x.png", "image/png");
     const video = file("x.mp4", "video/mp4");
     const other = file("x.txt", "text/plain");
 
     expect(isSupportedMediaFile(image)).toBe(true);
-    expect(isSupportedImageFile(image)).toBe(true);
-    expect(isSupportedVideoFile(image)).toBe(false);
-
-    expect(isSupportedVideoFile(video)).toBe(true);
-    expect(isSupportedImageFile(video)).toBe(false);
-
+    expect(isSupportedMediaFile(video)).toBe(true);
     expect(isSupportedMediaFile(other)).toBe(false);
   });
 });
@@ -136,7 +119,7 @@ describe("sanitizeMediaAltText", () => {
     expect(sanitizeMediaAltText("my-cool_photo.png", "image")).toBe(
       "my cool photo",
     );
-    expect(sanitizeImageAltText("vacation_01.jpg")).toBe("vacation 01");
+    expect(sanitizeMediaAltText("vacation_01.jpg", "image")).toBe("vacation 01");
   });
 
   it("uses the fallback when nothing meaningful remains", () => {

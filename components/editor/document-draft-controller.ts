@@ -198,7 +198,7 @@ export class DocumentDraftController {
     this.baseVersionUntrusted = false;
     const hasPendingChanges = this.isDirty();
     this.publish({
-      ...(!this.mutations.share && result.confirmedSnapshot
+      ...(!this.mutations.share
         ? {
             shareEnabled: result.confirmedSnapshot.share_enabled,
             shareToken: result.confirmedSnapshot.share_token,

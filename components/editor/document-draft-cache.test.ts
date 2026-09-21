@@ -19,8 +19,6 @@ const initial = {
 const retryable: PersistDocumentResult = {
   status: "retryable",
   cacheUpdated: false,
-  conflict: false,
-  ok: false,
   persistedTitle: initial.title,
   updatedAt: null,
 };
@@ -108,10 +106,15 @@ describe("durable reverted draft intent", () => {
     });
 
     finishSave({
-      ...retryable,
       status: "saved",
-      ok: true,
+      cacheUpdated: false,
+      persistedTitle: initial.title,
       updatedAt: "2026-09-20T11:00:00Z",
+      confirmedSnapshot: {
+        ...persist.mock.calls[0][0],
+        updated_at: "2026-09-20T11:00:00Z",
+        _baseVersionUntrusted: false,
+      },
     });
     await saving;
     expect(await readDurableDraft()).toMatchObject({

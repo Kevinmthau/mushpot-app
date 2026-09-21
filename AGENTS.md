@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 This is a Next.js App Router project with TypeScript, Tailwind v4, Supabase, and a client-side document cache.
 - `app/(private)`: authenticated document list and editor routes (`/`, `/doc/[id]`)
-- `app/auth`: magic-link sign-in UI, server action, PKCE confirm route, and fallback callback page
+- `app/auth`: magic-link sign-in UI, server action, user-confirmed verify page, PKCE/token confirm route, and fallback callback page
 - `app/s/[id]/[token]`: public shared-document page plus Open Graph image route
 - `components/auth`: auth form and submit state UI
 - `components/documents`: document list and create-document flow
@@ -42,7 +42,7 @@ Use `npm run lint && npm run typecheck && npm run test && npm run build` before 
 - Components: PascalCase exports (`AuthForm`, `EditorClient`).
 - Route files and utility modules: lowercase file names where practical.
 - Keep changes focused and preserve the writing-first, cache-first UX.
-- Preserve the current auth flow shape: magic links redirect to `/auth/confirm`, not directly to protected routes.
+- Preserve the current auth flow shape: magic links start at `/auth/verify` for user-confirmed token verification; PKCE codes continue through `/auth/confirm` before entering protected routes.
 - When changing document rendering or sharing behavior, keep editor output and shared-document rendering aligned.
 
 ## Testing Guidelines

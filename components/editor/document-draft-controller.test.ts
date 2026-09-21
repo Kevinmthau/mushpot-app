@@ -6,6 +6,7 @@ import type { EditorDocument } from "@/lib/documents";
 import type {
   PersistableDocumentSnapshot,
   PersistDocumentResult,
+  SavedDocumentResult,
 } from "@/lib/document-sync";
 import type { DocumentWriteEvent } from "@/lib/document-write-coordinator";
 
@@ -18,20 +19,36 @@ const document: EditorDocument = {
   share_enabled: false,
   share_token: null,
 };
-const saved: PersistDocumentResult = {
-  status: "saved",
-  cacheUpdated: true,
-  ok: true,
-  conflict: false,
-  updatedAt: "2026-09-20T11:00:00Z",
-  persistedTitle: "Title",
-};
+function savedResult(
+  snapshot: PersistableDocumentSnapshot,
+  updatedAt = "2026-09-20T11:00:00Z",
+): SavedDocumentResult {
+  const persistedTitle = snapshot.title.trim() || "Untitled";
+  return {
+    status: "saved",
+    cacheUpdated: true,
+    updatedAt,
+    persistedTitle,
+    confirmedSnapshot: {
+      ...snapshot,
+      title: persistedTitle,
+      updated_at: updatedAt,
+      _baseVersionUntrusted: false,
+    },
+  };
+}
+const saved = savedResult(document);
 const conflict: PersistDocumentResult = {
-  ...saved,
   status: "conflict",
-  ok: false,
-  conflict: true,
   cacheUpdated: false,
+  updatedAt: saved.updatedAt,
+  persistedTitle: document.title,
+};
+const retryable: PersistDocumentResult = {
+  status: "retryable",
+  cacheUpdated: false,
+  updatedAt: null,
+  persistedTitle: document.title,
 };
 
 function setup(initial = document, resolved = true) {
@@ -40,7 +57,7 @@ function setup(initial = document, resolved = true) {
     .fn<
       (snapshot: PersistableDocumentSnapshot) => Promise<PersistDocumentResult>
     >()
-    .mockResolvedValue(saved);
+    .mockImplementation(async (snapshot) => savedResult(snapshot));
   let onWrite!: (event: DocumentWriteEvent) => void;
   const unsubscribe = vi.fn();
   const controller = new DocumentDraftController(initial, resolved, {
@@ -78,7 +95,7 @@ describe("draft controller", () => {
       const initial = { ...document, title, _dirty: true };
       const { controller, cache, persist, emit, lifecycle } = setup(initial);
 
-      emit({ snapshot: initial, result: { ...saved, persistedTitle } });
+      emit({ snapshot: initial, result: savedResult(initial) });
 
       expect(controller.getView().saveStatus).toBe("saved");
       expect(cache).toHaveBeenLastCalledWith(
@@ -263,7 +280,8 @@ describe("draft controller", () => {
       _localUpdatedAt: 10,
     });
     controller.handleEditorChange(Text.of(["Newer local text"]));
-    emit({ snapshot: { ...document, _localUpdatedAt: 10 }, result: saved });
+    const snapshot = { ...document, _localUpdatedAt: 10 };
+    emit({ snapshot, result: savedResult(snapshot) });
     expect(controller.getLatestContent()).toBe("Newer local text");
     expect(cache).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -297,9 +315,9 @@ describe("draft controller", () => {
     await vi.advanceTimersByTimeAsync(800);
     expect(persist).toHaveBeenCalledTimes(2);
 
-    finishSave(saved);
+    finishSave(savedResult(persist.mock.calls[0][0]));
     await saving;
-    finishRevert({ ...saved, updatedAt: "2026-09-20T12:00:00Z" });
+    finishRevert(savedResult(persist.mock.calls[1][0], "2026-09-20T12:00:00Z"));
     await vi.advanceTimersByTimeAsync(800);
 
     expect(persist).toHaveBeenCalledTimes(2);
@@ -319,7 +337,7 @@ describe("draft controller", () => {
     controller.handleEditorChange(Text.of(["Intermediate edit"]));
     controller.handleEditorChange(Text.of([document.content]));
 
-    emit({ snapshot: initial, result: saved });
+    emit({ snapshot: initial, result: savedResult(initial) });
 
     expect(cache).toHaveBeenLastCalledWith(
       expect.objectContaining({ content: document.content, _dirty: true }),
@@ -362,7 +380,7 @@ describe("draft controller", () => {
     controller.handleEditorChange(Text.of(["Draft"]));
     const saving = controller.save();
     lifecycle.stop();
-    resolve({ ...saved, status: "retryable", ok: false });
+    resolve(retryable);
     await saving;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(persist).toHaveBeenCalledOnce();
@@ -370,9 +388,7 @@ describe("draft controller", () => {
 
   it("retries transient failures without changing the original CAS timestamp", async () => {
     const { controller, persist } = setup({ ...document, _dirty: true });
-    persist
-      .mockResolvedValueOnce({ ...saved, status: "retryable", ok: false })
-      .mockResolvedValueOnce(saved);
+    persist.mockResolvedValueOnce(retryable);
     await controller.save();
     expect(controller.getView().saveStatus).toBe("retryable");
     await vi.advanceTimersByTimeAsync(30_000);

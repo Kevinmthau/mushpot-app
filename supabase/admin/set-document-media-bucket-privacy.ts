@@ -1,9 +1,6 @@
 import { createClient, type SupabaseClient } from "supabase";
 
-const DOCUMENT_MEDIA_BUCKETS = [
-  "document-images",
-  "document-videos",
-] as const;
+import { DOCUMENT_MEDIA_BUCKETS } from "../functions/_shared/document-media-core.ts";
 
 type BucketState = {
   allowedMimeTypes: string[] | null;

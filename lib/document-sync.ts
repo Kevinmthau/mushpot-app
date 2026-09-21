@@ -24,15 +24,22 @@ export type PersistableDocumentSnapshot = Pick<
   | "_baseVersionUntrusted"
 >;
 
-export type PersistDocumentResult = {
-  status: "saved" | "retryable" | "conflict" | "cancelled" | "superseded";
-  confirmedSnapshot?: PersistableDocumentSnapshot;
+export type SavedDocumentResult = {
+  status: "saved";
+  confirmedSnapshot: PersistableDocumentSnapshot;
   cacheUpdated: boolean;
-  conflict: boolean;
-  ok: boolean;
   persistedTitle: string;
-  updatedAt: string | null;
+  updatedAt: string;
 };
+
+export type PersistDocumentResult =
+  | SavedDocumentResult
+  | {
+      status: "retryable" | "conflict" | "cancelled" | "superseded";
+      cacheUpdated: false;
+      persistedTitle: string;
+      updatedAt: string | null;
+    };
 
 export type FlushDirtyDocumentsResult =
   | {
@@ -74,6 +81,39 @@ function hasPersistedEditorState(
   content: string,
 ) {
   return document.title === persistedTitle && document.content === content;
+}
+
+async function confirmDocumentSnapshot(
+  snapshot: PersistableDocumentSnapshot,
+  persistedTitle: string,
+  document: PersistedDocumentMetadata,
+  cacheSnapshotAt: number,
+  cacheWriteToken: DocumentCacheWriteToken | null,
+): Promise<SavedDocumentResult> {
+  const confirmedSnapshot = {
+    ...snapshot,
+    _baseVersionUntrusted: false,
+    title: persistedTitle,
+    updated_at: document.updated_at,
+    share_enabled: document.share_enabled,
+    share_token: document.share_token,
+  };
+  const cacheUpdated = await putCachedDocument(
+    {
+      ...confirmedSnapshot,
+      _dirty: false,
+      _localUpdatedAt: cacheSnapshotAt,
+    },
+    cacheWriteToken,
+  );
+
+  return {
+    status: "saved",
+    confirmedSnapshot,
+    cacheUpdated,
+    persistedTitle,
+    updatedAt: document.updated_at,
+  };
 }
 
 async function writeDocumentSnapshot(
@@ -124,36 +164,13 @@ async function writeDocumentSnapshot(
     }
 
     if (!updateError && updatedDocument?.updated_at) {
-      const cacheUpdated = await putCachedDocument(
-        {
-          ...snapshot,
-          title: persistedTitle,
-          updated_at: updatedDocument.updated_at,
-          share_enabled: updatedDocument.share_enabled,
-          share_token: updatedDocument.share_token,
-          _dirty: false,
-          _baseVersionUntrusted: false,
-          _localUpdatedAt: cacheSnapshotAt,
-        },
+      return confirmDocumentSnapshot(
+        snapshot,
+        persistedTitle,
+        updatedDocument,
+        cacheSnapshotAt,
         cacheWriteToken,
       );
-
-      return {
-        status: "saved",
-        confirmedSnapshot: {
-          ...snapshot,
-          _baseVersionUntrusted: false,
-          title: persistedTitle,
-          updated_at: updatedDocument.updated_at,
-          share_enabled: updatedDocument.share_enabled,
-          share_token: updatedDocument.share_token,
-        },
-        cacheUpdated,
-        conflict: false,
-        ok: true,
-        persistedTitle,
-        updatedAt: updatedDocument.updated_at,
-      };
     }
 
     // A committed update can lose its response. Read the row before retrying:
@@ -184,36 +201,13 @@ async function writeDocumentSnapshot(
       currentDocument?.updated_at &&
       hasPersistedEditorState(currentDocument, persistedTitle, snapshot.content)
     ) {
-      const cacheUpdated = await putCachedDocument(
-        {
-          ...snapshot,
-          title: persistedTitle,
-          updated_at: currentDocument.updated_at,
-          share_enabled: currentDocument.share_enabled,
-          share_token: currentDocument.share_token,
-          _dirty: false,
-          _baseVersionUntrusted: false,
-          _localUpdatedAt: cacheSnapshotAt,
-        },
+      return confirmDocumentSnapshot(
+        snapshot,
+        persistedTitle,
+        currentDocument,
+        cacheSnapshotAt,
         cacheWriteToken,
       );
-
-      return {
-        status: "saved",
-        confirmedSnapshot: {
-          ...snapshot,
-          _baseVersionUntrusted: false,
-          title: persistedTitle,
-          updated_at: currentDocument.updated_at,
-          share_enabled: currentDocument.share_enabled,
-          share_token: currentDocument.share_token,
-        },
-        cacheUpdated,
-        conflict: false,
-        ok: true,
-        persistedTitle,
-        updatedAt: currentDocument.updated_at,
-      };
     }
 
     if (!recoveryError) {
@@ -228,8 +222,6 @@ async function writeDocumentSnapshot(
         return {
           status: "conflict",
           cacheUpdated: false,
-          conflict: true,
-          ok: false,
           persistedTitle,
           updatedAt: currentDocument?.updated_at ?? null,
         };
@@ -253,8 +245,6 @@ async function writeDocumentSnapshot(
   return {
     status: "retryable",
     cacheUpdated: false,
-    conflict: false,
-    ok: false,
     persistedTitle,
     updatedAt: null,
   };
@@ -283,7 +273,6 @@ const writeCoordinator = createDocumentWriteCoordinator({
   persist: (snapshot, { cacheWriteToken, session }) =>
     writeDocumentSnapshot(snapshot, cacheWriteToken, session),
   confirmCache: async (snapshot, result, { cacheWriteToken }) => {
-    if (!result.confirmedSnapshot) return result;
     const cacheUpdated = await putCachedDocument(
       {
         ...result.confirmedSnapshot,
@@ -348,8 +337,6 @@ export async function flushDirtyDocuments(
         return {
           status: "retryable",
           cacheUpdated: false,
-          conflict: false,
-          ok: false,
           persistedTitle: normalizeDocumentTitle(document.title),
           updatedAt: null,
         } satisfies PersistDocumentResult;
@@ -357,7 +344,7 @@ export async function flushDirtyDocuments(
     }),
   );
   const succeeded = results.filter(
-    (result) => result.ok && result.cacheUpdated,
+    (result) => result.status === "saved" && result.cacheUpdated,
   ).length;
 
   return {

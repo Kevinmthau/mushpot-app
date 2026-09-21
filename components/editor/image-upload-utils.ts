@@ -94,10 +94,6 @@ export function sanitizeMediaAltText(fileName: string, fallback: string) {
   return normalized || fallback;
 }
 
-export function sanitizeImageAltText(fileName: string) {
-  return sanitizeMediaAltText(fileName, "image");
-}
-
 export function sanitizeStorageFileName(fileName: string) {
   const normalized = fileName.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
   const cleaned = normalized.replace(/-+/g, "-").replace(/^-|-$/g, "");
@@ -156,16 +152,6 @@ export function inferMediaMimeType(fileName: string) {
   }
 }
 
-export function inferImageMimeType(fileName: string) {
-  const mimeType = inferMediaMimeType(fileName);
-  return mimeType?.startsWith("image/") ? mimeType : null;
-}
-
-export function inferVideoMimeType(fileName: string) {
-  const mimeType = inferMediaMimeType(fileName);
-  return mimeType?.startsWith("video/") ? mimeType : null;
-}
-
 export function normalizeImageMimeType(mimeType: string) {
   const normalized = mimeType.toLowerCase();
   if (normalized === "image/jpg") {
@@ -221,14 +207,6 @@ export function isSupportedMediaFile(file: File) {
   return getSupportedMediaKind(file) !== null;
 }
 
-export function isSupportedImageFile(file: File) {
-  return getSupportedMediaKind(file) === "image";
-}
-
-export function isSupportedVideoFile(file: File) {
-  return getSupportedMediaKind(file) === "video";
-}
-
 export function isSupportedVideoUrl(src: string) {
   const extension = getUrlFileExtension(src);
   return extension ? SUPPORTED_VIDEO_EXTENSIONS.has(extension) : false;
@@ -250,13 +228,4 @@ export function buildEmbeddedMediaMarkdown(
   const suffix = after === "\n" ? "\n" : "\n\n";
   const target = title ? `${url} "${title}"` : url;
   return `${prefix}![${altText}](${target})${suffix}`;
-}
-
-export function buildImageMarkdown(
-  view: EditorView,
-  position: number,
-  altText: string,
-  url: string,
-) {
-  return buildEmbeddedMediaMarkdown(view, position, altText, url);
 }

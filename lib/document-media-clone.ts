@@ -1,5 +1,6 @@
 import {
   buildDocumentMediaUrl,
+  MEDIA_URL_CANDIDATE_PATTERN,
   parseDocumentMediaUrl,
   type DocumentMediaBucket,
 } from "@/lib/document-media";
@@ -22,9 +23,6 @@ type MediaOccurrence = {
   replacement: string;
   start: number;
 };
-
-const MEDIA_URL_CANDIDATE_PATTERN =
-  /https?:\/\/[^\s<>"')]+|\/m\/[^\s<>"')]+/g;
 
 export function planDocumentMediaClone({
   content,

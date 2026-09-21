@@ -2,6 +2,7 @@ import type { DocumentCacheWriteToken } from "@/lib/doc-cache";
 import type {
   PersistableDocumentSnapshot,
   PersistDocumentResult,
+  SavedDocumentResult,
 } from "@/lib/document-sync";
 
 let sessionGeneration = 0;
@@ -35,7 +36,7 @@ export type DocumentWriteEvent = {
 type Entry = {
   tail: Promise<unknown>;
   versions: Set<string>;
-  saved?: DocumentWriteEvent;
+  saved?: { snapshot: PersistableDocumentSnapshot; result: SavedDocumentResult };
   conflict?: DocumentWriteEvent;
 };
 
@@ -48,9 +49,9 @@ type CoordinatorOptions = {
   isCurrent: (owner: string, scope: Scope) => boolean;
   confirmCache?: (
     snapshot: PersistableDocumentSnapshot,
-    result: PersistDocumentResult,
+    result: SavedDocumentResult,
     scope: Scope,
-  ) => Promise<PersistDocumentResult>;
+  ) => Promise<SavedDocumentResult>;
   persist: (
     snapshot: PersistableDocumentSnapshot,
     scope: Scope,
@@ -74,8 +75,6 @@ export function skippedDocumentWrite(
   return {
     status,
     cacheUpdated: false,
-    conflict: false,
-    ok: false,
     persistedTitle: title.trim() || "Untitled",
     updatedAt: null,
   };
@@ -162,15 +161,13 @@ export function createDocumentWriteCoordinator({
             }
             // A later edit can return to already-saved content. Retain its
             // revision so a delayed intermediate draft cannot overwrite it.
-            const confirmedResult = result.confirmedSnapshot
-              ? {
-                  ...result,
-                  confirmedSnapshot: {
-                    ...result.confirmedSnapshot,
-                    _localUpdatedAt: confirmedSnapshot._localUpdatedAt,
-                  },
-                }
-              : result;
+            const confirmedResult = {
+              ...result,
+              confirmedSnapshot: {
+                ...result.confirmedSnapshot,
+                _localUpdatedAt: confirmedSnapshot._localUpdatedAt,
+              },
+            };
             entry.saved = {
               snapshot: {
                 ...saved.snapshot,
@@ -189,7 +186,7 @@ export function createDocumentWriteCoordinator({
           ) {
             return skippedDocumentWrite("superseded", snapshot.title);
           }
-          snapshot = { ...snapshot, updated_at: saved.result.updatedAt! };
+          snapshot = { ...snapshot, updated_at: saved.result.updatedAt };
         }
 
         const result = await persist(snapshot, scope);
@@ -199,8 +196,8 @@ export function createDocumentWriteCoordinator({
         const event = { snapshot, result };
         if (result.status === "saved") {
           entry.versions.add(snapshot.updated_at);
-          entry.versions.add(result.updatedAt!);
-          entry.saved = event;
+          entry.versions.add(result.updatedAt);
+          entry.saved = { snapshot, result };
           entry.conflict = undefined;
         } else if (result.status === "conflict") {
           entry.conflict = event;

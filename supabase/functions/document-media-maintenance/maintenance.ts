@@ -1,9 +1,12 @@
 import type { SupabaseClient } from "supabase";
 
-const DOCUMENT_MEDIA_BUCKETS = [
-  "document-images",
-  "document-videos",
-] as const;
+import {
+  DOCUMENT_MEDIA_BUCKETS,
+  type DocumentMediaBucket,
+} from "../_shared/document-media-core.ts";
+
+export type { DocumentMediaBucket } from "../_shared/document-media-core.ts";
+
 const CLAIM_LIMIT = 25;
 const LEASE_SECONDS = 600;
 const STORAGE_PAGE_SIZE = 100;
@@ -23,8 +26,6 @@ const CLEANUP_RESCAN_OFFSETS_MILLISECONDS = [
   960,
   1_200,
 ].map((minutes) => minutes * 60 * 1_000);
-
-export type DocumentMediaBucket = (typeof DOCUMENT_MEDIA_BUCKETS)[number];
 
 export type CleanupJob = {
   attempt_count: number;

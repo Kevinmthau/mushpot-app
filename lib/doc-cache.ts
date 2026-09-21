@@ -34,9 +34,7 @@ const DB_NAME = "mushpot";
 const DB_VERSION = 5;
 const DOCS_STORE = "documents";
 const META_STORE = "meta";
-const LAST_ACTIVE_OWNER_KEY = "last-active-owner";
 const OWNER_CACHE_STATE_KEY_PREFIX = "document-cache-owner-state:";
-const LAST_SYNC_KEY_PREFIX = "document-cache-last-sync:";
 const DOCUMENT_DELETION_TOMBSTONE_KEY_PREFIX =
   "document-cache-deletion-tombstone:";
 
@@ -104,10 +102,6 @@ function getOwnerUpdatedAtRange(owner: string) {
 
 function getOwnerCacheStateKey(owner: string) {
   return `${OWNER_CACHE_STATE_KEY_PREFIX}${owner}`;
-}
-
-function getOwnerLastSyncKey(owner: string) {
-  return `${LAST_SYNC_KEY_PREFIX}${owner}`;
 }
 
 function getOwnerDocumentDeletionTombstonePrefix(owner: string) {
@@ -326,15 +320,6 @@ export async function getCachedDocumentRecordForOwner(
   } catch {
     return null;
   }
-}
-
-/** Backward-compatible owner-scoped record read. */
-export function getCachedDocument(
-  id: string,
-  owner: string,
-  token = getDocumentCacheWriteToken(owner),
-) {
-  return getCachedDocumentRecordForOwner(id, owner, token);
 }
 
 /**
@@ -577,16 +562,13 @@ async function disableDocumentCacheForOwner(
       const transactionDone = waitForTransaction(tx);
       const documentStore = tx.objectStore(DOCS_STORE);
       const metaStore = tx.objectStore(META_STORE);
-      const [ownerState, documents, lastActiveOwner, tombstoneKeys] =
+      const [ownerState, documents, tombstoneKeys] =
         await Promise.all([
           requestToPromise<DocumentCacheOwnerState | undefined>(
             metaStore.get(getOwnerCacheStateKey(owner)),
           ),
           requestToPromise<CachedDocumentRecord[]>(
             documentStore.index("owner").getAll(owner),
-          ),
-          requestToPromise<{ value?: string } | undefined>(
-            metaStore.get(LAST_ACTIVE_OWNER_KEY),
           ),
           requestToPromise<IDBValidKey[]>(
             metaStore.getAllKeys(getOwnerDocumentDeletionTombstoneRange(owner)),
@@ -599,10 +581,6 @@ async function disableDocumentCacheForOwner(
         key: getOwnerCacheStateKey(owner),
         owner,
       } satisfies DocumentCacheOwnerState);
-
-      if (lastActiveOwner?.value === owner) {
-        metaStore.delete(LAST_ACTIVE_OWNER_KEY);
-      }
 
       for (const tombstoneKey of tombstoneKeys) {
         metaStore.delete(tombstoneKey);
@@ -642,11 +620,6 @@ export function purgeDocumentCacheForOwner(owner: string): Promise<void> {
   return disableDocumentCacheForOwner(owner, true);
 }
 
-/** Compatibility alias for callers that explicitly intend a full purge. */
-export function clearCachedDocumentsForOwner(owner: string): Promise<void> {
-  return purgeDocumentCacheForOwner(owner);
-}
-
 export async function activateDocumentCacheForOwner(owner: string): Promise<void> {
   if (!owner) {
     return;
@@ -677,7 +650,6 @@ export async function activateDocumentCacheForOwner(owner: string): Promise<void
         key: getOwnerCacheStateKey(owner),
         owner,
       } satisfies DocumentCacheOwnerState);
-      metaStore.put({ key: LAST_ACTIVE_OWNER_KEY, value: owner });
       await transactionDone;
 
       if (isCurrentOwnerStateOperation(owner, operationId)) {
@@ -688,55 +660,6 @@ export async function activateDocumentCacheForOwner(owner: string): Promise<void
     if (isCurrentOwnerStateOperation(owner, operationId)) {
       activeOwnerGenerations.delete(owner);
     }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Meta helpers
-// ---------------------------------------------------------------------------
-
-export async function setMeta(key: string, value: string): Promise<void> {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(META_STORE, "readwrite");
-    tx.objectStore(META_STORE).put({ key, value });
-    await waitForTransaction(tx);
-  } catch {
-    // Metadata is best-effort.
-  }
-}
-
-export async function getMeta(key: string): Promise<string | null> {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(META_STORE, "readonly");
-    const transactionDone = waitForTransaction(tx);
-    const meta = await requestToPromise<{ value?: string } | undefined>(
-      tx.objectStore(META_STORE).get(key),
-    );
-    await transactionDone;
-    return meta?.value ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export function setLastActiveOwner(owner: string): Promise<void> {
-  return setMeta(LAST_ACTIVE_OWNER_KEY, owner);
-}
-
-export function getLastActiveOwner(): Promise<string | null> {
-  return getMeta(LAST_ACTIVE_OWNER_KEY);
-}
-
-export async function clearLastActiveOwner(): Promise<void> {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(META_STORE, "readwrite");
-    tx.objectStore(META_STORE).delete(LAST_ACTIVE_OWNER_KEY);
-    await waitForTransaction(tx);
-  } catch {
-    // Metadata is best-effort.
   }
 }
 
@@ -886,10 +809,6 @@ export async function syncDocumentList(
       }
     }
 
-    metaStore.put({
-      key: getOwnerLastSyncKey(owner),
-      value: new Date().toISOString(),
-    });
     await transactionDone;
 
     return Array.from(reconciledById.values())
