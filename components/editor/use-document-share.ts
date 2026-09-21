@@ -10,7 +10,7 @@ type UseDocumentShareParams = {
   documentId: string;
   getDocumentText: () => string;
   getDocumentTitle: () => string;
-  onShareUpdated: (enabled: boolean, token: string | null, updatedAt: string) => void;
+  onShareUpdated: (enabled: boolean, token: string | null, updatedAt: string, body?: { title: string; content: string }) => void;
   shareEnabled: boolean;
   shareToken: string | null;
 };
@@ -71,7 +71,7 @@ export function useDocumentShare({
           share_token: token,
         })
         .eq("id", documentId)
-        .select("updated_at")
+        .select("title, content, updated_at")
         .single();
 
       if (updateError) {
@@ -82,7 +82,7 @@ export function useDocumentShare({
         throw new Error("Unable to update sharing settings.");
       }
 
-      onShareUpdated(enabled, token, data.updated_at);
+      onShareUpdated(enabled, token, data.updated_at, data);
     },
     [documentId, onShareUpdated],
   );

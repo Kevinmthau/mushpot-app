@@ -60,7 +60,8 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - Document row select strings, editor/list shapes, and cache/editor mapping helpers live in `lib/documents.ts`.
 - `components/documents/use-document-list.ts` owns the cache-first document list load and background Supabase refresh.
 - `components/editor/use-editor-document.ts` owns cache-first editor document loading, session validation, and Supabase reconciliation.
-- `components/editor/use-document-draft.ts` owns local draft state, debounced IndexedDB writes, autosave retries, and share-state timestamp merging.
+- `components/editor/document-draft-controller.ts` owns draft hydration, cache writes, autosave scheduling, lifecycle flushes, and conflict state. `use-document-draft.ts` binds it to React and keeps CodeMirror text lazy until stats or persistence needs it.
+- `lib/document-write-coordinator.ts` serializes editor and background saves for each document and authentication/cache lifetime. It advances queued versions only after a confirmed local save; conflicts retain the local text and offer copy/download recovery.
 - `lib/doc-cache.ts` keeps metadata-only list entries separate from complete
   editor snapshots. Only complete owner-scoped records may open offline;
   `lib/document-sync.ts` retries dirty snapshots on startup, focus, online, and

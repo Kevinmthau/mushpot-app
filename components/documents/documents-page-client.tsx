@@ -138,7 +138,7 @@ export function shouldShowDocumentListLoading(
 
 export function DocumentsPageClient() {
   const router = useRouter();
-  const { clearUserId, setUserId, userId } = usePrivateSession();
+  const { clearUserId, setUserId, userId, writeSession } = usePrivateSession();
   const { documents, error, isLoading, refreshDocuments } =
     useDocumentList(userId);
   const [signOutError, setSignOutError] = useState<string | null>(null);
@@ -219,7 +219,7 @@ export function DocumentsPageClient() {
     setSignOutPhase("flushing");
 
     try {
-      const result = await flushDirtyDocuments(userId);
+      const result = await flushDirtyDocuments(userId, writeSession);
       if (result.status === "unavailable" || result.remaining > 0) {
         setUnsavedDraftCount(
           result.status === "complete" ? result.remaining : null,
@@ -235,7 +235,7 @@ export function DocumentsPageClient() {
       );
       setSignOutPhase("idle");
     }
-  }, [finishSignOut, signOutPhase, userId]);
+  }, [finishSignOut, signOutPhase, userId, writeSession]);
 
   const cancelDiscard = useCallback(() => {
     setUnsavedDraftCount(0);

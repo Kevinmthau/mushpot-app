@@ -24,6 +24,7 @@ describe("editor share reconciliation handoff", () => {
       true,
       "share-token",
       "2026-08-17T14:00:00.000Z",
+      undefined,
     );
   });
 });
