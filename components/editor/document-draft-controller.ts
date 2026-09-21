@@ -176,7 +176,7 @@ export class DocumentDraftController {
       return;
     this.saved = {
       content: snapshot.content,
-      title: snapshot.title,
+      title: result.persistedTitle,
       updatedAt: result.updatedAt,
     };
     this.cachedDirty = false;

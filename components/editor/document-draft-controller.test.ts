@@ -68,6 +68,29 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("draft controller", () => {
+  it.each([
+    { title: "", persistedTitle: "Untitled" },
+    { title: "  \t ", persistedTitle: "Untitled" },
+    { title: "  Weekend notes  ", persistedTitle: "Weekend notes" },
+  ])(
+    "cleans a background save of cached title '$title' against its confirmed title",
+    async ({ title, persistedTitle }) => {
+      const initial = { ...document, title, _dirty: true };
+      const { controller, cache, persist, emit, lifecycle } = setup(initial);
+
+      emit({ snapshot: initial, result: { ...saved, persistedTitle } });
+
+      expect(controller.getView().saveStatus).toBe("saved");
+      expect(cache).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: persistedTitle, _dirty: false }),
+      );
+      await vi.advanceTimersByTimeAsync(800);
+      await controller.save();
+      expect(persist).not.toHaveBeenCalled();
+      lifecycle.stop();
+    },
+  );
+
   it("retains legacy version uncertainty through edits and sharing until a confirmed save", async () => {
     const { controller, persist, cache } = setup({
       ...document,
