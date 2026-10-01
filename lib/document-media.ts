@@ -14,6 +14,7 @@ export {
   isDocumentMediaBucket,
   isUuid,
   MEDIA_URL_CANDIDATE_PATTERN,
+  parseDocumentMediaCandidate,
   parseDocumentMediaRoute,
   type DocumentMediaBucket,
   type DocumentMediaRoute,

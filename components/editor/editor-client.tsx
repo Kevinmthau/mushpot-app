@@ -15,6 +15,7 @@ import { DraftRecoveryNotice } from "@/components/editor/draft-recovery-notice";
 import { DraftSyncNotice } from "@/components/editor/draft-sync-notice";
 import { useDocumentClone } from "@/components/editor/use-document-clone";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
+import { useDocumentHtmlDownload } from "@/components/editor/use-document-html-download";
 import { EditorPreviewFallback } from "@/components/editor/editor-loading";
 import {
   getLoadedEditorWorkspace,
@@ -119,6 +120,11 @@ function EditorClientInner({
     owner: initialDocument.owner,
     getLatestTitle: getLatestTitle,
     getLatestContent: getLatestContent,
+  });
+  const { isDownloading, handleDownload } = useDocumentHtmlDownload({
+    owner: initialDocument.owner,
+    getLatestTitle,
+    getLatestContent,
   });
   const handleDeleteStart = useCallback(() => {
     markDeleting();
@@ -245,6 +251,10 @@ function EditorClientInner({
     void handleDeleteDocument();
   }, [handleDeleteDocument]);
 
+  const handleDownloadClick = useCallback(() => {
+    void handleDownload();
+  }, [handleDownload]);
+
   const navigateToDocuments = useCallback(async () => {
     if (isDeleting || isNavigatingHomeRef.current) {
       return;
@@ -331,6 +341,15 @@ function EditorClientInner({
             className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isCloning ? "Cloning..." : "Clone"}
+          </button>
+          <span>•</span>
+          <button
+            type="button"
+            onClick={handleDownloadClick}
+            disabled={isDownloading || isDeleting || uploadingMediaCount > 0}
+            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isDownloading ? "Downloading…" : "Download HTML"}
           </button>
           <span>•</span>
           <button
