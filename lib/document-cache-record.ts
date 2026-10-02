@@ -40,6 +40,19 @@ export type CachedDocumentRecord =
   | CachedCompleteDocument
   | CachedMetadataDocument;
 
+/** Lightweight list state, persisted separately from complete document bodies. */
+export type CachedCompleteDocumentListRecord = CachedDocumentBase & {
+  kind: "complete";
+  _dirty?: boolean;
+  _dirtyKey?: 1;
+  _listMetadata?: CachedCompleteDocument["_listMetadata"];
+};
+
+export type CachedDocumentListRecord = (
+  | CachedCompleteDocumentListRecord
+  | CachedMetadataDocument
+) & { _listUpdatedAt: string };
+
 export type CachedDocumentListItem = {
   id: string;
   title: string;
@@ -81,6 +94,28 @@ export function toStoredCompleteDocument(
   return storedDocument;
 }
 
+export function toDocumentListRecord(
+  document: CachedDocumentRecord | CachedDocumentListRecord,
+): CachedDocumentListRecord {
+  const _listUpdatedAt = toDocumentListItem(document).updated_at;
+  if (document.kind === "metadata") {
+    return { ...toMetadataDocument(document), _listUpdatedAt };
+  }
+
+  return {
+    id: document.id,
+    owner: document.owner,
+    title: document.title,
+    updated_at: document.updated_at,
+    kind: "complete",
+    _listUpdatedAt,
+    ...(document._dirty ? { _dirty: true, _dirtyKey: 1 } : {}),
+    ...(document._listMetadata
+      ? { _listMetadata: { ...document._listMetadata } }
+      : {}),
+  };
+}
+
 function documentsHaveDifferentEditorState(
   left: CachedCompleteDocument,
   right: CachedCompleteDocument,
@@ -111,9 +146,9 @@ export function isCachedDocumentNewerThanServerListItem(
 
 /** Project display metadata without changing the editor's optimistic revision. */
 export function toDocumentListItem(
-  document: CachedDocumentRecord,
+  document: CachedCompleteDocumentListRecord | CachedMetadataDocument,
 ): CachedDocumentListItem {
-  const complete = isCompleteDocument(document);
+  const complete = document.kind === "complete";
   const metadata = complete ? document._listMetadata : undefined;
   const useMetadata = metadata && !isCachedDocumentNewerThanServerListItem(
     document,
@@ -128,10 +163,12 @@ export function toDocumentListItem(
   };
 }
 
-export function mergeDocumentListMetadata(
-  document: CachedCompleteDocument,
+export function mergeDocumentListMetadata<
+  T extends CachedCompleteDocumentListRecord,
+>(
+  document: T,
   metadata: CachedCompleteDocument["_listMetadata"],
-): CachedCompleteDocument {
+): T {
   if (!metadata || isCachedDocumentNewerThanServerListItem(
     document,
     { id: document.id, ...metadata },
