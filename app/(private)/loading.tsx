@@ -1,5 +1,5 @@
-import { DocumentsPageLoading } from "@/components/documents/document-list-loading";
+import { RetainedDocumentsPageLoading } from "@/components/documents/retained-documents-page-loading";
 
 export default function HomeLoading() {
-  return <DocumentsPageLoading />;
+  return <RetainedDocumentsPageLoading />;
 }
