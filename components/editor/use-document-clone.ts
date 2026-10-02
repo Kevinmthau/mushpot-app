@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { usePrivateSession } from "@/components/pwa/private-session-provider";
 
 import {
   getDocumentCacheWriteToken,
@@ -284,6 +285,7 @@ export function useDocumentClone({
   getLatestContent,
 }: UseDocumentCloneParams) {
   const router = useRouter();
+  const { documentListSession } = usePrivateSession();
   const [isCloning, setIsCloning] = useState(false);
   const isCloningRef = useRef(false);
   const getLatestTitleRef = useRef(getLatestTitle);
@@ -316,6 +318,7 @@ export function useDocumentClone({
         console.warn("Unable to cache the completed clone", cacheError);
       }
 
+      documentListSession.confirmUpsert(owner, completedDocument);
       router.push(`/doc/${completedDocument.id}`);
     } catch (error) {
       window.alert(
@@ -325,7 +328,7 @@ export function useDocumentClone({
       isCloningRef.current = false;
       setIsCloning(false);
     }
-  }, [owner, router]);
+  }, [documentListSession, owner, router]);
 
   return { isCloning, handleClone };
 }

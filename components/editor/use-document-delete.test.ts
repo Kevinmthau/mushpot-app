@@ -93,6 +93,30 @@ describe("deleteDocumentAndCache", () => {
     expect(deleteCached).not.toHaveBeenCalled();
   });
 
+  it("confirms a server deletion before a best-effort cache failure", async () => {
+    const { supabase } = createSupabaseMock();
+    const confirmDelete = vi.fn();
+    await deleteDocumentAndCache(OWNER_ID, DOCUMENT_ID, {
+      getSupabaseClient: async () => supabase,
+      onServerDelete: confirmDelete,
+      deleteCachedDocument: async () => {
+        expect(confirmDelete).toHaveBeenCalledOnce();
+        return false;
+      },
+    });
+    expect(confirmDelete).toHaveBeenCalledOnce();
+  });
+
+  it("does not confirm a deletion when the server rejects it", async () => {
+    const { supabase } = createSupabaseMock({ data: null });
+    const confirmDelete = vi.fn();
+    await expect(deleteDocumentAndCache(OWNER_ID, DOCUMENT_ID, {
+      getSupabaseClient: async () => supabase,
+      onServerDelete: confirmDelete,
+    })).rejects.toThrow("The document was not deleted");
+    expect(confirmDelete).not.toHaveBeenCalled();
+  });
+
   it("awaits the cache tombstone after the server delete", async () => {
     const { supabase } = createSupabaseMock();
     let finishCacheDelete: (() => void) | undefined;
