@@ -7,6 +7,7 @@ import type {
   ComponentType,
   KeyboardEvent,
   MouseEvent,
+  RefObject,
 } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -38,6 +39,7 @@ const ShareModal = dynamic(
 
 type EditorWorkspaceProps = {
   documentId: string;
+  dropTargetRef?: RefObject<HTMLElement | null>;
   initialValue: string;
   onChange: (doc: Text) => void;
   onReady?: (api: EditorWorkspaceApi | null) => void;
@@ -93,6 +95,7 @@ function EditorClientInner({
   const router = useRouter();
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [uploadingMediaCount, setUploadingMediaCount] = useState(0);
+  const dropTargetRef = useRef<HTMLDivElement | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const editorWorkspaceApiRef = useRef<EditorWorkspaceApi | null>(null);
   const pendingEditorFocusRef = useRef(false);
@@ -280,110 +283,113 @@ function EditorClientInner({
   );
 
   return (
-    <div className="min-h-dvh pb-14 sm:pb-20">
-      <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
-        {needsDraftRecovery && saveStatus !== "conflict" ? (
-          <DraftRecoveryNotice
+    <>
+      <div ref={dropTargetRef} className="min-h-dvh pb-14 sm:pb-20">
+        <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
+          {needsDraftRecovery && saveStatus !== "conflict" ? (
+            <DraftRecoveryNotice
+              isCloning={isCloning}
+              isDeleting={isDeleting}
+              onSaveCopy={handleCloneClick}
+            />
+          ) : null}
+          <input
+            ref={titleInputRef}
+            value={title}
+            onChange={handleTitleInputChange}
+            onKeyDown={handleTitleKeyDown}
+            onBlur={handleTitleBlur}
+            placeholder="Untitled"
+            enterKeyHint="next"
+            className="editor-title-input mb-4 w-full border-none bg-transparent p-0 text-[var(--ink)] outline-none"
+            aria-label="Document title"
+            autoCapitalize="sentences"
+          />
+
+          <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
+            <button
+              type="button"
+              onClick={handleDocumentsClick}
+              disabled={isDeleting}
+              aria-label="Back to documents"
+              title="Back to documents"
+              className="-mx-1 -my-1 px-1 py-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {readingTime} min
+            </button>
+            <span>•</span>
+            <span>{formattedUpdated}</span>
+            {uploadingMediaCount > 0 ? (
+              <>
+                <span>•</span>
+                <span>
+                  Uploading {uploadingMediaCount} file
+                  {uploadingMediaCount === 1 ? "" : "s"}...
+                </span>
+              </>
+            ) : null}
+            <span>•</span>
+            <button
+              type="button"
+              onClick={handleOpenShareModal}
+              disabled={isDeleting}
+              className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Share
+            </button>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={handleCloneClick}
+              disabled={isCloning || isDeleting}
+              className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isCloning ? "Cloning..." : "Clone"}
+            </button>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={handleDownloadClick}
+              disabled={isDownloading || isDeleting || uploadingMediaCount > 0}
+              className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isDownloading ? "Downloading…" : "Download HTML"}
+            </button>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={handleDeleteClick}
+              disabled={isDeleting}
+              className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isDeleting ? "Deleting..." : "DELETE"}
+            </button>
+          </div>
+
+          <DraftSyncNotice
+            status={saveStatus}
             isCloning={isCloning}
             isDeleting={isDeleting}
             onSaveCopy={handleCloneClick}
+            getLatestTitle={getLatestTitle}
+            getLatestContent={getLatestContent}
           />
-        ) : null}
-        <input
-          ref={titleInputRef}
-          value={title}
-          onChange={handleTitleInputChange}
-          onKeyDown={handleTitleKeyDown}
-          onBlur={handleTitleBlur}
-          placeholder="Untitled"
-          enterKeyHint="next"
-          className="editor-title-input mb-4 w-full border-none bg-transparent p-0 text-[var(--ink)] outline-none"
-          aria-label="Document title"
-          autoCapitalize="sentences"
-        />
 
-        <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)]">
-          <button
-            type="button"
-            onClick={handleDocumentsClick}
-            disabled={isDeleting}
-            aria-label="Back to documents"
-            title="Back to documents"
-            className="-mx-1 -my-1 px-1 py-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {readingTime} min
-          </button>
-          <span>•</span>
-          <span>{formattedUpdated}</span>
-          {uploadingMediaCount > 0 ? (
-            <>
-              <span>•</span>
-              <span>
-                Uploading {uploadingMediaCount} file
-                {uploadingMediaCount === 1 ? "" : "s"}...
-              </span>
-            </>
-          ) : null}
-          <span>•</span>
-          <button
-            type="button"
-            onClick={handleOpenShareModal}
-            disabled={isDeleting}
-            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Share
-          </button>
-          <span>•</span>
-          <button
-            type="button"
-            onClick={handleCloneClick}
-            disabled={isCloning || isDeleting}
-            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isCloning ? "Cloning..." : "Clone"}
-          </button>
-          <span>•</span>
-          <button
-            type="button"
-            onClick={handleDownloadClick}
-            disabled={isDownloading || isDeleting || uploadingMediaCount > 0}
-            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isDownloading ? "Downloading…" : "Download HTML"}
-          </button>
-          <span>•</span>
-          <button
-            type="button"
-            onClick={handleDeleteClick}
-            disabled={isDeleting}
-            className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isDeleting ? "Deleting..." : "DELETE"}
-          </button>
-        </div>
-
-        <DraftSyncNotice
-          status={saveStatus}
-          isCloning={isCloning}
-          isDeleting={isDeleting}
-          onSaveCopy={handleCloneClick}
-          getLatestTitle={getLatestTitle}
-          getLatestContent={getLatestContent}
-        />
-
-        <div className="pb-24">
-          <EditorWorkspaceLoader
-            key={initialDocument.id}
-            documentId={initialDocument.id}
-            initialValue={initialDocument.content}
-            onChange={handleEditorDocumentChange}
-            onReady={handleEditorWorkspaceReady}
-            onUploadingMediaCountChange={setUploadingMediaCount}
-            owner={initialDocument.owner}
-            placeholder="|..."
-          />
-        </div>
-      </main>
+          <div className="pb-24">
+            <EditorWorkspaceLoader
+              key={initialDocument.id}
+              documentId={initialDocument.id}
+              dropTargetRef={dropTargetRef}
+              initialValue={initialDocument.content}
+              onChange={handleEditorDocumentChange}
+              onReady={handleEditorWorkspaceReady}
+              onUploadingMediaCountChange={setUploadingMediaCount}
+              owner={initialDocument.owner}
+              placeholder="|..."
+            />
+          </div>
+        </main>
+      </div>
 
       {isShareModalOpen ? (
         <ShareModal
@@ -397,7 +403,7 @@ function EditorClientInner({
           onShareUpdated={handleShareUpdated}
         />
       ) : null}
-    </div>
+    </>
   );
 }
 

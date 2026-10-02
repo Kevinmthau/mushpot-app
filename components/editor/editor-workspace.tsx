@@ -8,7 +8,7 @@ import {
   type Text,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type RefObject } from "react";
 
 import {
   editorTheme,
@@ -78,6 +78,7 @@ const autoCapitalizeSentences = EditorState.transactionFilter.of((tr) => {
 
 type EditorWorkspaceProps = {
   documentId: string;
+  dropTargetRef?: RefObject<HTMLElement | null>;
   initialValue: string;
   onChange: (doc: Text) => void;
   onReady?: (api: CodeMirrorEditorApi | null) => void;
@@ -88,6 +89,7 @@ type EditorWorkspaceProps = {
 
 export function EditorWorkspace({
   documentId,
+  dropTargetRef,
   initialValue,
   onChange,
   onReady,
@@ -95,8 +97,9 @@ export function EditorWorkspace({
   owner,
   placeholder,
 }: EditorWorkspaceProps) {
-  const { mediaUploadExtensions, uploadingMediaCount } = useMediaUploadInsertion({
+  const { isDraggingMedia, mediaUploadExtensions, uploadingMediaCount } = useMediaUploadInsertion({
     documentId,
+    dropTargetRef,
     owner,
   });
 
@@ -126,13 +129,23 @@ export function EditorWorkspace({
   );
 
   return (
-    <CodeMirrorEditor
-      documentId={documentId}
-      initialValue={initialValue}
-      onChange={onChange}
-      onReady={onReady}
-      extensions={editorExtensions}
-      placeholder={placeholder}
-    />
+    <>
+      <CodeMirrorEditor
+        documentId={documentId}
+        initialValue={initialValue}
+        onChange={onChange}
+        onReady={onReady}
+        extensions={editorExtensions}
+        placeholder={placeholder}
+      />
+      {isDraggingMedia ? (
+        <div
+          role="status"
+          className="pointer-events-none fixed inset-x-4 bottom-8 z-40 mx-auto w-fit rounded-xl border border-dashed border-[var(--ink)] bg-[var(--paper)] px-6 py-4 text-sm text-[var(--ink)] shadow-lg"
+        >
+          Drop images or videos to add them
+        </div>
+      ) : null}
+    </>
   );
 }
