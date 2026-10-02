@@ -168,9 +168,24 @@ export function createDocumentListSession(writeSession: DocumentWriteSession) {
         : -1;
       return replace(incoming, afterRevision);
     },
-    publishRemoteFallback(incoming: CachedDocumentListItem[]) {
+    publishRemoteFallback(incoming: CachedDocumentListItem[], requestStartRevision?: number) {
       if (!isCurrent(writeSession.owner)) return null;
-      // Without durable reconciliation, keep committed local metadata/tombstones.
+      const queryRevision = requestStartRevision ?? (pendingLoads.size > 0
+        ? Math.min(...Array.from(pendingLoads, (load) => load.revision))
+        : null);
+      if (queryRevision !== null) {
+        const remoteIds = new Set(incoming.map((document) => document.id));
+        for (const [id, change] of localChanges) {
+          if (change.document && !change.dirty && change.revision <= queryRevision &&
+              !remoteIds.has(id)) {
+            // Remember the acknowledged deletion so stale disk cannot revive it.
+            localChanges.set(id, { document: null, dirty: false, revision: ++revision });
+            deletedIds.add(id);
+          }
+        }
+      }
+      // A later query can acknowledge clean confirmations, including deletion.
+      // Older queries, dirty titles and local tombstones remain protected.
       return replace(incoming, -1);
     },
   };

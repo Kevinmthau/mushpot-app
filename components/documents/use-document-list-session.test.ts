@@ -170,6 +170,25 @@ describe("retained list mounted lifecycle", () => {
     expect(container.textContent).toBe("New clone|Last list");
   });
 
+  it("accepts an external deletion from a later query when IndexedDB reconciliation is unavailable", async () => {
+    await act(async () => renderList(true));
+    await act(async () => renderList(false));
+    await act(async () => session.documentListSession.confirmUpsert(OWNER, CLONE));
+    const remote = deferred<{ data: DocumentListItem[]; error: null }>();
+    mocks.remote.mockReturnValue(remote.promise);
+    mocks.sync.mockResolvedValue(null);
+    await act(async () => renderList(true));
+    expect(list.documents).toEqual([CLONE, DOCUMENT]);
+    // This query began after the successful create and observes its deletion.
+    await act(async () => remote.resolve({ data: [DOCUMENT], error: null }));
+    expect(list.documents).toEqual([DOCUMENT]);
+    await act(async () => renderList(false));
+    mocks.read.mockResolvedValue([DOCUMENT, CLONE]);
+    mocks.remote.mockImplementation(() => new Promise(() => {}));
+    await act(async () => renderList(true));
+    expect(list.documents).toEqual([DOCUMENT]);
+  });
+
   it("ignores stale cache and remote responses after a committed deletion during revalidation", async () => {
     await act(async () => renderList(true));
     await act(async () => renderList(false));

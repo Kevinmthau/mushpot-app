@@ -356,8 +356,10 @@ export function useDocumentList(
   const syncRemoteDocuments = useCallback(async (
     documents: DocumentListItem[],
     token: DocumentCacheWriteToken | null,
+    requestStartRevision: number | undefined,
+    canPublish: () => boolean,
   ) => {
-    if (!userId || (documentListSession && !documentListSession.isCurrent(userId))) return null;
+    if (!canPublish() || !userId || (documentListSession && !documentListSession.isCurrent(userId))) return null;
     const readRevision = documentListSession?.captureRevision() ?? 0;
     let reconciled: DocumentListItem[] | null;
     try {
@@ -365,10 +367,10 @@ export function useDocumentList(
     } catch {
       reconciled = null;
     }
-    if (documentListSession && !documentListSession.isCurrent(userId)) return null;
+    if (!canPublish() || (documentListSession && !documentListSession.isCurrent(userId))) return null;
     return reconciled
       ? documentListSession?.publishCacheRead(reconciled, token, readRevision, true) ?? reconciled
-      : documentListSession?.publishRemoteFallback(documents) ?? documents;
+      : documentListSession?.publishRemoteFallback(documents, requestStartRevision) ?? documents;
   }, [documentListSession, userId]);
 
   const refreshDocuments = useCallback(async () => {
@@ -384,12 +386,14 @@ export function useDocumentList(
 
     setState((current) => beginDocumentListRefresh(current, userId));
 
+    const requestStartRevision = documentListSession?.captureRevision();
     const finishLoad = documentListSession?.beginLoad();
+    const isCurrent = () => requestId === requestIdRef.current &&
+      (!documentListSession || documentListSession.isCurrent(userId));
     await loadDocumentListRefresh({
       activateCache: () => activateDocumentCacheForOwner(userId),
       getCacheWriteToken: () => getDocumentCacheWriteToken(userId),
-      isCurrent: () => requestId === requestIdRef.current &&
-        (!documentListSession || documentListSession.isCurrent(userId)),
+      isCurrent,
       loadRemote: () => loadRemoteDocuments(userId),
       onRemoteError: (error) => {
         setState((current) =>
@@ -409,7 +413,8 @@ export function useDocumentList(
           }),
         );
       },
-      syncRemote: syncRemoteDocuments,
+      syncRemote: (documents, token) =>
+        syncRemoteDocuments(documents, token, requestStartRevision, isCurrent),
     }).finally(finishLoad);
   }, [documentListSession, loadRemoteDocuments, syncRemoteDocuments, userId]);
 
@@ -438,10 +443,12 @@ export function useDocumentList(
       }
     });
 
+    const requestStartRevision = documentListSession?.captureRevision();
     const finishLoad = documentListSession?.beginLoad();
+    const isCurrent = () => isActive && requestId === requestIdRef.current &&
+      (!documentListSession || documentListSession.isCurrent(userId));
     void loadInitialDocumentList({
-      isCurrent: () => isActive && requestId === requestIdRef.current &&
-        (!documentListSession || documentListSession.isCurrent(userId)),
+      isCurrent,
       loadCache: async () => {
         await activateDocumentCacheForOwner(userId);
         const token = getDocumentCacheWriteToken(userId);
@@ -484,7 +491,7 @@ export function useDocumentList(
       },
       syncRemote: (documents, token) => {
         isSyncing = true;
-        return syncRemoteDocuments(documents, token);
+        return syncRemoteDocuments(documents, token, requestStartRevision, isCurrent);
       },
     }).finally(finishLoad);
 

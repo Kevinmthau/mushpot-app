@@ -168,6 +168,32 @@ describe("session document list metadata", () => {
     list.retire();
   });
 
+  it("retains a clean create omitted by a fallback query that began before confirmation", async () => {
+    const { list, token } = await setup();
+    list.publishCacheRead([row("old")], token, list.captureRevision());
+    const finishLoad = list.beginLoad();
+    const created = row("created", "Created", "2026-10-02T13:00:00Z");
+    list.confirmUpsert(OWNER, created);
+    list.publishRemoteFallback([row("old")]);
+    expect(list.getSnapshot()).toEqual([created, row("old")]);
+    finishLoad();
+    list.retire();
+  });
+
+  it("removes a clean confirmation omitted by a fallback query begun after confirmation", async () => {
+    const { list, token } = await setup();
+    list.publishCacheRead([row("old")], token, list.captureRevision());
+    const created = row("created", "Created", "2026-10-02T13:00:00Z");
+    list.confirmUpsert(OWNER, created);
+    const finishLoad = list.beginLoad();
+    list.publishRemoteFallback([row("old")]);
+    expect(list.getSnapshot()).toEqual([row("old")]);
+    list.publishCacheRead([row("old"), created], token, list.captureRevision());
+    expect(list.getSnapshot()).toEqual([row("old")]);
+    finishLoad();
+    list.retire();
+  });
+
   it("notifies only after authorized durable writes commit, including create/clone/delete/list sync", async () => {
     const { cache, events, token, list } = await setup();
     const observed: string[] = [];
