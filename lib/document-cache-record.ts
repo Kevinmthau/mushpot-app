@@ -164,6 +164,13 @@ export function shouldPreserveExistingDocument(
     return false;
   }
 
+  // A delayed remote row or save confirmation must not roll back an already
+  // confirmed server revision. Dirty edits still carry their original CAS
+  // baseline and must remain eligible for storage and conflict recovery.
+  if (!incoming._dirty && isCachedDocumentNewerThanServerListItem(existing, incoming)) {
+    return true;
+  }
+
   // Equal text can still represent a newer revert. Keep its revision and dirty
   // state until it is acknowledged, so delayed intermediate edits stay stale.
   if (

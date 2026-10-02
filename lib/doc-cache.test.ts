@@ -192,6 +192,25 @@ describe("owner-scoped document cache", () => {
     });
   });
 
+  it("rejects older clean revisions while allowing a dirty edit with its original CAS baseline", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const latest = buildDocument({
+      content: "Confirmed body", updated_at: "2026-07-17T13:00:00.000Z",
+      _dirty: false, _localUpdatedAt: 100,
+    });
+    await cache.putCachedDocument(latest);
+    const stale = buildDocument({ content: latest.content, _dirty: false });
+    expect(await cache.putCachedDocument(stale)).toBe(false);
+    expect(await cache.reconcileCachedDocumentWithServer(stale)).toMatchObject(latest);
+    const dirty = { ...stale, content: "Recovered local edit", _dirty: true, _localUpdatedAt: 101 };
+    expect(await cache.putCachedDocument(dirty)).toBe(true);
+    expect(await cache.reconcileCachedDocumentWithServer(stale)).toMatchObject(dirty);
+    expect(await cache.getCachedDocumentForOwner(stale.id, OWNER)).toMatchObject({
+      content: dirty.content, updated_at: stale.updated_at, _dirty: true,
+    });
+  });
+
   it("keeps list-only rows as metadata that the editor cannot open offline", async () => {
     const cache = await loadDocumentCache();
     await cache.activateDocumentCacheForOwner(OWNER);

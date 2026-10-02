@@ -186,6 +186,72 @@ describe("intent document requests", () => {
     }
   });
 
+  it.each(["body", "sharing", "revision"])(
+    "preserves a confirmed %s update committed after warm validation and before reconciliation",
+    async (change) => {
+      vi.resetModules();
+      vi.stubGlobal("indexedDB", new IDBFactory());
+      vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+      const validated = deferred<void>();
+      const saveComplete = deferred<void>();
+      try {
+        const cache = await import("@/lib/doc-cache");
+        const { loadEditorDocument } = await import("@/components/editor/use-editor-document");
+        await cache.activateDocumentCacheForOwner("owner");
+        const token = cache.getDocumentCacheWriteToken("owner")!;
+        await cache.putCachedDocument({ ...DOCUMENT, _dirty: false, _localUpdatedAt: 90 }, token);
+        const initialCache = await cache.getCachedDocumentForOwner("doc", "owner", token);
+        const latest = {
+          ...DOCUMENT,
+          content: change === "body" ? "Confirmed after validation" : DOCUMENT.content,
+          updated_at: "2026-10-01T12:00:01Z",
+          share_enabled: change === "sharing",
+          share_token: change === "sharing" ? "rotated-share-token" : null,
+          _dirty: false,
+          _localUpdatedAt: 101,
+        };
+        const query = vi.fn(async (): Promise<EditorRemoteResult> => SUCCESS);
+        const session = createDocumentWriteSession("owner");
+        const requests = createEditorDocumentRequests({
+          canReuse: async (...args) => {
+            const reusable = await cache.canReuseDocumentResponse(...args);
+            expect(reusable).toBe(true);
+            validated.resolve();
+            return reusable;
+          },
+          getToken: cache.getDocumentCacheWriteToken,
+          now: () => 100,
+          query,
+        });
+        requests.warm("doc", session);
+        const onResolved = vi.fn();
+        const opening = loadEditorDocument({
+          isCurrent: () => session.active,
+          loadCache: async () => ({ document: initialCache, token }),
+          loadRemote: () => requests.load("doc", session),
+          onCache: vi.fn(),
+          onResolved,
+          reconcileRemote: async (row) => {
+            await saveComplete.promise;
+            return cache.reconcileCachedDocumentWithServer(row, token, () => session.active);
+          },
+        });
+        await validated.promise;
+        expect(await cache.putCachedDocument(latest, token)).toBe(true);
+        saveComplete.resolve();
+        await opening;
+        expect(query).toHaveBeenCalledOnce();
+        expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({
+          document: expect.objectContaining(latest),
+        }));
+        expect(await cache.getCachedDocumentForOwner("doc", "owner", token)).toMatchObject(latest);
+      } finally {
+        saveComplete.resolve();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
   it("rechecks session retirement and expiry after asynchronous cache validation", async () => {
     const { requests, query, canReuse, session } = setup();
     const validation = deferred<boolean>();
