@@ -159,6 +159,17 @@ describe("retained list mounted lifecycle", () => {
     expect(renderedLists[0]).toBe("New clone");
   });
 
+  it("retains server-confirmed creations when the returning route reads stale nonempty IndexedDB", async () => {
+    await act(async () => renderList(true));
+    await act(async () => renderList(false));
+    await act(async () => session.documentListSession.confirmUpsert(OWNER, CLONE));
+    // The successful server create could not update the durable cache.
+    mocks.read.mockResolvedValue([DOCUMENT]);
+    await act(async () => renderList(true));
+    expect(list.documents).toEqual([CLONE, DOCUMENT]);
+    expect(container.textContent).toBe("New clone|Last list");
+  });
+
   it("ignores stale cache and remote responses after a committed deletion during revalidation", async () => {
     await act(async () => renderList(true));
     await act(async () => renderList(false));

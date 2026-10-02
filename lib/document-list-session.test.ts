@@ -138,6 +138,36 @@ describe("session document list metadata", () => {
     expect(list.getSnapshot()).toBeNull();
   });
 
+  it("preserves unacknowledged server confirmations over a later stale nonempty cache read", async () => {
+    const { list, token } = await setup();
+    list.publishCacheRead([row("old")], token, list.captureRevision());
+    const created = row("created", "New document", "2026-10-02T13:00:00Z");
+    list.confirmUpsert(OWNER, created);
+    list.publishCacheRead([row("old")], token, list.captureRevision());
+    expect(list.getSnapshot()).toEqual([created, row("old")]);
+    const edited = row("old", "Confirmed title", "2026-10-02T14:00:00Z");
+    list.confirmUpsert(OWNER, edited);
+    list.publishCacheRead([row("old")], token, list.captureRevision());
+    expect(list.getSnapshot()).toEqual([edited, created]);
+    list.retire();
+  });
+
+  it("accepts newer clean remote metadata and advances the confirmation journal", async () => {
+    const { list, token } = await setup();
+    list.publishCacheRead([row("doc")], token, list.captureRevision());
+    const confirmed = row("doc", "Confirmed title", "2026-10-02T13:00:00Z");
+    list.confirmUpsert(OWNER, confirmed);
+    list.publishRemoteFallback([row("doc", "Older query", "2026-10-02T12:30:00Z")]);
+    expect(list.getSnapshot()).toEqual([confirmed]);
+    const newer = row("doc", "Newer remote title", "2026-10-02T14:00:00Z");
+    list.publishRemoteFallback([newer]);
+    expect(list.getSnapshot()).toEqual([newer]);
+    list.publishRemoteFallback([confirmed]);
+    list.publishCacheRead([confirmed], token, list.captureRevision());
+    expect(list.getSnapshot()).toEqual([newer]);
+    list.retire();
+  });
+
   it("notifies only after authorized durable writes commit, including create/clone/delete/list sync", async () => {
     const { cache, events, token, list } = await setup();
     const observed: string[] = [];

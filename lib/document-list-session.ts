@@ -60,10 +60,13 @@ export function createDocumentListSession(writeSession: DocumentWriteSession) {
     for (const [id, change] of localChanges) {
       let local = change.document;
       const incomingMetadata = byId.get(id);
-      if (change.dirty && local && incomingMetadata &&
+      if (local && incomingMetadata &&
           isCachedDocumentNewerThanServerListItem(incomingMetadata, local)) {
-        // Preserve unsaved titles without rolling back a newer list revision.
-        local = { ...local, updated_at: incomingMetadata.updated_at };
+        // Dirty titles remain local. Clean confirmations yield to a demonstrably
+        // newer remote revision, which also becomes the journal's new baseline.
+        local = change.dirty
+          ? { ...local, updated_at: incomingMetadata.updated_at }
+          : incomingMetadata;
         localChanges.set(id, { ...change, document: local });
       }
       if (change.revision <= afterRevision) continue;
@@ -158,7 +161,12 @@ export function createDocumentListSession(writeSession: DocumentWriteSession) {
       // remote result can establish an empty list or clear a retained snapshot.
       if (!authoritative && incoming.length === 0) return documents;
       if (documents !== null && readRevision < replacementRevision) return documents;
-      return replace(incoming, readRevision);
+      // Disk can lag a server-confirmed create/clone whose cache write failed.
+      // Only authoritative reconciliation may acknowledge session mutations.
+      const afterRevision = authoritative
+        ? Math.min(readRevision, ...Array.from(pendingLoads, (load) => load.revision))
+        : -1;
+      return replace(incoming, afterRevision);
     },
     publishRemoteFallback(incoming: CachedDocumentListItem[]) {
       if (!isCurrent(writeSession.owner)) return null;
