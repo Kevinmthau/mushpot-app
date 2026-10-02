@@ -7,6 +7,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CachedDocument, CachedDocumentRecord } from "@/lib/doc-cache";
+import type { CachedDocumentListRecord } from "@/lib/document-cache-record";
 
 const OWNER = "owner-a";
 
@@ -68,6 +69,19 @@ async function seedPreviousCache(
   }
   await waitForTransaction(transaction);
   database.close();
+}
+
+async function readCacheStore<T>(storeName: string): Promise<T[]> {
+  const database = await waitForRequest(indexedDB.open("mushpot"));
+  try {
+    const transaction = database.transaction(storeName, "readonly");
+    const done = waitForTransaction(transaction);
+    const records = await waitForRequest<T[]>(transaction.objectStore(storeName).getAll());
+    await done;
+    return records;
+  } finally {
+    database.close();
+  }
 }
 
 describe("owner-scoped document cache", () => {
@@ -154,6 +168,11 @@ describe("owner-scoped document cache", () => {
       id: latest.id, title: "Newer server title", updated_at: "2026-07-17T12:00:02.000Z",
     }], OWNER, token);
     expect(await cache.canReuseDocumentResponse("document-a", token, latest.updated_at, 102)).toBe(false);
+    // The newer list revision lives only in the metadata store. Warm validation
+    // must consult it without advancing the complete body's CAS baseline.
+    const [storedBody] = await readCacheStore<CachedDocumentRecord>("documents");
+    expect(storedBody).toMatchObject(latest);
+    expect(storedBody).not.toHaveProperty("_listMetadata");
   });
 
   it("retains a newer reverted draft until its own revision is acknowledged", async () => {
@@ -263,6 +282,11 @@ describe("owner-scoped document cache", () => {
     }));
 
     const getAll = vi.spyOn(IDBIndex.prototype, "getAll");
+    const get = vi.spyOn(IDBObjectStore.prototype, "get");
+    const bodyReads = () => get.mock.calls.filter((_, index) => {
+      const store = get.mock.contexts[index];
+      return store instanceof IDBObjectStore && store.name === "documents";
+    });
     expect(await cache.getDirtyDocuments(OWNER)).toEqual([
       expect.objectContaining({ id: "dirty", owner: OWNER, _dirty: true }),
     ]);
@@ -271,11 +295,14 @@ describe("owner-scoped document cache", () => {
     expect(getAll.mock.results[0].value.result).toEqual([
       expect.objectContaining({ id: "dirty", owner: OWNER }),
     ]);
+    expect(bodyReads()).toEqual([["dirty"]]);
 
     await cache.putCachedDocument(buildDocument({ id: "dirty", _dirty: false }));
     getAll.mockClear();
+    get.mockClear();
     expect(await cache.getDirtyDocuments(OWNER)).toEqual([]);
     expect(getAll.mock.results[0].value.result).toEqual([]);
+    expect(bodyReads()).toEqual([]);
   });
 
   it("writes only changed list rows and leaves unchanged complete bodies untouched", async () => {
@@ -307,6 +334,150 @@ describe("owner-scoped document cache", () => {
     expect(await cache.getCachedDocumentForOwner(complete.id, OWNER)).toEqual(
       expect.objectContaining(complete),
     );
+  });
+
+  it("reads and reconciles list metadata without reading or rewriting complete bodies", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(buildDocument({ content: "x".repeat(1_000_000) }));
+    await cache.putCachedDocument(buildDocument({ id: "dirty", _dirty: true }));
+    await cache.syncDocumentList([
+      { id: "document-a", title: "Draft", updated_at: "2026-07-17T12:00:00.000Z" },
+      { id: "dirty", title: "Draft", updated_at: "2026-07-17T12:00:00.000Z" },
+      { id: "placeholder", title: "Placeholder", updated_at: "2026-07-17T12:00:00.000Z" },
+    ], OWNER);
+    const initialBodies = await readCacheStore<CachedDocumentRecord>("documents");
+    const get = vi.spyOn(IDBObjectStore.prototype, "get");
+    const getAll = vi.spyOn(IDBObjectStore.prototype, "getAll");
+    const cursor = vi.spyOn(IDBObjectStore.prototype, "openCursor");
+    const indexGetAll = vi.spyOn(IDBIndex.prototype, "getAll");
+    const indexCursor = vi.spyOn(IDBIndex.prototype, "openCursor");
+    const put = vi.spyOn(IDBObjectStore.prototype, "put");
+    const rows = [
+      { id: "document-a", title: "Remote title", updated_at: "2026-07-19T12:00:00.000Z" },
+      { id: "placeholder", title: "Renamed placeholder", updated_at: "2026-07-18T12:00:00.000Z" },
+    ];
+
+    const reconciled = await cache.syncDocumentList(rows, OWNER);
+    expect(await cache.getCachedDocumentListForOwner(OWNER)).toEqual(reconciled);
+    expect(reconciled).toEqual([
+      rows[0], rows[1],
+      { id: "dirty", title: "Draft", updated_at: "2026-07-17T12:00:00.000Z" },
+    ]);
+    for (const spy of [get, getAll, cursor]) {
+      expect(spy.mock.contexts.filter((store) => store instanceof IDBObjectStore && store.name === "documents")).toEqual([]);
+    }
+    for (const spy of [indexGetAll, indexCursor]) {
+      expect(spy.mock.contexts.filter((index) => index instanceof IDBIndex && index.objectStore.name === "documents")).toEqual([]);
+    }
+    expect(put.mock.calls.filter((_, index) => {
+      const store = put.mock.contexts[index];
+      return store instanceof IDBObjectStore && store.name === "documents";
+    })).toEqual([
+      [expect.objectContaining({ id: "placeholder", kind: "metadata" })],
+    ]);
+    vi.restoreAllMocks();
+
+    expect((await readCacheStore<CachedDocumentRecord>("documents"))
+      .filter((document) => document.kind === "complete")).toEqual(
+      initialBodies.filter((document) => document.kind === "complete"),
+    );
+    const listRecords = await readCacheStore<CachedDocumentListRecord>("document-list");
+    expect(listRecords.find((document) => document.id === "document-a")).toMatchObject({
+      updated_at: "2026-07-17T12:00:00.000Z",
+      _listUpdatedAt: rows[0].updated_at,
+    });
+    for (const record of listRecords) {
+      expect(record).not.toHaveProperty("content");
+      expect(record).not.toHaveProperty("share_token");
+      expect(record).not.toHaveProperty("_localUpdatedAt");
+    }
+  });
+
+  it("rolls back body and metadata writes together when a metadata request fails", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(buildDocument());
+    const initialBodies = await readCacheStore<CachedDocumentRecord>("documents");
+    const initialList = await readCacheStore<CachedDocumentListRecord>("document-list");
+    const { subscribeToDocumentCacheChanges } = await import("@/lib/document-cache-events");
+    const observed: string[] = [];
+    const unsubscribe = subscribeToDocumentCacheChanges((change) => observed.push(change.type));
+    const originalPut = IDBObjectStore.prototype.put;
+    const put = vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (this: IDBObjectStore, ...args) {
+      if (this.name === "document-list") throw new DOMException("Failed clone", "DataCloneError");
+      return originalPut.apply(this, args);
+    });
+
+    expect(await cache.putCachedDocument(buildDocument({ title: "Failed write", _dirty: true }))).toBe(false);
+    expect(observed).toEqual([]);
+    unsubscribe();
+    put.mockRestore();
+    expect(await readCacheStore("documents")).toEqual(initialBodies);
+    expect(await readCacheStore("document-list")).toEqual(initialList);
+    expect(await cache.getDirtyDocuments(OWNER)).toEqual([]);
+  });
+
+  it("suppresses committed metadata notifications after the owner is revoked", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const token = cache.getDocumentCacheWriteToken(OWNER)!;
+    const { subscribeToDocumentCacheChanges } = await import("@/lib/document-cache-events");
+    const observed: string[] = [];
+    const unsubscribe = subscribeToDocumentCacheChanges((change) => observed.push(change.type));
+    let deactivation: Promise<void> | undefined;
+
+    // The deactivation is queued after this transaction, but revokes in-memory
+    // authority immediately. Its later quarantine retains the durable draft.
+    expect(await cache.putCachedDocument(buildDocument({ _dirty: true }), token, () => {
+      deactivation = cache.deactivateDocumentCacheForOwner(OWNER);
+      return true;
+    })).toBe(true);
+    await deactivation;
+    expect(observed).toEqual(["invalidate"]);
+    unsubscribe();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    expect(await cache.getDirtyDocuments(OWNER)).toHaveLength(1);
+  });
+
+  it("rolls back an entire list refresh when a later metadata write fails", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(buildDocument());
+    const initialBodies = await readCacheStore<CachedDocumentRecord>("documents");
+    const initialList = await readCacheStore<CachedDocumentListRecord>("document-list");
+    const originalPut = IDBObjectStore.prototype.put;
+    const put = vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (this: IDBObjectStore, ...args) {
+      const document = args[0] as { id: string };
+      if (this.name === "document-list" && document.id === "new-row") {
+        throw new DOMException("Failed clone", "DataCloneError");
+      }
+      return originalPut.apply(this, args);
+    });
+
+    expect(await cache.syncDocumentList([
+      { id: "document-a", title: "Remote", updated_at: "2026-07-19T12:00:00.000Z" },
+      { id: "new-row", title: "New", updated_at: "2026-07-19T12:00:00.000Z" },
+    ], OWNER)).toBeNull();
+    put.mockRestore();
+    expect(await readCacheStore("documents")).toEqual(initialBodies);
+    expect(await readCacheStore("document-list")).toEqual(initialList);
+  });
+
+  it("rolls back both stores and the tombstone when deletion fails", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.putCachedDocument(buildDocument());
+    const originalDelete = IDBObjectStore.prototype.delete;
+    const deletion = vi.spyOn(IDBObjectStore.prototype, "delete").mockImplementation(function (this: IDBObjectStore, ...args) {
+      if (this.name === "document-list") throw new DOMException("Failed deletion", "InvalidStateError");
+      return originalDelete.apply(this, args);
+    });
+    expect(await cache.deleteCachedDocument("document-a", OWNER)).toBe(false);
+    deletion.mockRestore();
+    expect(await cache.getCachedDocumentForOwner("document-a", OWNER)).not.toBeNull();
+    expect(await cache.getCachedDocumentListForOwner(OWNER)).toHaveLength(1);
+    expect(await cache.putCachedDocument(buildDocument({ title: "After failed deletion" }))).toBe(true);
   });
 
   it("updates list metadata without changing the complete snapshot or its version", async () => {
@@ -616,6 +787,43 @@ describe("owner-scoped document cache", () => {
     expect(
       await cache.getCachedDocumentForOwner("document-b", otherOwner),
     ).not.toBeNull();
+  });
+
+  it("does not overwrite another owner's body or list row with an unexpected ID", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.activateDocumentCacheForOwner("other-owner");
+    await cache.putCachedDocument(buildDocument({ owner: "other-owner" }));
+    expect(await cache.putCachedDocument(buildDocument())).toBe(false);
+    expect(await cache.syncDocumentList([
+      { id: "document-a", title: "Unexpected ID", updated_at: "2026-07-19T12:00:00.000Z" },
+    ], OWNER)).toEqual([]);
+    expect(await cache.getCachedDocumentListForOwner(OWNER)).toEqual([]);
+    expect(await cache.getCachedDocumentForOwner("document-a", "other-owner")).toMatchObject({
+      title: "Draft", content: "Private content", owner: "other-owner",
+    });
+  });
+
+  it("purges and quarantines metadata together with bodies without reading bodies", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    await cache.activateDocumentCacheForOwner("other-owner");
+    await cache.putCachedDocument(buildDocument({ id: "dirty", _dirty: true }));
+    await cache.putCachedDocument(buildDocument({ id: "clean", content: "x".repeat(1_000_000) }));
+    await cache.putCachedDocument(buildDocument({ id: "other", owner: "other-owner" }));
+    const getAll = vi.spyOn(IDBIndex.prototype, "getAll");
+    await cache.deactivateDocumentCacheForOwner(OWNER);
+    expect(getAll.mock.contexts.every((index) => index instanceof IDBIndex && index.objectStore.name === "document-list")).toBe(true);
+    getAll.mockRestore();
+    expect((await readCacheStore<CachedDocumentRecord>("documents")).map((document) => document.id).sort()).toEqual(["dirty", "other"]);
+    expect((await readCacheStore<CachedDocumentListRecord>("document-list")).map((document) => document.id).sort()).toEqual(["dirty", "other"]);
+    await cache.activateDocumentCacheForOwner(OWNER);
+    expect(await cache.getCachedDocumentListForOwner(OWNER)).toEqual([
+      { id: "dirty", title: "Draft", updated_at: "2026-07-17T12:00:00.000Z" },
+    ]);
+    await cache.purgeDocumentCacheForOwner(OWNER);
+    expect((await readCacheStore<CachedDocumentRecord>("documents")).map((document) => document.id)).toEqual(["other"]);
+    expect((await readCacheStore<CachedDocumentListRecord>("document-list")).map((document) => document.id)).toEqual(["other"]);
   });
 
   it("rejects stale list reconciliation after owner reactivation", async () => {
@@ -935,12 +1143,80 @@ describe("owner-scoped document cache", () => {
     expect(await cache.getCachedDocumentListForOwner(OWNER)).toHaveLength(2);
   });
 
-  it("keeps cache activation best-effort while an older tab blocks the upgrade", async () => {
+  it("backfills v5 metadata without invalidating complete bodies, dirty drafts, or revisions", async () => {
+    const documents: CachedDocumentRecord[] = [
+      buildDocument({
+        kind: "complete", id: "clean", content: "Complete v5 content", _localUpdatedAt: 500,
+        _listMetadata: { title: "Remote clean", updated_at: "2026-07-19T12:00:00.000Z" },
+      }) as CachedDocumentRecord,
+      buildDocument({
+        kind: "complete", id: "dirty", content: "Unsynced v5 content", title: "Local title",
+        _dirty: true, _dirtyKey: 1, _localUpdatedAt: 600, _baseVersionUntrusted: true,
+        _listMetadata: { title: "Remote prefix", updated_at: "2026-07-20T12:00:00.000Z" },
+      }) as CachedDocumentRecord,
+      { id: "metadata", owner: OWNER, kind: "metadata", title: "List only", updated_at: "2026-07-18T12:00:00.000Z" },
+      buildDocument({ kind: "complete", id: "foreign", owner: "other-owner" }) as CachedDocumentRecord,
+    ];
+    await seedPreviousCache(documents, 5);
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    expect(await readCacheStore("documents")).toEqual([...documents].sort((left, right) => left.id.localeCompare(right.id)));
+    expect(await cache.getCachedDocumentListForOwner(OWNER)).toEqual([
+      { id: "dirty", title: "Local title", updated_at: "2026-07-20T12:00:00.000Z" },
+      { id: "clean", title: "Remote clean", updated_at: "2026-07-19T12:00:00.000Z" },
+      { id: "metadata", title: "List only", updated_at: "2026-07-18T12:00:00.000Z" },
+    ]);
+    expect(await cache.getCachedDocumentForOwner("clean", OWNER)).toEqual(documents[0]);
+    expect(await cache.getDirtyDocuments(OWNER)).toEqual([documents[1]]);
+    expect(await cache.getCachedDocumentForOwner("metadata", OWNER)).toBeNull();
+    const records = await readCacheStore<CachedDocumentListRecord>("document-list");
+    expect(records).toHaveLength(4);
+    expect(records.find((record) => record.id === "dirty")).toMatchObject({
+      _dirty: true, _dirtyKey: 1, updated_at: "2026-07-17T12:00:00.000Z",
+      _listUpdatedAt: "2026-07-20T12:00:00.000Z",
+    });
+    expect(records.every((record) => !("content" in record))).toBe(true);
+  });
+
+  it("rolls back legacy body migration when metadata backfill fails and can retry", async () => {
+    const documents = [
+      buildDocument({ id: "clean", kind: "complete" }),
+      buildDocument({ id: "dirty", kind: "complete", _dirty: true, _dirtyKey: 1 }),
+    ];
+    await seedPreviousCache(documents, 4);
+    const originalPut = IDBObjectStore.prototype.put;
+    const put = vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (this: IDBObjectStore, ...args) {
+      const document = args[0] as { id: string };
+      if (this.name === "document-list" && document.id === "dirty") {
+        // An asynchronous ConstraintError aborts the complete upgrade.
+        return this.add({ ...document, id: "clean" });
+      }
+      return originalPut.apply(this, args);
+    });
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    expect(cache.getDocumentCacheWriteToken(OWNER)).toBeNull();
+    put.mockRestore();
+    const database = await waitForRequest(indexedDB.open("mushpot"));
+    expect(database.version).toBe(4);
+    expect(database.objectStoreNames.contains("document-list")).toBe(false);
+    database.close();
+    expect(await readCacheStore("documents")).toEqual(documents);
+
+    await cache.activateDocumentCacheForOwner(OWNER);
+    expect(await cache.getCachedDocumentForOwner("clean", OWNER)).toBeNull();
+    expect(await cache.getDirtyDocuments(OWNER)).toEqual([
+      expect.objectContaining({ id: "dirty", content: "Private content", _baseVersionUntrusted: true }),
+    ]);
+    expect(await cache.getCachedDocumentListForOwner(OWNER)).toHaveLength(2);
+  });
+
+  it.each([3, 5])("keeps activation best-effort while a v%s tab blocks the upgrade", async (version) => {
     await seedPreviousCache([
       buildDocument({ kind: "complete", _dirty: true, _dirtyKey: 1 }),
-    ], 3);
-    // The shipped v3 connection has no versionchange handler to close it.
-    const legacyDatabase = await waitForRequest(indexedDB.open("mushpot", 3));
+    ], version);
+    // A tab without a versionchange handler can keep the upgrade blocked.
+    const legacyDatabase = await waitForRequest(indexedDB.open("mushpot", version));
     const cache = await loadDocumentCache();
     let deadline: ReturnType<typeof setTimeout> | undefined;
 
@@ -965,7 +1241,7 @@ describe("owner-scoped document cache", () => {
     }
 
     // This request runs after the pending upgrade and confirms it has finished.
-    const upgradedDatabase = await waitForRequest(indexedDB.open("mushpot", 5));
+    const upgradedDatabase = await waitForRequest(indexedDB.open("mushpot", 6));
     upgradedDatabase.close();
     await cache.activateDocumentCacheForOwner(OWNER);
     expect(cache.getDocumentCacheWriteToken(OWNER)).not.toBeNull();
