@@ -271,6 +271,47 @@ export function getDocumentCacheWriteToken(
   return generation === undefined ? null : { generation, owner };
 }
 
+/** A warmed remote row cannot bypass an owner revocation or local deletion. */
+export async function canReuseDocumentResponse(
+  id: string,
+  token: DocumentCacheWriteToken,
+  responseUpdatedAt: string,
+  requestStartedAt: number,
+): Promise<boolean> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction([DOCS_STORE, META_STORE], "readonly");
+    const transactionDone = waitForTransaction(tx);
+    const store = tx.objectStore(META_STORE);
+    const [ownerState, tombstone, document] = await Promise.all([
+      requestToPromise<DocumentCacheOwnerState | undefined>(
+        store.get(getOwnerCacheStateKey(token.owner)),
+      ),
+      requestToPromise<DocumentCacheDeletionTombstone | undefined>(
+        store.get(getDocumentDeletionTombstoneKey(token.owner, id)),
+      ),
+      requestToPromise<CachedDocumentRecord | undefined>(
+        tx.objectStore(DOCS_STORE).get(id),
+      ),
+    ]);
+    await transactionDone;
+    const remoteRevision = { id, title: "", updated_at: responseUpdatedAt };
+    const hasNewerLocalState = document && (
+      isCachedDocumentNewerThanServerListItem(document, remoteRevision) ||
+      isCachedDocumentNewerThanServerListItem(toDocumentListItem(document), remoteRevision) ||
+      (isCompleteDocument(document) && (
+        document._dirty ||
+        (document._localUpdatedAt !== undefined && document._localUpdatedAt > requestStartedAt)
+      ))
+    );
+    return isTokenAuthorized(ownerState, token) &&
+      !hasNewerLocalState &&
+      !isDocumentCacheDeletionTombstone(tombstone, token.owner, id, token.generation);
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Document reads and writes
 // ---------------------------------------------------------------------------

@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { EditorDocument } from "@/components/editor/editor-types";
 import {
+  loadRemoteEditorDocument,
+  type EditorRemoteResult,
+} from "@/components/editor/editor-document-request";
+import {
   activateDocumentCacheForOwner,
   getDocumentCacheWriteToken,
   getCachedDocumentForOwner,
@@ -12,10 +16,9 @@ import {
 } from "@/lib/doc-cache";
 import {
   areEditorDocumentsEqual,
-  EDITOR_DOCUMENT_SELECT,
   toEditorDocument,
 } from "@/lib/documents";
-import { queryWithCloneStatusFallback } from "@/lib/supabase/clone-status-compat";
+import type { DocumentWriteSession } from "@/lib/document-write-coordinator";
 
 type EditorDocumentState = {
   document: EditorDocument | null;
@@ -29,17 +32,15 @@ type EditorDocumentResult = EditorDocumentState & {
 };
 
 type OwnedEditorDocumentState = EditorDocumentState & {
+  documentId: string | null;
   owner: string | null;
+  session: DocumentWriteSession | null;
 };
 
 type EditorCacheSnapshot = {
   document: EditorDocument | null;
   token: DocumentCacheWriteToken | null;
 };
-
-type EditorRemoteResult =
-  | { document: EditorDocument; error: null }
-  | { document: null; error: string | null };
 
 export type EditorDocumentResolution = {
   document: EditorDocument | null;
@@ -193,16 +194,19 @@ export async function loadEditorDocument({
 }
 
 const INITIAL_DOCUMENT_STATE: OwnedEditorDocumentState = {
+  documentId: null,
   document: null,
   error: null,
   hasResolvedRemoteState: false,
   notFound: false,
   owner: null,
+  session: null,
 };
 
 export function useEditorDocument(
   documentId: string,
   userId: string | null,
+  writeSession: DocumentWriteSession,
 ): EditorDocumentResult {
   const [state, setState] =
     useState<OwnedEditorDocumentState>(INITIAL_DOCUMENT_STATE);
@@ -230,17 +234,17 @@ export function useEditorDocument(
     };
     localEditStateRef.current = localEditState;
 
-    setState({
-      ...INITIAL_DOCUMENT_STATE,
-      owner: userId,
+    queueMicrotask(() => {
+      if (isActive) setState({
+        ...INITIAL_DOCUMENT_STATE,
+        documentId,
+        owner: userId,
+        session: writeSession,
+        hasResolvedRemoteState: !userId,
+      });
     });
 
     if (!userId) {
-      setState({
-        ...INITIAL_DOCUMENT_STATE,
-        hasResolvedRemoteState: true,
-        owner: null,
-      });
       return () => {
         isActive = false;
         if (localEditStateRef.current === localEditState) {
@@ -251,7 +255,7 @@ export function useEditorDocument(
 
     const setDocumentIfChanged = (nextDocument: EditorDocument) => {
       setState((current) =>
-        current.owner === userId
+        current.owner === userId && current.session === writeSession && current.documentId === documentId
           ? {
               ...current,
               document:
@@ -266,7 +270,7 @@ export function useEditorDocument(
 
     const resolveDocument = (resolution: EditorDocumentResolution) => {
       setState((current) => {
-        if (current.owner !== userId) {
+        if (current.owner !== userId || current.session !== writeSession || current.documentId !== documentId) {
           return current;
         }
 
@@ -278,11 +282,13 @@ export function useEditorDocument(
             : resolution.document;
 
         return {
+          documentId,
           document: nextDocument,
           error: resolution.error,
           hasResolvedRemoteState: true,
           notFound: resolution.notFound,
           owner: userId,
+          session: writeSession,
         };
       });
     };
@@ -290,7 +296,7 @@ export function useEditorDocument(
     void loadEditorDocument({
       hasLocalEdits: () =>
         localEditStateRef.current === localEditState && localEditState.edited,
-      isCurrent: () => isActive,
+      isCurrent: () => isActive && writeSession.active && writeSession.owner === userId,
       loadCache: async () => {
         await activateDocumentCacheForOwner(userId);
         const token = getDocumentCacheWriteToken(userId);
@@ -305,37 +311,7 @@ export function useEditorDocument(
           token,
         };
       },
-      loadRemote: async () => {
-        try {
-          const { getSupabaseBrowserClient } = await import(
-            "@/lib/supabase/client"
-          );
-          const supabase = await getSupabaseBrowserClient();
-          const { data, error } = await queryWithCloneStatusFallback(
-            () =>
-              supabase
-                .from("documents")
-                .select(EDITOR_DOCUMENT_SELECT)
-                .eq("id", documentId)
-                .eq("owner", userId)
-                .is("clone_status", null)
-                .maybeSingle(),
-            () =>
-              supabase
-                .from("documents")
-                .select(EDITOR_DOCUMENT_SELECT)
-                .eq("id", documentId)
-                .eq("owner", userId)
-                .maybeSingle(),
-          );
-
-          return error
-            ? { document: null, error: error.message }
-            : { document: data, error: null };
-        } catch {
-          return { document: null, error: EDITOR_LOAD_ERROR };
-        }
-      },
+      loadRemote: () => loadRemoteEditorDocument(documentId, writeSession),
       onCache: setDocumentIfChanged,
       onResolved: resolveDocument,
       reconcileRemote: async (serverDocument, token, canWrite) => {
@@ -357,9 +333,9 @@ export function useEditorDocument(
         localEditStateRef.current = null;
       }
     };
-  }, [documentId, userId]);
+  }, [documentId, userId, writeSession]);
 
-  if (state.owner !== userId) {
+  if (state.owner !== userId || state.documentId !== documentId || state.session !== writeSession || !writeSession.active) {
     return { ...INITIAL_DOCUMENT_STATE, markLocallyEdited };
   }
 

@@ -11,6 +11,7 @@ import {
 } from "@/lib/doc-cache";
 import { DOCUMENT_LIST_SELECT, type DocumentListItem } from "@/lib/documents";
 import { queryWithCloneStatusFallback } from "@/lib/supabase/clone-status-compat";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type DocumentListState = {
   documents: DocumentListItem[];
@@ -300,19 +301,11 @@ const INITIAL_STATE: OwnedDocumentListState = {
 export function useDocumentList(userId: string | null): DocumentListState {
   const [state, setState] = useState<OwnedDocumentListState>(INITIAL_STATE);
   const requestIdRef = useRef(0);
-  const supabaseModuleRef =
-    useRef<Promise<typeof import("@/lib/supabase/client")> | null>(null);
-
   const visibleState = selectDocumentListView(state, userId);
-
-  if (!supabaseModuleRef.current) {
-    supabaseModuleRef.current = import("@/lib/supabase/client");
-  }
 
   const loadRemoteDocuments = useCallback(
     async (owner: string): Promise<DocumentListRemoteResult> => {
       try {
-        const { getSupabaseBrowserClient } = await supabaseModuleRef.current!;
         const supabase = await getSupabaseBrowserClient();
         const { data, error } = await queryWithCloneStatusFallback(
           () =>
@@ -383,23 +376,22 @@ export function useDocumentList(userId: string | null): DocumentListState {
   }, [loadRemoteDocuments, userId]);
 
   useEffect(() => {
+    let isActive = true;
     if (!userId) {
-      setState((current) =>
-        reduceDocumentListLoadState(current, { type: "reset" }),
-      );
-      return;
+      queueMicrotask(() => {
+        if (isActive) setState((current) => reduceDocumentListLoadState(current, { type: "reset" }));
+      });
+      return () => { isActive = false; };
     }
 
-    let isActive = true;
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
 
-    setState((current) =>
-      reduceDocumentListLoadState(current, {
-        owner: userId,
-        type: "begin",
-      }),
-    );
+    queueMicrotask(() => {
+      if (isActive) setState((current) => reduceDocumentListLoadState(current, {
+        owner: userId, type: "begin",
+      }));
+    });
 
     void loadInitialDocumentList({
       isCurrent: () => isActive && requestId === requestIdRef.current,

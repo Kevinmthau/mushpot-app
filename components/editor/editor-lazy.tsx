@@ -4,7 +4,6 @@ import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
 
 import { EditorPreviewFallback } from "@/components/editor/editor-loading";
-import { preloadEditorWorkspace } from "@/components/editor/editor-workspace-loader";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { getDocumentDisplayTitle } from "@/lib/documents";
@@ -15,9 +14,8 @@ let editorClientModulePromise:
 let resolvedEditorClient: ComponentType<EditorClientProps> | null = null;
 
 export function preloadEditorClient() {
-  // Start both chunks together. The workspace loader retries a failed warmup
-  // when the editor mounts, without delaying the lightweight editor shell.
-  void preloadEditorWorkspace().catch(() => {});
+  // The core workspace is a static dependency of this lazy editor boundary.
+  // Direct document visits receive both in their initial route scripts.
   if (!editorClientModulePromise) {
     editorClientModulePromise = import("@/components/editor/editor-client")
       .then((module) => {

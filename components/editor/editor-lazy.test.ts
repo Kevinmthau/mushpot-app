@@ -3,22 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import { EditorClient, preloadEditorClient } from "@/components/editor/editor-lazy";
 import type { EditorDocument } from "@/components/editor/editor-types";
 
-const { loadWorkspace, loadClient, releaseClient, clientReady } = vi.hoisted(() => {
+const { loadClient, releaseClient, clientReady } = vi.hoisted(() => {
   let releaseClient!: () => void;
   const clientReady = new Promise<void>((resolve) => {
     releaseClient = resolve;
   });
   return {
-    loadWorkspace: vi.fn(() => Promise.resolve({})),
     loadClient: vi.fn(),
     releaseClient,
     clientReady,
   };
 });
-
-vi.mock("@/components/editor/editor-workspace-loader", () => ({
-  preloadEditorWorkspace: loadWorkspace,
-}));
 
 vi.mock("@/components/editor/editor-client", async () => {
   loadClient();
@@ -38,12 +33,10 @@ const DOCUMENT: EditorDocument = {
 };
 
 describe("EditorClient lazy boundary", () => {
-  it("keeps imports lazy and starts workspace loading before the client chunk resolves", async () => {
+  it("keeps the core editor lazy on the document list and shares intent warmups", async () => {
     expect(loadClient).not.toHaveBeenCalled();
-    expect(loadWorkspace).not.toHaveBeenCalled();
 
     const loading = preloadEditorClient();
-    expect(loadWorkspace).toHaveBeenCalledOnce();
     expect(preloadEditorClient()).toBe(loading);
     await vi.waitFor(() => expect(loadClient).toHaveBeenCalledOnce());
 

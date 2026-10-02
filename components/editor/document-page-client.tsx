@@ -1,9 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
-
-import { EditorClient, preloadEditorClient } from "@/components/editor/editor-lazy";
+import { EditorClient } from "@/components/editor/editor-client";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import { useEditorDocument } from "@/components/editor/use-editor-document";
 import { usePrivateSession } from "@/components/pwa/private-session-provider";
@@ -15,12 +13,7 @@ type DocumentPageClientProps = {
 };
 
 export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
-  const { userId } = usePrivateSession();
-  useEffect(() => {
-    // Direct document visits have no list-hover warmup. Load editor code while
-    // the cache and remote document query resolve.
-    void preloadEditorClient().catch(() => {});
-  }, [documentId]);
+  const { userId, writeSession } = usePrivateSession();
 
   const {
     document,
@@ -28,7 +21,7 @@ export function DocumentPageClient({ documentId }: DocumentPageClientProps) {
     hasResolvedRemoteState,
     markLocallyEdited,
     notFound,
-  } = useEditorDocument(documentId, userId);
+  } = useEditorDocument(documentId, userId, writeSession);
 
   if (!userId) {
     return <EditorPageLoading />;
