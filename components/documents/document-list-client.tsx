@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 
+import type { DocumentListSession } from "@/lib/document-list-session";
 import { preloadEditorClient } from "@/components/editor/editor-lazy";
 import { warmEditorDocument } from "@/components/editor/editor-document-request";
 import type { DocumentWriteSession } from "@/lib/document-write-coordinator";
@@ -28,12 +29,14 @@ type DocumentListClientProps = {
   documents: DocumentListItem[];
   userId: string;
   writeSession: DocumentWriteSession;
+  documentListSession: DocumentListSession;
 };
 
 export function DocumentListClient({
   documents,
   userId,
   writeSession,
+  documentListSession,
 }: DocumentListClientProps) {
   const router = useRouter();
   const [displayDocuments, setDisplayDocuments] = useState(documents);
@@ -105,6 +108,7 @@ export function DocumentListClient({
       }
 
       await putCachedDocument(toCachedDocument(data), cacheWriteToken);
+      documentListSession.confirmUpsert(userId, data);
 
       setOptimisticDocumentIds((currentIds) => {
         const nextIds = new Set(currentIds);
@@ -126,7 +130,7 @@ export function DocumentListClient({
       window.alert(err instanceof Error ? err.message : "Failed to create document.");
       setIsCreating(false);
     }
-  }, [isCreating, userId, router]);
+  }, [documentListSession, isCreating, userId, router]);
 
   return (
     <section className="space-y-2">

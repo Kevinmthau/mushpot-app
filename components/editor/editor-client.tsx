@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { DraftRecoveryNotice } from "@/components/editor/draft-recovery-notice";
 import { DraftSyncNotice } from "@/components/editor/draft-sync-notice";
 import { useDocumentClone } from "@/components/editor/use-document-clone";
+import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { useDocumentHtmlDownload } from "@/components/editor/use-document-html-download";
 import { EditorWorkspace } from "@/components/editor/editor-workspace";
@@ -76,6 +77,7 @@ function EditorClientInner({
   onLocalEdit,
 }: EditorClientProps) {
   const router = useRouter();
+  const { documentListSession } = usePrivateSession();
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [uploadingMediaCount, setUploadingMediaCount] = useState(0);
   const dropTargetRef = useRef<HTMLDivElement | null>(null);
@@ -117,12 +119,17 @@ function EditorClientInner({
     setIsShareModalOpen(false);
   }, [markDeleting]);
 
+  const handleServerDelete = useCallback(() => {
+    documentListSession.confirmDeletion(initialDocument.owner, initialDocument.id);
+  }, [documentListSession, initialDocument.id, initialDocument.owner]);
+
   const handleDeleteDocument = useDocumentDelete({
     documentId: initialDocument.id,
     owner: initialDocument.owner,
     isDeleting,
     onDeleteStart: handleDeleteStart,
     onDeleteError: resetDeletingState,
+    onServerDelete: handleServerDelete,
   });
 
   useEffect(() => {

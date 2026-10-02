@@ -138,9 +138,9 @@ export function shouldShowDocumentListLoading(
 
 export function DocumentsPageClient() {
   const router = useRouter();
-  const { clearUserId, setUserId, userId, writeSession } = usePrivateSession();
+  const { clearUserId, documentListSession, setUserId, userId, writeSession } = usePrivateSession();
   const { documents, error, isLoading, refreshDocuments } =
-    useDocumentList(userId);
+    useDocumentList(userId, documentListSession);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [signOutPhase, setSignOutPhase] = useState<SignOutPhase>("idle");
   const [unsavedDraftCount, setUnsavedDraftCount] = useState<number | null>(0);
@@ -286,7 +286,12 @@ export function DocumentsPageClient() {
             {error}
           </section>
         ) : (
-          <DocumentListClient documents={documents} userId={userId} writeSession={writeSession} />
+          <DocumentListClient
+            documents={documents}
+            userId={userId}
+            writeSession={writeSession}
+            documentListSession={documentListSession}
+          />
         )}
       </main>
 

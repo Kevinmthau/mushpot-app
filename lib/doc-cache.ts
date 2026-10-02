@@ -30,6 +30,8 @@ export type {
   CachedMetadataDocument,
 } from "@/lib/document-cache-record";
 
+import { announceDocumentCacheChange } from "@/lib/document-cache-events";
+
 const DB_NAME = "mushpot";
 const DB_VERSION = 5;
 const DOCS_STORE = "documents";
@@ -531,6 +533,12 @@ async function storeCachedDocument(
     }
 
     await transactionDone;
+    if (stored && authoritativeDocument) {
+      announceDocumentCacheChange({
+        type: "upsert", token, document: toDocumentListItem(authoritativeDocument),
+        dirty: authoritativeDocument._dirty === true,
+      });
+    }
     return { stored, document: authoritativeDocument };
   } catch {
     return { stored: false, document: null };
@@ -580,6 +588,9 @@ export async function deleteCachedDocument(
     }
 
     await transactionDone;
+    if (authorized) {
+      announceDocumentCacheChange({ type: "delete", token, documentId: id });
+    }
     return authorized;
   } catch {
     return false;
@@ -600,6 +611,7 @@ async function disableDocumentCacheForOwner(
 
   const operationId = beginOwnerStateOperation(owner);
   activeOwnerGenerations.delete(owner);
+  announceDocumentCacheChange({ type: "invalidate", owner });
 
   try {
     await runOwnerStateMutation(owner, async () => {
@@ -857,9 +869,11 @@ export async function syncDocumentList(
 
     await transactionDone;
 
-    return Array.from(reconciledById.values())
+    const documents = Array.from(reconciledById.values())
       .map(toDocumentListItem)
       .sort(compareDocumentListItems);
+    announceDocumentCacheChange({ type: "replace", token, documents });
+    return documents;
   } catch {
     // Cache reconciliation is best-effort.
     return null;

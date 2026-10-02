@@ -12,9 +12,11 @@ type UseDocumentDeleteParams = {
   isDeleting: boolean;
   onDeleteStart: () => void;
   onDeleteError: () => void;
+  onServerDelete?: () => void;
 };
 
 type DeleteDocumentAndCacheDependencies = {
+  onServerDelete?: () => void;
   deleteCachedDocument?: (
     documentId: string,
     owner: string,
@@ -48,6 +50,7 @@ export async function deleteDocumentAndCache(
   documentId: string,
   {
     deleteCachedDocument: deleteCached = deleteCachedDocument,
+    onServerDelete,
     getSupabaseClient = async () => {
       const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
       return getSupabaseBrowserClient();
@@ -56,6 +59,7 @@ export async function deleteDocumentAndCache(
 ) {
   const supabase = await getSupabaseClient();
   await deleteDocument(supabase, owner, documentId);
+  onServerDelete?.();
   await deleteCached(documentId, owner);
 }
 
@@ -65,6 +69,7 @@ export function useDocumentDelete({
   isDeleting,
   onDeleteStart,
   onDeleteError,
+  onServerDelete,
 }: UseDocumentDeleteParams) {
   const router = useRouter();
 
@@ -83,7 +88,9 @@ export function useDocumentDelete({
     onDeleteStart();
 
     try {
-      await deleteDocumentAndCache(owner, documentId);
+      await deleteDocumentAndCache(owner, documentId, {
+        onServerDelete,
+      });
     } catch (error) {
       onDeleteError();
       window.alert(
@@ -100,6 +107,7 @@ export function useDocumentDelete({
     isDeleting,
     onDeleteError,
     onDeleteStart,
+    onServerDelete,
     owner,
     router,
   ]);
