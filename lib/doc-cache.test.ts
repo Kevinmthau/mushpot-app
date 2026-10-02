@@ -115,6 +115,47 @@ describe("owner-scoped document cache", () => {
     );
   });
 
+  it("rejects warmed responses after deletion or owner revocation", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const token = cache.getDocumentCacheWriteToken(OWNER)!;
+    const isReusable = (id: string) => cache.canReuseDocumentResponse(
+      id, token, "2026-07-17T12:00:00.000Z", 100,
+    );
+    expect(await isReusable("document-a")).toBe(true);
+    await cache.deleteCachedDocument("document-a", OWNER, token);
+    expect(await isReusable("document-a")).toBe(false);
+    expect(await isReusable("document-b")).toBe(true);
+    await cache.deactivateDocumentCacheForOwner(OWNER);
+    expect(await isReusable("document-b")).toBe(false);
+  });
+
+  it("rejects warmed rows older than a confirmed save, sharing change, or list revision", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const token = cache.getDocumentCacheWriteToken(OWNER)!;
+    const warmUpdatedAt = "2026-07-17T12:00:00.000Z";
+    const latest = buildDocument({
+      content: "Latest confirmed content",
+      updated_at: "2026-07-17T12:00:01.000Z",
+      share_enabled: true,
+      share_token: "latest-token",
+      _dirty: false,
+      _localUpdatedAt: 101,
+    });
+    await cache.putCachedDocument(latest, token);
+    expect(await cache.canReuseDocumentResponse("document-a", token, warmUpdatedAt, 100)).toBe(false);
+    expect(await cache.getCachedDocumentForOwner("document-a", OWNER, token)).toMatchObject({
+      content: latest.content, share_token: latest.share_token,
+    });
+    expect(await cache.canReuseDocumentResponse("document-a", token, latest.updated_at, 100)).toBe(false);
+    expect(await cache.canReuseDocumentResponse("document-a", token, latest.updated_at, 102)).toBe(true);
+    await cache.syncDocumentList([{
+      id: latest.id, title: "Newer server title", updated_at: "2026-07-17T12:00:02.000Z",
+    }], OWNER, token);
+    expect(await cache.canReuseDocumentResponse("document-a", token, latest.updated_at, 102)).toBe(false);
+  });
+
   it("retains a newer reverted draft until its own revision is acknowledged", async () => {
     const cache = await loadDocumentCache();
     await cache.activateDocumentCacheForOwner(OWNER);
@@ -148,6 +189,25 @@ describe("owner-scoped document cache", () => {
       _dirty: false,
       _localUpdatedAt: 12,
       updated_at: oldConfirmation.updated_at,
+    });
+  });
+
+  it("rejects older clean revisions while allowing a dirty edit with its original CAS baseline", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const latest = buildDocument({
+      content: "Confirmed body", updated_at: "2026-07-17T13:00:00.000Z",
+      _dirty: false, _localUpdatedAt: 100,
+    });
+    await cache.putCachedDocument(latest);
+    const stale = buildDocument({ content: latest.content, _dirty: false });
+    expect(await cache.putCachedDocument(stale)).toBe(false);
+    expect(await cache.reconcileCachedDocumentWithServer(stale)).toMatchObject(latest);
+    const dirty = { ...stale, content: "Recovered local edit", _dirty: true, _localUpdatedAt: 101 };
+    expect(await cache.putCachedDocument(dirty)).toBe(true);
+    expect(await cache.reconcileCachedDocumentWithServer(stale)).toMatchObject(dirty);
+    expect(await cache.getCachedDocumentForOwner(stale.id, OWNER)).toMatchObject({
+      content: dirty.content, updated_at: stale.updated_at, _dirty: true,
     });
   });
 

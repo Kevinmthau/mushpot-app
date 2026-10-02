@@ -286,7 +286,7 @@ export function DocumentsPageClient() {
             {error}
           </section>
         ) : (
-          <DocumentListClient documents={documents} userId={userId} />
+          <DocumentListClient documents={documents} userId={userId} writeSession={writeSession} />
         )}
       </main>
 

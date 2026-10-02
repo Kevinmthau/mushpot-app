@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DocumentPageClient } from "@/components/editor/document-page-client";
 
-const { preloadEditorClient, useEditorDocument } = vi.hoisted(() => ({
-  preloadEditorClient: vi.fn(() => Promise.resolve()),
+const { useEditorDocument, writeSession } = vi.hoisted(() => ({
+  writeSession: { owner: "owner-a", active: true, generation: 1 },
   useEditorDocument: vi.fn(() => ({
     document: null,
     error: null,
@@ -17,13 +17,12 @@ const { preloadEditorClient, useEditorDocument } = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("@/components/editor/editor-lazy", () => ({
+vi.mock("@/components/editor/editor-client", () => ({
   EditorClient: () => null,
-  preloadEditorClient,
 }));
 vi.mock("@/components/editor/use-editor-document", () => ({ useEditorDocument }));
 vi.mock("@/components/pwa/private-session-provider", () => ({
-  usePrivateSession: () => ({ userId: "owner-a" }),
+  usePrivateSession: () => ({ userId: "owner-a", writeSession }),
 }));
 
 afterEach(() => {
@@ -31,8 +30,8 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("document route editor warmup", () => {
-  it("starts loading editor code while document data is still unresolved", async () => {
+describe("document route loading", () => {
+  it("passes the authenticated session lifetime while document data is unresolved", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const container = document.createElement("div");
     const root = createRoot(container);
@@ -41,8 +40,7 @@ describe("document route editor warmup", () => {
         root.render(createElement(DocumentPageClient, { documentId: "document-a" }));
       });
 
-      expect(useEditorDocument).toHaveBeenCalledWith("document-a", "owner-a");
-      expect(preloadEditorClient).toHaveBeenCalledOnce();
+      expect(useEditorDocument).toHaveBeenCalledWith("document-a", "owner-a", writeSession);
       expect(container.querySelector(".cm-theme")).toBeNull();
     } finally {
       await act(async () => root.unmount());

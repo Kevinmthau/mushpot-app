@@ -4,10 +4,8 @@ import dynamic from "next/dynamic";
 import { type Text } from "@codemirror/state";
 import type {
   ChangeEvent,
-  ComponentType,
   KeyboardEvent,
   MouseEvent,
-  RefObject,
 } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -17,11 +15,7 @@ import { DraftSyncNotice } from "@/components/editor/draft-sync-notice";
 import { useDocumentClone } from "@/components/editor/use-document-clone";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { useDocumentHtmlDownload } from "@/components/editor/use-document-html-download";
-import { EditorPreviewFallback } from "@/components/editor/editor-loading";
-import {
-  getLoadedEditorWorkspace,
-  preloadEditorWorkspace,
-} from "@/components/editor/editor-workspace-loader";
+import { EditorWorkspace } from "@/components/editor/editor-workspace";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
@@ -36,17 +30,6 @@ const ShareModal = dynamic(
     ssr: false,
   },
 );
-
-type EditorWorkspaceProps = {
-  documentId: string;
-  dropTargetRef?: RefObject<HTMLElement | null>;
-  initialValue: string;
-  onChange: (doc: Text) => void;
-  onReady?: (api: EditorWorkspaceApi | null) => void;
-  onUploadingMediaCountChange?: (count: number) => void;
-  owner: string;
-  placeholder?: string;
-};
 
 type EditorWorkspaceApi = {
   focus: () => void;
@@ -376,7 +359,7 @@ function EditorClientInner({
           />
 
           <div className="pb-24">
-            <EditorWorkspaceLoader
+            <EditorWorkspace
               key={initialDocument.id}
               documentId={initialDocument.id}
               dropTargetRef={dropTargetRef}
@@ -405,38 +388,4 @@ function EditorClientInner({
       ) : null}
     </>
   );
-}
-
-function EditorWorkspaceLoader(props: EditorWorkspaceProps) {
-  const [LoadedWorkspace, setLoadedWorkspace] = useState<ComponentType<EditorWorkspaceProps> | null>(
-    getLoadedEditorWorkspace,
-  );
-
-  useEffect(() => {
-    if (LoadedWorkspace) {
-      return;
-    }
-
-    let isActive = true;
-
-    void preloadEditorWorkspace()
-      .then((module) => {
-        if (isActive) {
-          setLoadedWorkspace(() => module.EditorWorkspace);
-        }
-      })
-      .catch(() => {
-        // Leave the lightweight fallback in place if the editor workspace chunk fails.
-      });
-
-    return () => {
-      isActive = false;
-    };
-  }, [LoadedWorkspace]);
-
-  if (!LoadedWorkspace) {
-    return <EditorPreviewFallback initialValue={props.initialValue} />;
-  }
-
-  return <LoadedWorkspace {...props} />;
 }

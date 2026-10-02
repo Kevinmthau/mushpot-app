@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 
 import { preloadEditorClient } from "@/components/editor/editor-lazy";
+import { warmEditorDocument } from "@/components/editor/editor-document-request";
+import type { DocumentWriteSession } from "@/lib/document-write-coordinator";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
 import {
   getDocumentCacheWriteToken,
@@ -25,11 +27,13 @@ import {
 type DocumentListClientProps = {
   documents: DocumentListItem[];
   userId: string;
+  writeSession: DocumentWriteSession;
 };
 
 export function DocumentListClient({
   documents,
   userId,
+  writeSession,
 }: DocumentListClientProps) {
   const router = useRouter();
   const [displayDocuments, setDisplayDocuments] = useState(documents);
@@ -65,8 +69,15 @@ export function DocumentListClient({
   }, [documents, optimisticDocumentIds]);
 
   const handleWarmEditor = useCallback(() => {
-    void preloadEditorClient();
+    void preloadEditorClient().catch(() => {});
   }, []);
+
+  const handleWarmDocument = useCallback((id: string) => {
+    handleWarmEditor();
+    if (writeSession.owner === userId && warmEditorDocument(id, writeSession)) {
+      router.prefetch(`/doc/${id}`);
+    }
+  }, [handleWarmEditor, router, userId, writeSession]);
 
   const handleCreateDocument = useCallback(async () => {
     if (isCreating) return;
@@ -142,9 +153,9 @@ export function DocumentListClient({
           key={doc.id}
           href={`/doc/${doc.id}`}
           prefetch={false}
-          onFocus={handleWarmEditor}
-          onPointerEnter={handleWarmEditor}
-          onTouchStart={handleWarmEditor}
+          onFocus={() => handleWarmDocument(doc.id)}
+          onPointerEnter={() => handleWarmDocument(doc.id)}
+          onTouchStart={() => handleWarmDocument(doc.id)}
           className="group block rounded-2xl bg-[var(--paper)] px-4 py-3 transition hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)] sm:px-5 sm:py-4"
         >
           <p className="document-title-text line-clamp-1 text-[var(--ink)]">

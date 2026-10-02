@@ -271,6 +271,47 @@ export function getDocumentCacheWriteToken(
   return generation === undefined ? null : { generation, owner };
 }
 
+/** A warmed remote row cannot bypass an owner revocation or local deletion. */
+export async function canReuseDocumentResponse(
+  id: string,
+  token: DocumentCacheWriteToken,
+  responseUpdatedAt: string,
+  requestStartedAt: number,
+): Promise<boolean> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction([DOCS_STORE, META_STORE], "readonly");
+    const transactionDone = waitForTransaction(tx);
+    const store = tx.objectStore(META_STORE);
+    const [ownerState, tombstone, document] = await Promise.all([
+      requestToPromise<DocumentCacheOwnerState | undefined>(
+        store.get(getOwnerCacheStateKey(token.owner)),
+      ),
+      requestToPromise<DocumentCacheDeletionTombstone | undefined>(
+        store.get(getDocumentDeletionTombstoneKey(token.owner, id)),
+      ),
+      requestToPromise<CachedDocumentRecord | undefined>(
+        tx.objectStore(DOCS_STORE).get(id),
+      ),
+    ]);
+    await transactionDone;
+    const remoteRevision = { id, title: "", updated_at: responseUpdatedAt };
+    const hasNewerLocalState = document && (
+      isCachedDocumentNewerThanServerListItem(document, remoteRevision) ||
+      isCachedDocumentNewerThanServerListItem(toDocumentListItem(document), remoteRevision) ||
+      (isCompleteDocument(document) && (
+        document._dirty ||
+        (document._localUpdatedAt !== undefined && document._localUpdatedAt > requestStartedAt)
+      ))
+    );
+    return isTokenAuthorized(ownerState, token) &&
+      !hasNewerLocalState &&
+      !isDocumentCacheDeletionTombstone(tombstone, token.owner, id, token.generation);
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Document reads and writes
 // ---------------------------------------------------------------------------
@@ -419,17 +460,10 @@ export async function reconcileCachedDocumentWithServer(
     return nextDocument;
   }
 
-  const cachedDocument = await getCachedDocumentForOwner(
-    serverDocument.id,
-    serverDocument.owner,
-    token,
-  );
-  if (cachedDocument?._dirty) {
-    return cachedDocument;
-  }
-
-  await putCachedDocument(nextDocument, token, canWrite);
-  return nextDocument;
+  // Read, decide, and return the preserved snapshot in the write transaction.
+  // A confirmed save can arrive after a warm response was validated.
+  const result = await storeCachedDocument(nextDocument, token, canWrite, true);
+  return result.document ?? nextDocument;
 }
 
 export async function putCachedDocument(
@@ -437,8 +471,17 @@ export async function putCachedDocument(
   token = getDocumentCacheWriteToken(document.owner),
   canWrite: () => boolean = () => true,
 ): Promise<boolean> {
+  return (await storeCachedDocument(document, token, canWrite)).stored;
+}
+
+async function storeCachedDocument(
+  document: CachedDocument,
+  token: DocumentCacheWriteToken | null,
+  canWrite: () => boolean,
+  preserveDirty = false,
+): Promise<{ stored: boolean; document: CachedCompleteDocument | null }> {
   if (!token || token.owner !== document.owner) {
-    return false;
+    return { stored: false, document: null };
   }
 
   try {
@@ -462,7 +505,7 @@ export async function putCachedDocument(
     ]);
     const authorized = isTokenAuthorized(ownerState, token);
     const incomingDocument = toStoredCompleteDocument(document);
-    const stored =
+    const allowed =
       authorized &&
       canWrite() &&
       !isDocumentCacheDeletionTombstone(
@@ -470,24 +513,27 @@ export async function putCachedDocument(
         document.owner,
         document.id,
         token.generation,
-      ) &&
-      !shouldPreserveExistingDocument(existingDocument, incomingDocument);
-
-    if (stored) {
-      documentStore.put(
-        mergeDocumentListMetadata(
-          incomingDocument,
-          isCompleteDocument(existingDocument)
-            ? existingDocument._listMetadata
-            : undefined,
-        ),
       );
+    const stored = allowed &&
+      !(preserveDirty && isCompleteDocument(existingDocument) && existingDocument._dirty) &&
+      !shouldPreserveExistingDocument(existingDocument, incomingDocument);
+    const authoritativeDocument = stored
+      ? mergeDocumentListMetadata(
+          incomingDocument,
+          isCompleteDocument(existingDocument) ? existingDocument._listMetadata : undefined,
+        )
+      : allowed && isCompleteDocument(existingDocument) && existingDocument.owner === document.owner
+        ? existingDocument
+        : null;
+
+    if (stored && authoritativeDocument) {
+      documentStore.put(authoritativeDocument);
     }
 
     await transactionDone;
-    return stored;
+    return { stored, document: authoritativeDocument };
   } catch {
-    return false;
+    return { stored: false, document: null };
   }
 }
 
