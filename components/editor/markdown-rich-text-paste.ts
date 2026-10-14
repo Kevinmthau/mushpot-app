@@ -593,6 +593,160 @@ function isMarkdownTableDelimiterRow(line: string) {
   return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()));
 }
 
+function blankMarkdownTableColumnCount(block: string) {
+  const lines = block.split(/\r\n?|\n/);
+  if (lines.length !== 2) return null;
+
+  const cells = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) return null;
+    return trimmed.slice(1, -1).split("|");
+  });
+  const header = cells[0];
+  const delimiter = cells[1];
+  if (
+    !header ||
+    !delimiter ||
+    header.length === 0 ||
+    header.length !== delimiter.length ||
+    !header.every((cell) => cell.trim() === "") ||
+    !delimiter.every((cell) => /^:?-+:?$/.test(cell.trim()))
+  ) {
+    return null;
+  }
+  return header.length;
+}
+
+function flattenedTableColumnCount(
+  cellCount: number,
+  explicitColumnCount: number | null,
+) {
+  if (explicitColumnCount !== null) {
+    return explicitColumnCount > 1 &&
+        explicitColumnCount <= MAX_PASTED_TABLE_COLUMNS &&
+        cellCount % explicitColumnCount === 0 &&
+        cellCount / explicitColumnCount >= 2
+      ? explicitColumnCount
+      : null;
+  }
+
+  // Some document surfaces lose the table's outer column marker entirely and
+  // copy each cell as an empty one-column table followed by its text. Three
+  // columns is the only unmarked shape we recover: requiring a header plus at
+  // least one body row keeps the repair narrow and deterministic.
+  return cellCount >= 6 && cellCount % 3 === 0 ? 3 : null;
+}
+
+function promoteFlattenedTableHeading(block: string) {
+  if (
+    !/[\r\n]/.test(block) &&
+    /^\d{1,3}\\?\.\s+\S/.test(block) &&
+    !/^#{1,6}\s/.test(block)
+  ) {
+    return `## ${block.replace(/^(\d{1,3})\\\./, "$1.")}`;
+  }
+  return block;
+}
+
+type MarkdownBlockSegment = {
+  block: string;
+  separator: string;
+};
+
+function splitMarkdownBlockSegments(source: string) {
+  const segments: MarkdownBlockSegment[] = [];
+  const separatorPattern = /(?:\r\n?|\n)[\t ]*(?:(?:\r\n?|\n))+/g;
+  let blockStart = 0;
+
+  for (const match of source.matchAll(separatorPattern)) {
+    const separatorStart = match.index;
+    segments.push({
+      block: source.slice(blockStart, separatorStart),
+      separator: match[0],
+    });
+    blockStart = separatorStart + match[0].length;
+  }
+  segments.push({ block: source.slice(blockStart), separator: "" });
+  return segments;
+}
+
+function normalizeFlattenedMarkdownTables(source: string) {
+  const segments = splitMarkdownBlockSegments(source);
+  let changed = false;
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const possibleColumnMarker = blankMarkdownTableColumnCount(
+      segments[index].block,
+    );
+    const hasExplicitColumnMarker =
+      possibleColumnMarker !== null &&
+      possibleColumnMarker > 1 &&
+      blankMarkdownTableColumnCount(segments[index + 1]?.block ?? "") === 1;
+    const runStart = hasExplicitColumnMarker ? index + 1 : index;
+    if (
+      blankMarkdownTableColumnCount(segments[runStart]?.block ?? "") !== 1
+    ) {
+      continue;
+    }
+
+    const cells: string[] = [];
+    let cursor = runStart;
+    while (
+      blankMarkdownTableColumnCount(segments[cursor]?.block ?? "") === 1 &&
+      cursor + 1 < segments.length
+    ) {
+      const cell = segments[cursor + 1].block.trim();
+      if (
+        !cell ||
+        /[\r\n]/.test(cell) ||
+        blankMarkdownTableColumnCount(cell) !== null ||
+        /(^|[^\\])\|/.test(cell)
+      ) {
+        break;
+      }
+      cells.push(cell);
+      cursor += 2;
+    }
+
+    const columnCount = flattenedTableColumnCount(
+      cells.length,
+      hasExplicitColumnMarker ? possibleColumnMarker : null,
+    );
+    if (columnCount === null) {
+      if (hasExplicitColumnMarker) index = cursor - 1;
+      continue;
+    }
+
+    const rows: string[][] = [];
+    for (let cellIndex = 0; cellIndex < cells.length; cellIndex += columnCount) {
+      rows.push(cells.slice(cellIndex, cellIndex + columnCount));
+    }
+    const lineEnding = segments[index].block.match(/\r\n?|\n/)?.[0] ?? "\n";
+    const renderRow = (row: string[]) => `| ${row.join(" | ")} |`;
+    const table = [
+      renderRow(rows[0]),
+      renderRow(Array.from({ length: columnCount }, () => "---")),
+      ...rows.slice(1).map(renderRow),
+    ].join(lineEnding);
+
+    const trailingSeparator = segments[cursor - 1].separator;
+    segments.splice(index, cursor - index, {
+      block: table,
+      separator: trailingSeparator,
+    });
+    if (index > 0) {
+      segments[index - 1].block = promoteFlattenedTableHeading(
+        segments[index - 1].block,
+      );
+    }
+    changed = true;
+  }
+
+  return changed
+    ? segments.map(({ block, separator }) => `${block}${separator}`).join("")
+    : source;
+}
+
 function splitInlineBoundaries(content: string) {
   let start = 0;
   while (start < content.length) {
@@ -2945,6 +3099,7 @@ function convertRichTextHtmlToMarkdown(html: string): RichTextMarkdown | null {
       );
       if (!markdown || hasUnparsedFormattingDelimiter(markdown)) return null;
     }
+    markdown = normalizeFlattenedMarkdownTables(markdown);
     return {
       block:
         Array.from(document.body.querySelectorAll(blockRichTextSelector)).some(
@@ -3372,9 +3527,24 @@ const markdownRichTextDomPaste = Prec.lowest(
 const markdownRichTextClipboardInput = Prec.lowest(
   EditorView.clipboardInputFilter.of((plainText, state) => {
     const scope = state.field(markdownRichTextPasteScope, false);
-    if (!scope) return plainText;
-    const staged = stagedRichTextPastes.get(scope);
-    if (!staged) return plainText;
+    const staged = scope ? stagedRichTextPastes.get(scope) : undefined;
+    if (!scope || !staged) {
+      const normalized = normalizeFlattenedMarkdownTables(plainText);
+      if (normalized === plainText) return plainText;
+
+      const scanBudget = createMarkdownContextScanBudget();
+      const hasLiteralSelection = state.selection.ranges.some((range) =>
+        isLiteralMarkdownInsertionContext(
+          state,
+          range.from,
+          range.to,
+          scanBudget,
+        )
+      );
+      return hasLiteralSelection
+        ? plainText
+        : normalized;
+    }
 
     stagedRichTextPastes.delete(scope);
     const pending = { ...staged, plainText };

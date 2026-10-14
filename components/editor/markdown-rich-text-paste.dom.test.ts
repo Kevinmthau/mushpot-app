@@ -3317,7 +3317,7 @@ describe("rich-text Markdown paste", () => {
     );
   });
 
-  it("keeps valid one-hyphen GFM tables byte-for-byte on native paste", () => {
+  it("reconstructs a flattened table from an explicit column marker", () => {
     const source = `|   |   |
 | - | - |
 
@@ -3353,15 +3353,275 @@ D`;
         getData: (type: string) => type === "text/plain" ? source : "",
       },
     });
-    const html = renderToStaticMarkup(
-      createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, source),
+    view.contentDOM.dispatchEvent(event);
+
+    expect(view.state.doc.toString()).toBe(
+      "| A | B |\n| --- | --- |\n| C | D |",
     );
+  });
+
+  it("keeps a flattened run with an incompatible explicit marker unchanged", () => {
+    const source = [
+      "|  |  |  |  |\n| - | - | - | - |",
+      ...["A", "B", "C", "D", "E", "F"].flatMap((cell) => [
+        "|  |\n| - |",
+        cell,
+      ]),
+    ].join("\n\n");
+    view = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        extensions: [markdown({ base: markdownLanguage }), markdownRichTextPaste],
+      }),
+    });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? source : "",
+      },
+    });
 
     view.contentDOM.dispatchEvent(event);
 
     expect(view.state.doc.toString()).toBe(source);
-    expect(new DOMParser().parseFromString(html, "text/html").querySelectorAll("table"))
-      .toHaveLength(5);
+  });
+
+  it("preserves untouched blank-line runs around a repaired table", () => {
+    const flattenedTable = [
+      "|  |  |\n| - | - |",
+      ...["A", "B", "C", "D"].flatMap((cell) => ["|  |\n| - |", cell]),
+    ].join("\n\n");
+    const source = `${flattenedTable}\n\n\`\`\`\na\n\n\nb\n\`\`\``;
+    view = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        extensions: [markdown({ base: markdownLanguage }), markdownRichTextPaste],
+      }),
+    });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? source : "",
+      },
+    });
+
+    view.contentDOM.dispatchEvent(event);
+
+    expect(view.state.doc.toString()).toBe(
+      "| A | B |\n| --- | --- |\n| C | D |\n\n```\na\n\n\nb\n```",
+    );
+  });
+
+  it("keeps flattened-table text native inside fenced code", () => {
+    const source = [
+      "|  |  |\n| - | - |",
+      ...["A", "B", "C", "D"].flatMap((cell) => ["|  |\n| - |", cell]),
+    ].join("\n\n");
+    const doc = "```\n\n```";
+    const position = 4;
+    view = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        doc,
+        selection: { anchor: position },
+        extensions: [markdown({ base: markdownLanguage }), markdownRichTextPaste],
+      }),
+    });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? source : "",
+      },
+    });
+
+    view.contentDOM.dispatchEvent(event);
+
+    expect(view.state.doc.toString()).toBe(
+      `${doc.slice(0, position)}${source}${doc.slice(position)}`,
+    );
+  });
+
+  it("reconstructs the attached three-column customer payment table", () => {
+    const source = `1. Five ways customers could pay for Fusion
+
+|   |
+| - |
+
+Customer
+
+|   |
+| - |
+
+Who pays for compute?
+
+|   |
+| - |
+
+Experience
+
+|   |
+| - |
+
+Consumer
+
+|   |
+| - |
+
+Existing subscription provider
+
+|   |
+| - |
+
+Fusion included in another service
+
+|   |
+| - |
+
+Enterprise employee
+
+|   |
+| - |
+
+Employer's cloud contract
+
+|   |
+| - |
+
+Sign in with work account
+
+|   |
+| - |
+
+Developer
+
+|   |
+| - |
+
+Existing AWS/Azure/GCP account
+
+|   |
+| - |
+
+Bring your own cloud account
+
+|   |
+| - |
+
+Independent user
+
+|   |
+| - |
+
+Fusion provider
+
+|   |
+| - |
+
+Pay monthly or by usage
+
+|   |
+| - |
+
+Privacy-focused user
+
+|   |
+| - |
+
+Self-hosted server
+
+|   |
+| - |
+
+No third-party compute bill
+
+The key is that Andromeda doesn't require any particular billing relationship.
+
+The OS just needs to discover which computing resources the user is entitled to use.`;
+    view = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        extensions: [markdown({ base: markdownLanguage }), markdownRichTextPaste],
+      }),
+    });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? source : "",
+      },
+    });
+
+    view.contentDOM.dispatchEvent(event);
+
+    const pasted = view.state.doc.toString();
+    expect(pasted).toContain("## 1. Five ways customers could pay for Fusion");
+    expect(pasted).toContain(
+      "| Customer | Who pays for compute? | Experience |\n" +
+      "| --- | --- | --- |\n" +
+      "| Consumer | Existing subscription provider | Fusion included in another service |",
+    );
+    expect(pasted).toContain(
+      "| Privacy-focused user | Self-hosted server | No third-party compute bill |",
+    );
+    expect(pasted).toContain(
+      "The key is that Andromeda doesn't require any particular billing relationship.\n\n" +
+      "The OS just needs to discover which computing resources the user is entitled to use.",
+    );
+
+    const html = renderToStaticMarkup(
+      createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, pasted),
+    );
+    const rendered = new DOMParser().parseFromString(html, "text/html");
+    expect(rendered.querySelectorAll("table")).toHaveLength(1);
+    expect(rendered.querySelectorAll("thead th")).toHaveLength(3);
+    expect(rendered.querySelectorAll("tbody tr")).toHaveLength(5);
+  });
+
+  it("reconstructs the flattened table from rich clipboard HTML", () => {
+    const cells = [
+      "Customer",
+      "Who pays for compute?",
+      "Experience",
+      "Consumer",
+      "Existing subscription provider",
+      "Fusion included in another service",
+    ];
+    const marker = "<table><thead><tr><th></th></tr></thead></table>";
+    const html = [
+      "<p>1. Five ways customers could pay for Fusion</p>",
+      ...cells.flatMap((cell) => [marker, `<p>${cell}</p>`]),
+    ].join("");
+
+    expect(richTextHtmlToMarkdown(html)).toBe(
+      "## 1. Five ways customers could pay for Fusion\n\n" +
+      "| Customer | Who pays for compute? | Experience |\n" +
+      "| --- | --- | --- |\n" +
+      "| Consumer | Existing subscription provider | Fusion included in another service |",
+    );
+  });
+
+  it("keeps an ambiguous short run of empty table markers unchanged", () => {
+    const source = "|  |\n| - |\n\nA\n\n|  |\n| - |\n\nB";
+    view = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        extensions: [markdown({ base: markdownLanguage }), markdownRichTextPaste],
+      }),
+    });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? source : "",
+      },
+    });
+
+    view.contentDOM.dispatchEvent(event);
+
+    expect(view.state.doc.toString()).toBe(source);
   });
 
   it("escapes accidental GFM table delimiter rows in non-table HTML", () => {
