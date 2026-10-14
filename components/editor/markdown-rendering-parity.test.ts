@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { markdownLiveFormatting } from "@/components/editor/editor-appearance";
+import { richTextHtmlToMarkdown } from "@/components/editor/markdown-rich-text-paste";
 import { SharedDocumentPageClient } from "@/components/editor/shared-document-page-client";
 import { markdownLinkFixtures, markdownMediaFixtures } from "@/lib/markdown/rendering-fixtures";
 
@@ -38,6 +39,25 @@ afterEach(() => {
   view?.destroy();
   view = undefined;
   document.body.replaceChildren();
+});
+
+describe("rich HTML soft-break rendering parity", () => {
+  it.each([
+    ["<p>A<br>B</p>", "A\nB"],
+    ["<p>A<br> B</p>", "A\nB"],
+    ["<p><strong>A<br></strong><em>B</em></p>", "**A**\n*B*"],
+  ])("renders one line transition in the editor and shared document: %s", (html, expected) => {
+    const source = richTextHtmlToMarkdown(html);
+
+    expect(source).toBe(expected);
+    const editor = renderEditor(source!);
+    const shared = renderShared(source!);
+    expect(
+      Array.from(editor.querySelectorAll(".cm-line"), (line) => line.textContent),
+    ).toHaveLength(2);
+    expect(shared.querySelector("p")?.textContent).toBe("A\nB");
+    expect(shared.querySelector("p br")).toBeNull();
+  });
 });
 
 describe("editor and shared Markdown media parity", () => {

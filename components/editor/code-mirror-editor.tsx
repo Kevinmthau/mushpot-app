@@ -2,6 +2,7 @@
 
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import {
+  Compartment,
   EditorState,
   Transaction,
   type Extension,
@@ -13,7 +14,7 @@ import {
   placeholder as placeholderExtension,
 } from "@codemirror/view";
 import { bracketMatching, indentOnInput } from "@codemirror/language";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 export type CodeMirrorEditorApi = {
   focus: () => void;
@@ -21,6 +22,7 @@ export type CodeMirrorEditorApi = {
 
 type CodeMirrorEditorProps = {
   documentId: string;
+  dynamicExtension?: Extension;
   initialValue: string;
   onChange?: (doc: Text) => void;
   onReady?: (api: CodeMirrorEditorApi | null) => void;
@@ -111,6 +113,7 @@ export function acceptExternalEditorValue(
 
 export function CodeMirrorEditor({
   documentId,
+  dynamicExtension,
   initialValue,
   onChange,
   onReady,
@@ -119,6 +122,7 @@ export function CodeMirrorEditor({
   readOnly = false,
   placeholder,
 }: CodeMirrorEditorProps) {
+  const dynamicExtensionCompartment = useMemo(() => new Compartment(), []);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const restoreFocusRef = useRef(false);
@@ -129,6 +133,7 @@ export function CodeMirrorEditor({
   );
   const onChangeRef = useRef(onChange);
   const onReadyRef = useRef(onReady);
+  const dynamicExtensionRef = useRef(dynamicExtension);
   const editorApiRef = useRef<CodeMirrorEditorApi>({
     focus: () => {
       viewRef.current?.focus();
@@ -136,6 +141,7 @@ export function CodeMirrorEditor({
   });
 
   initialValueRef.current = initialValue;
+  dynamicExtensionRef.current = dynamicExtension;
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -172,6 +178,7 @@ export function CodeMirrorEditor({
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.editable.of(editable),
       EditorState.readOnly.of(readOnly),
+      dynamicExtensionCompartment.of(dynamicExtensionRef.current ?? []),
       ...extensions,
     ];
 
@@ -238,7 +245,23 @@ export function CodeMirrorEditor({
         viewRef.current = null;
       }
     };
-  }, [documentId, editable, extensions, placeholder, readOnly]);
+  }, [
+    documentId,
+    dynamicExtensionCompartment,
+    editable,
+    extensions,
+    placeholder,
+    readOnly,
+  ]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    view.dispatch({
+      effects: dynamicExtensionCompartment.reconfigure(dynamicExtension ?? []),
+    });
+  }, [dynamicExtension, dynamicExtensionCompartment]);
 
   useEffect(() => {
     const accepted = acceptExternalEditorValue(

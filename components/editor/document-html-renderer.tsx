@@ -97,12 +97,16 @@ main { width: 100%; max-width: 800px; margin: 0 auto; padding: 2rem 1rem 5rem; }
   min-width: clamp(8rem, 18vw, 10rem);
   max-width: 28rem;
   padding: 0.65rem 0.75rem;
-  border: 1px solid var(--line);
+  border: 0;
+  border-bottom: 1px solid var(--line);
   vertical-align: top;
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.markdown-table-preview th { background: #f5f3ec; font-weight: 700; }
+.markdown-table-preview tr:last-child td { border-bottom: 0; }
+.markdown-table-preview th:first-child, .markdown-table-preview td:first-child { padding-left: 0; }
+.markdown-table-preview th:last-child, .markdown-table-preview td:last-child { padding-right: 0; }
+.markdown-table-preview th { background: transparent; font-weight: 700; }
 @media (max-width: 639px) {
   .markdown-body h1 { font-size: 1.7rem; }
   .markdown-body h2 { font-size: 1.3rem; }

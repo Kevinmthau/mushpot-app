@@ -5,10 +5,11 @@ import {
   EditorState,
   Transaction,
   type ChangeSpec,
+  type Extension,
   type Text,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { useEffect, useMemo, type RefObject } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
 
 import {
   editorTheme,
@@ -97,11 +98,31 @@ export function EditorWorkspace({
   owner,
   placeholder,
 }: EditorWorkspaceProps) {
+  const [richTextPasteExtension, setRichTextPasteExtension] =
+    useState<Extension | null>(null);
   const { isDraggingMedia, mediaUploadExtensions, uploadingMediaCount } = useMediaUploadInsertion({
     documentId,
     dropTargetRef,
     owner,
   });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void import("@/components/editor/markdown-rich-text-paste").then(
+      ({ markdownRichTextPaste }) => {
+        if (!cancelled) setRichTextPasteExtension(markdownRichTextPaste);
+      },
+      () => {
+        // Rich paste is an enhancement; native paste remains available if
+        // its deferred chunk cannot be loaded.
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     onUploadingMediaCountChange?.(uploadingMediaCount);
@@ -115,7 +136,7 @@ export function EditorWorkspace({
 
   const editorExtensions = useMemo(
     () => [
-      markdown({ base: markdownLanguage }),
+      markdown({ base: markdownLanguage, pasteURLAsLink: false }),
       markdownLiveFormatting,
       mediaUploadExtensions,
       markdownLinkPaste,
@@ -131,6 +152,7 @@ export function EditorWorkspace({
   return (
     <>
       <CodeMirrorEditor
+        dynamicExtension={richTextPasteExtension ?? undefined}
         documentId={documentId}
         initialValue={initialValue}
         onChange={onChange}
