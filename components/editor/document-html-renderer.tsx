@@ -85,20 +85,32 @@ main { width: 100%; max-width: 800px; margin: 0 auto; padding: 2rem 1rem 5rem; }
   width: 100%;
   min-width: 0;
   overflow-x: auto;
-  margin: 1em 0;
+  margin: 1.25rem 0;
   -webkit-overflow-scrolling: touch;
 }
 .markdown-body > .markdown-table-preview {
   width: max(100%, calc(100vw - 2rem));
   margin-left: min(0px, calc(50% - 50vw + 1rem));
 }
-.markdown-table-preview table { width: 100%; min-width: 100%; border-collapse: collapse; table-layout: auto; }
+.markdown-table-preview table {
+  width: 100%;
+  min-width: max(100%, 48rem);
+  border-collapse: collapse;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.45;
+  table-layout: auto;
+}
 .markdown-table-preview th, .markdown-table-preview td {
-  min-width: clamp(8rem, 18vw, 10rem);
+  min-width: clamp(11rem, 22vw, 20rem);
   max-width: 28rem;
-  padding: 0.65rem 0.75rem;
+  padding: 0.85rem 1rem;
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid #cfd4d1;
+  text-align: left;
   vertical-align: top;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -106,7 +118,11 @@ main { width: 100%; max-width: 800px; margin: 0 auto; padding: 2rem 1rem 5rem; }
 .markdown-table-preview tr:last-child td { border-bottom: 0; }
 .markdown-table-preview th:first-child, .markdown-table-preview td:first-child { padding-left: 0; }
 .markdown-table-preview th:last-child, .markdown-table-preview td:last-child { padding-right: 0; }
-.markdown-table-preview th { background: transparent; font-weight: 700; }
+.markdown-table-preview th {
+  background: transparent;
+  border-bottom-color: #b8c1be;
+  font-weight: 700;
+}
 @media (max-width: 639px) {
   .markdown-body h1 { font-size: 1.7rem; }
   .markdown-body h2 { font-size: 1.3rem; }

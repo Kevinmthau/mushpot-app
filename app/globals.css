@@ -423,37 +423,38 @@ video {
 }
 
 .markdown-table-preview {
-  margin-block: 1em;
+  margin-block: 1.25rem;
 }
 
 .cm-md-table-preview {
-  padding: 1rem 0;
+  padding: 1.25rem 0;
   cursor: text;
 }
 
 .markdown-table-preview table,
 .cm-md-table-preview table {
   width: 100%;
-  min-width: 100%;
+  min-width: max(100%, 48rem);
   border-collapse: collapse;
   color: var(--ink);
+  font-family: var(--font-ui), "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.45;
   table-layout: auto;
-}
-
-.cm-md-table-preview table {
-  font: inherit;
-  line-height: 1.5;
 }
 
 .markdown-table-preview th,
 .markdown-table-preview td,
 .cm-md-table-preview th,
 .cm-md-table-preview td {
-  min-width: clamp(8rem, 18vw, 10rem);
+  min-width: clamp(11rem, 22vw, 20rem);
   max-width: 28rem;
-  padding: 0.65rem 0.75rem;
+  padding: 0.85rem 1rem;
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid #cfd4d1;
+  text-align: left;
   vertical-align: top;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -482,6 +483,7 @@ video {
 .cm-md-table-preview th {
   background: transparent;
   font-weight: 700;
+  border-bottom-color: #b8c1be;
 }
 
 .cm-md-table-preview code {
