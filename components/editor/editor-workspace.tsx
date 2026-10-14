@@ -5,11 +5,10 @@ import {
   EditorState,
   Transaction,
   type ChangeSpec,
-  type Extension,
   type Text,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { useEffect, useMemo, useState, type RefObject } from "react";
+import { useEffect, useMemo, type RefObject } from "react";
 
 import {
   editorTheme,
@@ -22,6 +21,7 @@ import {
 import { useMediaUploadInsertion } from "@/components/editor/use-image-upload";
 import { markdownLinkPaste } from "@/components/editor/markdown-link-paste";
 import { markdownLinkPreviews } from "@/components/editor/markdown-link-preview";
+import { markdownRichTextPaste } from "@/components/editor/markdown-rich-text-paste";
 
 // iOS Safari does not reliably honor autocapitalize="sentences" inside
 // CodeMirror's contenteditable, so the first letter typed into an empty
@@ -98,31 +98,11 @@ export function EditorWorkspace({
   owner,
   placeholder,
 }: EditorWorkspaceProps) {
-  const [richTextPasteExtension, setRichTextPasteExtension] =
-    useState<Extension | null>(null);
   const { isDraggingMedia, mediaUploadExtensions, uploadingMediaCount } = useMediaUploadInsertion({
     documentId,
     dropTargetRef,
     owner,
   });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void import("@/components/editor/markdown-rich-text-paste").then(
-      ({ markdownRichTextPaste }) => {
-        if (!cancelled) setRichTextPasteExtension(markdownRichTextPaste);
-      },
-      () => {
-        // Rich paste is an enhancement; native paste remains available if
-        // its deferred chunk cannot be loaded.
-      },
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     onUploadingMediaCountChange?.(uploadingMediaCount);
@@ -138,6 +118,9 @@ export function EditorWorkspace({
     () => [
       markdown({ base: markdownLanguage, pasteURLAsLink: false }),
       markdownLiveFormatting,
+      // Install paste conversion with the initial editor state so a user's
+      // first paste cannot arrive before a deferred extension is ready.
+      markdownRichTextPaste,
       mediaUploadExtensions,
       markdownLinkPaste,
       markdownLinkPreviews,
@@ -152,7 +135,6 @@ export function EditorWorkspace({
   return (
     <>
       <CodeMirrorEditor
-        dynamicExtension={richTextPasteExtension ?? undefined}
         documentId={documentId}
         initialValue={initialValue}
         onChange={onChange}
