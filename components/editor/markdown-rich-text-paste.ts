@@ -637,7 +637,7 @@ function flattenedTableColumnCount(
   return cellCount >= 6 && cellCount % 3 === 0 ? 3 : null;
 }
 
-function promoteFlattenedTableHeading(block: string) {
+function promotePastedTableHeading(block: string) {
   if (
     !/[\r\n]/.test(block) &&
     /^\d{1,3}\\?\.\s+\S/.test(block) &&
@@ -735,7 +735,7 @@ function normalizeFlattenedMarkdownTables(source: string) {
       separator: trailingSeparator,
     });
     if (index > 0) {
-      segments[index - 1].block = promoteFlattenedTableHeading(
+      segments[index - 1].block = promotePastedTableHeading(
         segments[index - 1].block,
       );
     }
@@ -745,6 +745,88 @@ function normalizeFlattenedMarkdownTables(source: string) {
   return changed
     ? segments.map(({ block, separator }) => `${block}${separator}`).join("")
     : source;
+}
+
+function tabSeparatedTableRow(line: string) {
+  if (!line.includes("\t")) return null;
+
+  const cells = line.split("\t");
+  if (
+    cells.length < 2 ||
+    cells.length > MAX_PASTED_TABLE_COLUMNS ||
+    cells.some((cell) => cell.trim() === "")
+  ) {
+    return null;
+  }
+
+  return cells.map((cell) =>
+    escapeInlineText(cell.trim(), { tableCell: true })
+  );
+}
+
+function normalizeTabSeparatedMarkdownTables(source: string) {
+  const lineEnding = source.match(/\r\n?|\n/)?.[0] ?? "\n";
+  const lines = source.split(/\r\n?|\n/);
+  let changed = false;
+
+  for (let index = 0; index < lines.length;) {
+    const firstRow = tabSeparatedTableRow(lines[index]);
+    if (!firstRow) {
+      index += 1;
+      continue;
+    }
+
+    const rows = [firstRow];
+    let cursor = index + 1;
+    while (cursor < lines.length) {
+      const row = tabSeparatedTableRow(lines[cursor]);
+      if (!row || row.length !== firstRow.length) break;
+      rows.push(row);
+      cursor += 1;
+    }
+
+    // A single tabbed line is commonly prose or indentation. Require a
+    // header and at least one body row before treating plain text as a table.
+    if (rows.length < 2) {
+      index = cursor;
+      continue;
+    }
+
+    let previousContent = index - 1;
+    while (previousContent >= 0 && lines[previousContent].trim() === "") {
+      previousContent -= 1;
+    }
+    if (previousContent >= 0) {
+      lines[previousContent] = promotePastedTableHeading(
+        lines[previousContent],
+      );
+    }
+
+    const renderRow = (row: string[]) => `| ${row.join(" | ")} |`;
+    const tableLines = [
+      renderRow(rows[0]),
+      renderRow(Array.from({ length: firstRow.length }, () => "---")),
+      ...rows.slice(1).map(renderRow),
+    ];
+    if (index > 0 && lines[index - 1].trim() !== "") {
+      tableLines.unshift("");
+    }
+    if (cursor < lines.length && lines[cursor].trim() !== "") {
+      tableLines.push("");
+    }
+
+    lines.splice(index, cursor - index, ...tableLines);
+    index += tableLines.length;
+    changed = true;
+  }
+
+  return changed ? lines.join(lineEnding) : source;
+}
+
+function normalizePastedMarkdownTables(source: string) {
+  return normalizeTabSeparatedMarkdownTables(
+    normalizeFlattenedMarkdownTables(source),
+  );
 }
 
 function splitInlineBoundaries(content: string) {
@@ -3099,7 +3181,7 @@ function convertRichTextHtmlToMarkdown(html: string): RichTextMarkdown | null {
       );
       if (!markdown || hasUnparsedFormattingDelimiter(markdown)) return null;
     }
-    markdown = normalizeFlattenedMarkdownTables(markdown);
+    markdown = normalizePastedMarkdownTables(markdown);
     return {
       block:
         Array.from(document.body.querySelectorAll(blockRichTextSelector)).some(
@@ -3529,7 +3611,7 @@ const markdownRichTextClipboardInput = Prec.lowest(
     const scope = state.field(markdownRichTextPasteScope, false);
     const staged = scope ? stagedRichTextPastes.get(scope) : undefined;
     if (!scope || !staged) {
-      const normalized = normalizeFlattenedMarkdownTables(plainText);
+      const normalized = normalizePastedMarkdownTables(plainText);
       if (normalized === plainText) return plainText;
 
       const scanBudget = createMarkdownContextScanBudget();

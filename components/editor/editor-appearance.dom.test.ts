@@ -72,6 +72,43 @@ describe("table preview DOM reuse", () => {
     expect(view.dom.querySelector(".cm-md-table-preview")).not.toBeNull();
   });
 
+  it("previews a repaired tab-separated table after paste", () => {
+    const source = [
+      "1. Five ways customers could pay for Fusion",
+      "Customer\tWho pays for compute?\tExperience",
+      "Consumer\tExisting subscription provider\tFusion included in another service",
+      "Enterprise employee\tEmployer's cloud contract\tSign in with work account",
+      "Developer\tExisting AWS/Azure/GCP account\tBring your own cloud account",
+      "Independent user\tFusion provider\tPay monthly or by usage",
+      "Privacy-focused user\tSelf-hosted server\tNo third-party compute bill",
+      "The key is that Andromeda doesn't require any particular billing relationship.",
+    ].join("\n");
+    view = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        extensions: [
+          markdown({ base: markdownLanguage }),
+          markdownLiveFormatting,
+          markdownRichTextPaste,
+        ],
+      }),
+    });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? source : "",
+      },
+    });
+
+    view.contentDOM.dispatchEvent(event);
+
+    const table = view.dom.querySelector(".cm-md-table-preview table");
+    expect(table).not.toBeNull();
+    expect(table?.querySelectorAll("th")).toHaveLength(3);
+    expect(table?.querySelectorAll("tbody tr")).toHaveLength(5);
+  });
+
   it("retains the table and video when text shifts, and clicks reveal the current cell", () => {
     const editor = createView();
     const originalTable = editor.dom.querySelector(".cm-md-table-preview");

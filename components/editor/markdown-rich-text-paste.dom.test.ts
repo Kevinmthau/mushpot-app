@@ -3444,6 +3444,75 @@ D`;
     );
   });
 
+  it("reconstructs a tab-separated customer payment table", () => {
+    const source = `1. Five ways customers could pay for Fusion
+Customer\tWho pays for compute?\tExperience
+Consumer\tExisting subscription provider\tFusion included in another service
+Enterprise employee\tEmployer's cloud contract\tSign in with work account
+Developer\tExisting AWS/Azure/GCP account\tBring your own cloud account
+Independent user\tFusion provider\tPay monthly or by usage
+Privacy-focused user\tSelf-hosted server\tNo third-party compute bill
+The key is that Andromeda doesn't require any particular billing relationship.
+
+The OS just needs to discover which computing resources the user is entitled to use.`;
+    view = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        extensions: [markdown({ base: markdownLanguage }), markdownRichTextPaste],
+      }),
+    });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? source : "",
+      },
+    });
+
+    view.contentDOM.dispatchEvent(event);
+
+    const pasted = view.state.doc.toString();
+    expect(pasted).toContain("## 1. Five ways customers could pay for Fusion");
+    expect(pasted).toContain(
+      "| Customer | Who pays for compute? | Experience |\n" +
+      "| --- | --- | --- |\n" +
+      "| Consumer | Existing subscription provider | Fusion included in another service |",
+    );
+    expect(pasted).toContain(
+      "| Privacy-focused user | Self-hosted server | No third-party compute bill |\n\n" +
+      "The key is that Andromeda doesn't require any particular billing relationship.",
+    );
+
+    const html = renderToStaticMarkup(
+      createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, pasted),
+    );
+    const rendered = new DOMParser().parseFromString(html, "text/html");
+    expect(rendered.querySelectorAll("table")).toHaveLength(1);
+    expect(rendered.querySelectorAll("thead th")).toHaveLength(3);
+    expect(rendered.querySelectorAll("tbody tr")).toHaveLength(5);
+  });
+
+  it("keeps an isolated tab-separated prose line unchanged", () => {
+    const source = "Label\tValue";
+    view = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        extensions: [markdown({ base: markdownLanguage }), markdownRichTextPaste],
+      }),
+    });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? source : "",
+      },
+    });
+
+    view.contentDOM.dispatchEvent(event);
+
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
   it("reconstructs the attached three-column customer payment table", () => {
     const source = `1. Five ways customers could pay for Fusion
 
