@@ -46,7 +46,10 @@ function EditorSkeleton({ initialDocument }: Partial<EditorClientProps>) {
           Opening editor...
         </p>
 
-        <EditorPreviewFallback initialValue={initialDocument.content} />
+        <EditorPreviewFallback
+          initialValue={initialDocument.content}
+          contentFormat={initialDocument.content_format}
+        />
       </main>
     </div>
   );

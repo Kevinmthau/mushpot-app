@@ -9,12 +9,17 @@ import type {
   PersistDocumentResult,
   SavedDocumentResult,
 } from "@/lib/document-sync";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 
 const base: PersistableDocumentSnapshot = {
   id: "doc",
   owner: "owner",
   title: "Title",
   content: "Draft",
+  content_format: MARKDOWN_CONTENT_FORMAT,
   updated_at: "v1",
   share_enabled: false,
   share_token: null,
@@ -95,6 +100,30 @@ describe("document write coordinator", () => {
     const stale = await coordinator.enqueue(base, scope);
     expect(persist).toHaveBeenCalledOnce();
     expect(stale.status).toBe("superseded");
+  });
+
+  it("does not coalesce equal serialized content across content formats", async () => {
+    const { coordinator, persist, scope } = setup();
+    persist.mockImplementation(async (snapshot) => ({
+      ...saved("v2"),
+      confirmedSnapshot: { ...snapshot, updated_at: "v2" },
+    }));
+
+    await coordinator.enqueue(base, scope);
+    await coordinator.enqueue(
+      {
+        ...base,
+        content_format: PAGE_JSON_CONTENT_FORMAT,
+        _localUpdatedAt: 11,
+      },
+      scope,
+    );
+
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content_format: PAGE_JSON_CONTENT_FORMAT }),
+      scope,
+    );
   });
 
   it("does not retry or adopt the remote timestamp after a conflict", async () => {

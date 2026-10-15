@@ -28,7 +28,7 @@ function Probe({
   getLatestContent = () => "Draft",
 }: {
   getLatestTitle?: () => string;
-  getLatestContent?: () => string;
+  getLatestContent?: () => string | null;
 }) {
   const download = useDocumentHtmlDownload({
     owner: OWNER_ID,
@@ -107,6 +107,7 @@ describe("mounted HTML download", () => {
     expect(exportDocumentHtml).toHaveBeenCalledWith({
       title: "Unsynced title",
       content: "Unsynced content",
+      contentFormat: "markdown_v1",
       owner: OWNER_ID,
     }, { signal: expect.any(AbortSignal) });
   });
@@ -122,8 +123,24 @@ describe("mounted HTML download", () => {
     expect(exportDocumentHtml).toHaveBeenCalledWith({
       title: "New title",
       content: "New local content",
+      contentFormat: "markdown_v1",
       owner: OWNER_ID,
     }, { signal: expect.any(AbortSignal) });
+  });
+
+  it("does not export a stale body when the latest draft is unsavable", async () => {
+    await act(async () =>
+      root.render(
+        createElement(Probe, { getLatestContent: () => null }),
+      ),
+    );
+
+    await act(async () => api.handleDownload());
+
+    expect(exportDocumentHtml).not.toHaveBeenCalled();
+    expect(window.alert).toHaveBeenCalledWith(
+      expect.stringContaining("latest change can be saved"),
+    );
   });
 
   it("prevents duplicate preparation and shows Downloading until export finishes", async () => {

@@ -1,12 +1,14 @@
 # Mushpot
 
-Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Private documents load through a local IndexedDB cache and reconcile with Supabase in the background, while shared documents are published through a Supabase Edge Function and rendered as clean read-only pages.
+Mushpot is a minimalist, page-first writing app built with Next.js and Supabase. New documents are edited as structured web pages and download as standalone `.html` files. Existing Markdown documents remain editable without a lossy conversion. Private documents load through a local IndexedDB cache and reconcile with Supabase in the background, while shared documents are published through a Supabase Edge Function and rendered as clean read-only pages.
 
 ## Current Feature Set
 
 - Email magic-link sign-in with a scanner-resistant `/auth/verify` step and PKCE/token confirmation
 - Authenticated document list with instant document creation
-- Markdown editor with title editing, debounced autosave, reading-time display, clone, and delete
+- Structured rich-page editor with formatting, tables, themes, layout width, title editing, debounced autosave, reading-time display, clone, and delete
+- Standalone HTML download with owned media embedded into the file
+- Backward-compatible Markdown editor and renderer for documents created before the page format
 - Image and video upload by drag/drop or paste into private Supabase Storage buckets
 - Secret bearer share links with enable, copy, rotate, and disable controls
 - Public shared document pages with generated Open Graph images
@@ -18,9 +20,10 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - Next.js 16 App Router
 - React 19 + TypeScript
 - Tailwind CSS v4
-- CodeMirror 6
+- Tiptap 3 for structured page editing and static HTML rendering
+- CodeMirror 6 for legacy Markdown documents
 - Supabase Auth, Postgres, Storage, and Edge Functions
-- `react-markdown` + `remark-gfm` for shared-document rendering
+- `react-markdown` + `remark-gfm` for legacy Markdown rendering
 
 ## Routes
 
@@ -58,6 +61,9 @@ Mushpot is a minimalist Markdown writing app built with Next.js and Supabase. Pr
 - Auth redirect path validation and app-origin resolution live in `lib/app-url.ts`. Use those helpers instead of open-coding `next` path or forwarded-host logic.
 - Shared document metadata and Open Graph generation use `lib/shared-document.ts`, which calls the `get-shared-doc` Edge Function rather than querying private tables directly.
 - Document row select strings, editor/list shapes, and cache/editor mapping helpers live in `lib/documents.ts`.
+- `documents.content_format` distinguishes legacy `markdown_v1` rows from structured `page_json_v1` rows. The bounded page schema, semantic-text projection, typed media traversal, and canonical serialization live in `lib/page-document.ts`.
+- New documents use the structured format. Existing Markdown rows are never silently converted, and unknown future formats fail closed in both server responses and the local cache.
+- Page-capable Supabase clients advertise their supported formats. Document RLS hides structured rows from an older client, and IndexedDB v7 closes older cache connections, so a long-lived or rolled-back app cannot expose page JSON as Markdown.
 - `components/documents/use-document-list.ts` owns the cache-first document list load and background Supabase refresh.
 - `components/editor/use-editor-document.ts` owns cache-first editor document loading, session validation, and Supabase reconciliation.
 - `components/editor/document-draft-controller.ts` owns draft hydration, cache writes, autosave scheduling, lifecycle flushes, and conflict state. `use-document-draft.ts` binds it to React and keeps CodeMirror text lazy until stats or persistence needs it.
@@ -114,7 +120,10 @@ Notes:
 5. Apply every SQL migration in `supabase/migrations/` in chronological order.
    The private-media migration is additive: it does not make either Storage
    bucket private and starts the rollout in the `backfill` phase.
-6. Deploy the Edge Functions. Their JWT behavior is tracked in
+6. Deploy the Edge Functions. Deploy `get-shared-doc` before the web app that
+   creates structured pages; the web app deliberately treats a page-shaped
+   response without `content_format` as temporarily unavailable rather than
+   risk rendering a response rewritten by an older function. Their JWT behavior is tracked in
    `supabase/config.toml`, so do not add ad hoc deployment flags:
 
 ```bash
@@ -173,8 +182,11 @@ sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
   URL plus Redirect URLs for both `https://<domain>/auth/verify` and
   `https://<domain>/auth/confirm`. Leaving `NEXT_PUBLIC_APP_URL` unset makes
   the app resolve the live request origin.
-- The private-media rollout is deliberately staged. Keep buckets public while
-  applying the additive schema, deploying both Edge Functions and the app, and
+- The private-media and page-format rollout is deliberately staged. Apply the
+  additive schema and deploy `get-shared-doc` before the app, then keep buckets public while
+  deploying the remaining Edge Function and app. The schema's capability-aware
+  RLS keeps structured rows hidden from stale private clients during deploys and
+  rollbacks. After the app deploy, continue
   completing the production backfill. Freeze document writes only for the
   final pass, switch the rollout to `enforced`, smoke-test, and then run the
   Storage API bucket cutover. The exact commands and rollback path live in
@@ -202,4 +214,4 @@ sources as `<name>.test.ts`. Use `npm run test:watch` while developing and
 - Signed media redirects expire after five minutes. Disabling sharing prevents
   new redirects immediately, but a URL already signed before revocation can
   remain usable until its five-minute expiry.
-- Shared-document rendering supports GitHub Flavored Markdown and remote/public images, so third-party image hosts can receive reader requests for embedded remote assets.
+- New shared pages render the validated structured schema. Legacy shared documents continue to support GitHub Flavored Markdown. Both formats can embed remote/public images, so third-party image hosts can receive reader requests for embedded remote assets.

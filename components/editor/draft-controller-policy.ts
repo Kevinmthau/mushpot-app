@@ -1,4 +1,8 @@
 import type { EditorDocument } from "@/components/editor/editor-types";
+import {
+  parseDocumentContentFormat,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
 
 export function getMostRecentTimestamp(
   currentTimestamp: string,
@@ -86,27 +90,34 @@ export function createDraftPageLifecycleHandlers({
 export function hasUnsavedDocumentChanges({
   cachedDraftIsDirty,
   latestContent,
+  latestContentFormat,
   latestTitle,
   savedContent,
+  savedContentFormat,
   savedTitle,
 }: {
   cachedDraftIsDirty: boolean;
   latestContent: string;
+  latestContentFormat: DocumentContentFormat;
   latestTitle: string;
   savedContent: string;
+  savedContentFormat: DocumentContentFormat;
   savedTitle: string;
 }) {
   return (
     cachedDraftIsDirty ||
     latestTitle !== savedTitle ||
-    latestContent !== savedContent
+    latestContent !== savedContent ||
+    latestContentFormat !== savedContentFormat
   );
 }
 
 export type DraftHydrationState = {
   content: string;
+  contentFormat: DocumentContentFormat;
   isDeleting: boolean;
   savedContent: string;
+  savedContentFormat: DocumentContentFormat;
   savedTitle: string;
   savedUpdatedAt: string;
   shareEnabled: boolean;
@@ -139,8 +150,12 @@ export function reconcileDraftHydration(
 
   return {
     content: mutations.content ? current.content : incoming.content,
+    contentFormat: mutations.content
+      ? current.contentFormat
+      : parseDocumentContentFormat(incoming.content_format),
     isDeleting: current.isDeleting,
     savedContent: incoming.content,
+    savedContentFormat: parseDocumentContentFormat(incoming.content_format),
     savedTitle: incoming.title,
     savedUpdatedAt: incoming.updated_at,
     shareEnabled: mutations.share

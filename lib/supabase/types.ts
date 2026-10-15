@@ -1,3 +1,5 @@
+import type { DocumentContentFormat } from "@/lib/page-document";
+
 export type Json =
   | string
   | number
@@ -15,6 +17,7 @@ export type Database = {
           owner: string;
           title: string;
           content: string;
+          content_format: DocumentContentFormat;
           share_enabled: boolean;
           share_token: string | null;
           clone_status: "pending" | "recovering" | null;
@@ -28,6 +31,7 @@ export type Database = {
           owner: string;
           title?: string;
           content?: string;
+          content_format?: DocumentContentFormat;
           share_enabled?: boolean;
           share_token?: string | null;
           clone_status?: "pending" | "recovering" | null;
@@ -41,6 +45,7 @@ export type Database = {
           owner?: string;
           title?: string;
           content?: string;
+          content_format?: DocumentContentFormat;
           share_enabled?: boolean;
           share_token?: string | null;
           clone_status?: "pending" | "recovering" | null;

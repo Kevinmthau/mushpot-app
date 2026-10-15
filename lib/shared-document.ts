@@ -6,10 +6,19 @@ import {
   DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
   type SharedMediaBatchResponse,
 } from "@/lib/document-media";
+import {
+  type DocumentContentFormat,
+  getDocumentPlainText,
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+  parsePageDocument,
+  parseDocumentContentFormat,
+} from "@/lib/page-document";
 
 export type SharedDocument = {
   title: string;
   content: string;
+  content_format: DocumentContentFormat;
   updated_at: string;
 };
 
@@ -98,8 +107,31 @@ export function normalizeSharedDocumentTitle(title: string) {
   return title.trim() || "Untitled";
 }
 
-export function buildSharedDocumentPreview(content: string, maxLength = 180) {
-  const plainText = stripMarkdownForPreview(content);
+export function buildSharedDocumentPreview(
+  content: string,
+  maxLength?: number,
+): string;
+export function buildSharedDocumentPreview(
+  content: string,
+  contentFormat: DocumentContentFormat,
+  maxLength?: number,
+): string;
+export function buildSharedDocumentPreview(
+  content: string,
+  contentFormatOrMaxLength: DocumentContentFormat | number =
+    MARKDOWN_CONTENT_FORMAT,
+  requestedMaxLength = 180,
+) {
+  const contentFormat = typeof contentFormatOrMaxLength === "number"
+    ? MARKDOWN_CONTENT_FORMAT
+    : parseDocumentContentFormat(contentFormatOrMaxLength);
+  const maxLength = typeof contentFormatOrMaxLength === "number"
+    ? contentFormatOrMaxLength
+    : requestedMaxLength;
+  const projectedText = getDocumentPlainText(content, contentFormat);
+  const plainText = contentFormat === MARKDOWN_CONTENT_FORMAT
+    ? stripMarkdownForPreview(projectedText)
+    : projectedText.replace(/\s+/g, " ").trim();
 
   if (!plainText) {
     return DEFAULT_SHARED_DOCUMENT_DESCRIPTION;
@@ -110,7 +142,11 @@ export function buildSharedDocumentPreview(content: string, maxLength = 180) {
 
 export const fetchSharedDocument = cache(
   async (id: string, token: string): Promise<SharedDocumentResult<SharedDocument>> =>
-    requestSharedDocument({ docId: id, token }, (payload) => {
+    requestSharedDocument({
+      contentFormats: [MARKDOWN_CONTENT_FORMAT, PAGE_JSON_CONTENT_FORMAT],
+      docId: id,
+      token,
+    }, (payload) => {
       if (
         typeof payload !== "object" || payload === null ||
         !("title" in payload) || typeof payload.title !== "string" ||
@@ -118,7 +154,31 @@ export const fetchSharedDocument = cache(
         !("updated_at" in payload) || typeof payload.updated_at !== "string" ||
         !Number.isFinite(Date.parse(payload.updated_at))
       ) return null;
-      return { title: payload.title, content: payload.content, updated_at: payload.updated_at };
+      let contentFormat: DocumentContentFormat;
+      try {
+        if ("content_format" in payload) {
+          contentFormat = parseDocumentContentFormat(payload.content_format);
+        } else {
+          // Older Edge deployments omit the discriminator. Continue accepting
+          // their Markdown responses, but never infer Markdown for a page
+          // envelope: the old Edge media rewriter may already have regex-
+          // rewritten JSON prose or link attributes before returning it.
+          try {
+            parsePageDocument(payload.content);
+            return null;
+          } catch {
+            contentFormat = MARKDOWN_CONTENT_FORMAT;
+          }
+        }
+      } catch {
+        return null;
+      }
+      return {
+        title: payload.title,
+        content: payload.content,
+        content_format: contentFormat,
+        updated_at: payload.updated_at,
+      };
     }),
 );
 

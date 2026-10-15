@@ -1,3 +1,9 @@
+import {
+  getDocumentPlainText,
+  MARKDOWN_CONTENT_FORMAT,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
+
 const EDITOR_BODY_SKELETON_WIDTHS = ["w-full", "w-5/6", "w-4/6", "w-full", "w-3/4"];
 
 export function EditorBodySkeleton({ className = "" }: { className?: string }) {
@@ -13,8 +19,19 @@ export function EditorBodySkeleton({ className = "" }: { className?: string }) {
   );
 }
 
-export function EditorPreviewFallback({ initialValue }: { initialValue: string }) {
-  const previewContent = initialValue.trim();
+export function EditorPreviewFallback({
+  initialValue,
+  contentFormat = MARKDOWN_CONTENT_FORMAT,
+}: {
+  initialValue: string;
+  contentFormat?: DocumentContentFormat;
+}) {
+  let previewContent = "";
+  try {
+    previewContent = getDocumentPlainText(initialValue, contentFormat).trim();
+  } catch {
+    return <EditorBodySkeleton />;
+  }
 
   if (!previewContent) {
     return <EditorBodySkeleton />;

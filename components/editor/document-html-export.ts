@@ -2,7 +2,7 @@
 
 import {
   DOCUMENT_HTML_STYLES,
-  renderDocumentHtmlBody,
+  renderDocumentHtmlBodyByFormat,
 } from "@/components/editor/document-html-renderer";
 import {
   inferMediaMimeType,
@@ -10,10 +10,15 @@ import {
 } from "@/components/editor/image-upload-utils";
 import { parseDocumentMediaCandidate } from "@/lib/document-media";
 import type { SupabaseBrowserClient } from "@/lib/supabase/client";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
 
 type DocumentHtmlSnapshot = {
   title: string;
   content: string;
+  contentFormat?: DocumentContentFormat;
   owner: string;
 };
 
@@ -143,12 +148,21 @@ async function embedMedia(
 }
 
 export async function exportDocumentHtml(
-  { title, content, owner }: DocumentHtmlSnapshot,
+  {
+    title,
+    content,
+    contentFormat = MARKDOWN_CONTENT_FORMAT,
+    owner,
+  }: DocumentHtmlSnapshot,
   { signal }: DocumentHtmlExportOptions = {},
 ): Promise<{ html: string; filename: string }> {
   throwIfAborted(signal);
   const displayTitle = title.trim() || "Untitled";
-  const rendered = renderDocumentHtmlBody({ title: displayTitle, content });
+  const rendered = renderDocumentHtmlBodyByFormat({
+    title: displayTitle,
+    content,
+    contentFormat,
+  });
 
   try {
     const baseUrl = window.location.href;
@@ -170,6 +184,14 @@ export async function exportDocumentHtml(
     viewport.name = "viewport";
     viewport.content = "width=device-width, initial-scale=1";
     htmlDocument.head.append(viewport);
+    const referrer = htmlDocument.createElement("meta");
+    referrer.name = "referrer";
+    referrer.content = "no-referrer";
+    htmlDocument.head.append(referrer);
+    const csp = htmlDocument.createElement("meta");
+    csp.httpEquiv = "Content-Security-Policy";
+    csp.content = "default-src 'none'; img-src data: https: http:; media-src data: https: http:; style-src 'unsafe-inline'; font-src data:";
+    htmlDocument.head.append(csp);
     const style = htmlDocument.createElement("style");
     style.textContent = DOCUMENT_HTML_STYLES;
     htmlDocument.head.append(style);

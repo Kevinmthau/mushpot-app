@@ -1,20 +1,32 @@
 "use client";
 
 import { useDocumentShare } from "@/components/editor/use-document-share";
+import type { DocumentContentFormat } from "@/lib/page-document";
 
 type ShareModalProps = {
   documentId: string;
-  getDocumentText: () => string;
+  contentFormat: DocumentContentFormat;
+  getDocumentText: () => string | null;
   getDocumentTitle: () => string;
   isOpen: boolean;
   onClose: () => void;
   shareEnabled: boolean;
   shareToken: string | null;
-  onShareUpdated: (enabled: boolean, token: string | null, updatedAt: string, body?: { title: string; content: string }) => void;
+  onShareUpdated: (
+    enabled: boolean,
+    token: string | null,
+    updatedAt: string,
+    body?: {
+      title: string;
+      content: string;
+      content_format?: DocumentContentFormat;
+    },
+  ) => void;
 };
 
 export function ShareModal({
   documentId,
+  contentFormat,
   getDocumentText,
   getDocumentTitle,
   isOpen,
@@ -35,6 +47,7 @@ export function ShareModal({
     shareUrl,
   } = useDocumentShare({
     documentId,
+    contentFormat,
     getDocumentText,
     getDocumentTitle,
     onShareUpdated,

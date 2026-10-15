@@ -7,6 +7,10 @@ import {
   toEditorDocument,
   type EditorDocument,
 } from "@/lib/documents";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 
 function makeEditorDocument(
   overrides: Partial<EditorDocument> = {},
@@ -16,6 +20,7 @@ function makeEditorDocument(
     owner: "user-1",
     title: "Roadmap",
     content: "# Plans",
+    content_format: MARKDOWN_CONTENT_FORMAT,
     updated_at: "2026-05-17T12:00:00.000Z",
     share_enabled: false,
     share_token: null,
@@ -48,6 +53,7 @@ describe("toEditorDocument", () => {
     expect(Object.keys(editorDocument).sort()).toEqual(
       [
         "content",
+        "content_format",
         "id",
         "owner",
         "share_enabled",
@@ -75,6 +81,15 @@ describe("toEditorDocument", () => {
       }),
     );
   });
+
+  it("rejects unknown persisted content formats", () => {
+    expect(() =>
+      toEditorDocument({
+        ...makeEditorDocument(),
+        content_format: "future_format" as EditorDocument["content_format"],
+      }),
+    ).toThrow("Invalid document content format");
+  });
 });
 
 describe("areEditorDocumentsEqual", () => {
@@ -91,6 +106,7 @@ describe("areEditorDocumentsEqual", () => {
       { owner: "other" },
       { title: "Other" },
       { content: "other" },
+      { content_format: PAGE_JSON_CONTENT_FORMAT },
       { updated_at: "2026-01-01T00:00:00.000Z" },
       { share_enabled: true },
       { share_token: "token" },

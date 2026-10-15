@@ -15,8 +15,14 @@ import {
   sharedDocumentContentReferencesMedia,
   type SharedDocumentMediaReference,
 } from "../_shared/document-media.ts";
+import {
+  type DocumentContentFormat,
+  PAGE_JSON_CONTENT_FORMAT,
+  parsePersistedDocumentContentFormat,
+} from "../_shared/page-document.ts";
 
 type SharedDocPayload = {
+  contentFormats?: string[];
   docId: string;
   mediaUrl?: string;
   mediaUrls?: string[];
@@ -24,6 +30,7 @@ type SharedDocPayload = {
 };
 
 export type SharedDocumentRow = {
+  content_format?: string | null;
   owner: string;
   title: string;
   content: string;
@@ -134,12 +141,19 @@ export async function handleSharedDocumentRequest(
     : {};
   const docId = typeof body.docId === "string" ? body.docId : "";
   const token = typeof body.token === "string" ? body.token : "";
+  const contentFormats = body.contentFormats;
   const mediaUrl = body.mediaUrl;
   const mediaUrls = body.mediaUrls;
 
   if (
     !isUuid(docId) ||
     !SHARE_TOKEN_PATTERN.test(token) ||
+    (contentFormats !== undefined && (
+      !Array.isArray(contentFormats) ||
+      contentFormats.length === 0 ||
+      contentFormats.length > 10 ||
+      contentFormats.some((format) => typeof format !== "string")
+    )) ||
     (mediaUrl !== undefined && typeof mediaUrl !== "string") ||
     (mediaUrls !== undefined && (
       mediaUrl !== undefined || !Array.isArray(mediaUrls) ||
@@ -179,9 +193,50 @@ export async function handleSharedDocumentRequest(
     );
   }
 
+  const contentFormat = parsePersistedDocumentContentFormat(
+    data.content_format,
+  );
+  if (!contentFormat) {
+    return jsonResponse(request, {
+      error: "Shared document temporarily unavailable.",
+    }, 503);
+  }
+
+  // The Edge Function and web app deploy independently. An older app ignores
+  // the format discriminator and would render page JSON as Markdown. Require
+  // an explicit capability only for the initial structured-document response;
+  // Markdown and media requests remain backward compatible.
+  if (
+    mediaUrl === undefined && mediaUrls === undefined &&
+    contentFormat === PAGE_JSON_CONTENT_FORMAT &&
+    !contentFormats?.includes(PAGE_JSON_CONTENT_FORMAT)
+  ) {
+    return jsonResponse(request, {
+      error: "Shared document temporarily unavailable.",
+    }, 503);
+  }
+
+  const mediaOptions: {
+    contentFormat: DocumentContentFormat;
+    documentId: string;
+    ownerId: string;
+    supabaseUrl: string;
+  } = {
+    contentFormat,
+    documentId: docId,
+    ownerId: data.owner,
+    supabaseUrl,
+  };
+
   if (mediaUrls !== undefined) {
-    const options = { documentId: docId, ownerId: data.owner, supabaseUrl };
-    const references = getSharedDocumentMediaReferences(data.content, options);
+    let references: ReturnType<typeof getSharedDocumentMediaReferences>;
+    try {
+      references = getSharedDocumentMediaReferences(data.content, mediaOptions);
+    } catch {
+      return jsonResponse(request, {
+        error: "Shared document temporarily unavailable.",
+      }, 503);
+    }
     const results = new Map<
       string,
       { signedUrl: string | null; retry: boolean }
@@ -192,7 +247,7 @@ export async function handleSharedDocumentRequest(
     >();
     for (const url of new Set(mediaUrls)) {
       results.set(url, { signedUrl: null, retry: false });
-      const reference = parseSharedDocumentMediaReference(url, options);
+      const reference = parseSharedDocumentMediaReference(url, mediaOptions);
       if (
         !reference || !hasSharedDocumentMediaReference(references, reference)
       ) continue;
@@ -235,20 +290,25 @@ export async function handleSharedDocumentRequest(
   }
 
   if (mediaUrl !== undefined) {
-    const media = parseSharedDocumentMediaReference(mediaUrl, {
-      documentId: docId,
-      ownerId: data.owner,
-      supabaseUrl,
-    });
+    const media = parseSharedDocumentMediaReference(mediaUrl, mediaOptions);
 
-    if (
-      !media ||
-      !sharedDocumentContentReferencesMedia(data.content, media, {
-        documentId: docId,
-        ownerId: data.owner,
-        supabaseUrl,
-      })
-    ) {
+    let referenced = false;
+    try {
+      referenced = Boolean(
+        media &&
+          sharedDocumentContentReferencesMedia(
+            data.content,
+            media,
+            mediaOptions,
+          ),
+      );
+    } catch {
+      return jsonResponse(request, {
+        error: "Shared document temporarily unavailable.",
+      }, 503);
+    }
+
+    if (!media || !referenced) {
       return jsonResponse(request, { error: "Media not found." }, 404);
     }
 
@@ -273,21 +333,27 @@ export async function handleSharedDocumentRequest(
     }, 503);
   }
 
-  const content = await rewriteSharedDocumentMediaUrls(data.content, {
-    documentId: docId,
-    ownerId: data.owner,
-    supabaseUrl,
-    resolve: (reference) =>
-      buildSharedDocumentMediaUrl({
-        documentId: docId,
-        reference,
-        token,
-      }),
-  });
+  let content: string;
+  try {
+    content = await rewriteSharedDocumentMediaUrls(data.content, {
+      ...mediaOptions,
+      resolve: (reference) =>
+        buildSharedDocumentMediaUrl({
+          documentId: docId,
+          reference,
+          token,
+        }),
+    });
+  } catch {
+    return jsonResponse(request, {
+      error: "Shared document temporarily unavailable.",
+    }, 503);
+  }
 
   return jsonResponse(request, {
     title: data.title,
     content,
+    content_format: contentFormat,
     updated_at: data.updated_at,
   });
 }

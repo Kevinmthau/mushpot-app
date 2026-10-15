@@ -8,6 +8,10 @@ import {
   reconcileDraftHydration,
   requestInitialDraftPersistence,
 } from "@/components/editor/draft-controller-policy";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 
 function createLifecycle(isDeleting = false) {
   const calls: string[] = [];
@@ -47,8 +51,10 @@ describe("draft page lifecycle", () => {
     const reconciled = reconcileDraftHydration(
       {
         content: "Cached body",
+        contentFormat: MARKDOWN_CONTENT_FORMAT,
         isDeleting: false,
         savedContent: "Cached body",
+        savedContentFormat: MARKDOWN_CONTENT_FORMAT,
         savedTitle: "Cached title",
         savedUpdatedAt: "2026-08-17T12:00:00.000Z",
         shareEnabled: false,
@@ -61,6 +67,7 @@ describe("draft page lifecycle", () => {
         owner: "owner-a",
         title: "Remote title",
         content: "Newer remote body",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-08-17T13:00:00.000Z",
         share_enabled: false,
         share_token: null,
@@ -94,8 +101,10 @@ describe("draft page lifecycle", () => {
     const reconciled = reconcileDraftHydration(
       {
         content: "Cached body",
+        contentFormat: MARKDOWN_CONTENT_FORMAT,
         isDeleting: false,
         savedContent: "Cached body",
+        savedContentFormat: MARKDOWN_CONTENT_FORMAT,
         savedTitle: "Cached title",
         savedUpdatedAt: "2026-08-17T12:00:00.000Z",
         shareEnabled: false,
@@ -108,6 +117,7 @@ describe("draft page lifecycle", () => {
         owner: "owner-a",
         title: "Remote title",
         content: "Newer remote body",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-08-17T13:00:00.000Z",
         share_enabled: false,
         share_token: null,
@@ -125,8 +135,10 @@ describe("draft page lifecycle", () => {
       hasUnsavedDocumentChanges({
         cachedDraftIsDirty: false,
         latestContent: reconciled.content,
+        latestContentFormat: reconciled.contentFormat,
         latestTitle: reconciled.title,
         savedContent: reconciled.savedContent,
+        savedContentFormat: reconciled.savedContentFormat,
         savedTitle: reconciled.savedTitle,
       }),
     ).toBe(true);
@@ -136,8 +148,10 @@ describe("draft page lifecycle", () => {
     const reconciled = reconcileDraftHydration(
       {
         content: "Newly saved local body",
+        contentFormat: MARKDOWN_CONTENT_FORMAT,
         isDeleting: false,
         savedContent: "Newly saved local body",
+        savedContentFormat: MARKDOWN_CONTENT_FORMAT,
         savedTitle: "Locally edited title",
         savedUpdatedAt: "2026-08-17T14:00:00.000Z",
         shareEnabled: false,
@@ -150,6 +164,7 @@ describe("draft page lifecycle", () => {
         owner: "owner-a",
         title: "Stale remote title",
         content: "Stale remote body",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-08-17T13:00:00.000Z",
         share_enabled: false,
         share_token: null,
@@ -169,8 +184,10 @@ describe("draft page lifecycle", () => {
       hasUnsavedDocumentChanges({
         cachedDraftIsDirty: false,
         latestContent: reconciled.content,
+        latestContentFormat: reconciled.contentFormat,
         latestTitle: reconciled.title,
         savedContent: reconciled.savedContent,
+        savedContentFormat: reconciled.savedContentFormat,
         savedTitle: reconciled.savedTitle,
       }),
     ).toBe(false);
@@ -180,8 +197,10 @@ describe("draft page lifecycle", () => {
     const reconciled = reconcileDraftHydration(
       {
         content: "Cached body",
+        contentFormat: MARKDOWN_CONTENT_FORMAT,
         isDeleting: false,
         savedContent: "Cached body",
+        savedContentFormat: MARKDOWN_CONTENT_FORMAT,
         savedTitle: "Cached title",
         savedUpdatedAt: "2026-08-17T12:00:00.000Z",
         shareEnabled: false,
@@ -194,6 +213,7 @@ describe("draft page lifecycle", () => {
         owner: "owner-a",
         title: "Different remote title",
         content: "Cached body",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-08-17T13:00:00.000Z",
         share_enabled: false,
         share_token: null,
@@ -209,8 +229,10 @@ describe("draft page lifecycle", () => {
       hasUnsavedDocumentChanges({
         cachedDraftIsDirty: false,
         latestContent: reconciled.content,
+        latestContentFormat: reconciled.contentFormat,
         latestTitle: reconciled.title,
         savedContent: reconciled.savedContent,
+        savedContentFormat: reconciled.savedContentFormat,
         savedTitle: reconciled.savedTitle,
       }),
     ).toBe(true);
@@ -220,8 +242,10 @@ describe("draft page lifecycle", () => {
     const reconciled = reconcileDraftHydration(
       {
         content: "Cached body",
+        contentFormat: MARKDOWN_CONTENT_FORMAT,
         isDeleting: true,
         savedContent: "Cached body",
+        savedContentFormat: MARKDOWN_CONTENT_FORMAT,
         savedTitle: "Cached title",
         savedUpdatedAt: "2026-08-17T12:00:00.000Z",
         shareEnabled: true,
@@ -234,6 +258,7 @@ describe("draft page lifecycle", () => {
         owner: "owner-a",
         title: "Remote title",
         content: "Newer remote body",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-08-17T13:00:00.000Z",
         share_enabled: false,
         share_token: null,
@@ -258,8 +283,10 @@ describe("draft page lifecycle", () => {
       hasUnsavedDocumentChanges({
         cachedDraftIsDirty: true,
         latestContent: "Offline content",
+        latestContentFormat: MARKDOWN_CONTENT_FORMAT,
         latestTitle: "Offline title",
         savedContent: "Offline content",
+        savedContentFormat: MARKDOWN_CONTENT_FORMAT,
         savedTitle: "Offline title",
       }),
     ).toBe(true);
@@ -270,11 +297,27 @@ describe("draft page lifecycle", () => {
       hasUnsavedDocumentChanges({
         cachedDraftIsDirty: false,
         latestContent: "Saved content",
+        latestContentFormat: MARKDOWN_CONTENT_FORMAT,
         latestTitle: "Saved title",
         savedContent: "Saved content",
+        savedContentFormat: MARKDOWN_CONTENT_FORMAT,
         savedTitle: "Saved title",
       }),
     ).toBe(false);
+  });
+
+  it("treats a content format change as an unsaved document change", () => {
+    expect(
+      hasUnsavedDocumentChanges({
+        cachedDraftIsDirty: false,
+        latestContent: "Same serialized content",
+        latestContentFormat: PAGE_JSON_CONTENT_FORMAT,
+        latestTitle: "Saved title",
+        savedContent: "Same serialized content",
+        savedContentFormat: MARKDOWN_CONTENT_FORMAT,
+        savedTitle: "Saved title",
+      }),
+    ).toBe(true);
   });
 
   it("snapshots before canceling an unmount-before-debounce timer", () => {

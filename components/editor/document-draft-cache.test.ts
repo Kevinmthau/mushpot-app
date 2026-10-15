@@ -3,12 +3,14 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PersistableDocumentSnapshot, PersistDocumentResult } from "@/lib/document-sync";
+import { MARKDOWN_CONTENT_FORMAT } from "@/lib/page-document";
 
 const initial = {
   id: "doc",
   owner: "owner",
   title: "Title",
   content: "Original body",
+  content_format: MARKDOWN_CONTENT_FORMAT,
   updated_at: "2026-09-20T10:00:00Z",
   share_enabled: false,
   share_token: null,

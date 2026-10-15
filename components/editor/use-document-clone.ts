@@ -14,16 +14,24 @@ import {
 } from "@/lib/document-media-clone";
 import { EDITOR_DOCUMENT_SELECT, toCachedDocument } from "@/lib/documents";
 import type { EditorDocument } from "@/lib/documents";
+import {
+  type DocumentContentFormat,
+  EMPTY_PAGE_DOCUMENT_CONTENT,
+  PAGE_JSON_CONTENT_FORMAT,
+  parseDocumentContentFormat,
+} from "@/lib/page-document";
 import type { SupabaseBrowserClient } from "@/lib/supabase/client";
 
 type UseDocumentCloneParams = {
+  contentFormat: DocumentContentFormat;
   owner: string;
   getLatestTitle: () => string;
-  getLatestContent: () => string;
+  getLatestContent: () => string | null;
 };
 
 type PerformDocumentCloneParams = {
   content: string;
+  contentFormat: DocumentContentFormat;
   leaseToken?: string;
   owner: string;
   supabase: SupabaseBrowserClient;
@@ -184,11 +192,13 @@ async function removeIncompleteClone(
 
 export async function performDocumentClone({
   content,
+  contentFormat,
   leaseToken = crypto.randomUUID(),
   owner,
   supabase,
   title,
 }: PerformDocumentCloneParams): Promise<EditorDocument> {
+  const format = parseDocumentContentFormat(contentFormat);
   let createdDocumentId: string | null = null;
   let heartbeat: ReturnType<typeof startCloneLeaseHeartbeat> | null = null;
 
@@ -198,7 +208,10 @@ export async function performDocumentClone({
       .insert({
         owner,
         title: getTemporaryCloneTitle(title),
-        content: "",
+        content: format === PAGE_JSON_CONTENT_FORMAT
+          ? EMPTY_PAGE_DOCUMENT_CONTENT
+          : "",
+        content_format: format,
         clone_status: "pending",
         clone_lease_token: leaseToken,
         clone_lease_expires_at: getCloneLeaseExpiry(),
@@ -225,6 +238,7 @@ export async function performDocumentClone({
 
     const plan = planDocumentMediaClone({
       content,
+      contentFormat: format,
       destinationDocumentId: data.id,
       ownerId: owner,
       supabaseUrl,
@@ -243,6 +257,7 @@ export async function performDocumentClone({
       .from("documents")
       .update({
         content: plan.content,
+        content_format: format,
         title: getCloneTitle(title),
         clone_status: null,
         clone_lease_token: null,
@@ -280,6 +295,7 @@ export async function performDocumentClone({
 }
 
 export function useDocumentClone({
+  contentFormat,
   owner,
   getLatestTitle,
   getLatestContent,
@@ -300,10 +316,17 @@ export function useDocumentClone({
     const cacheWriteToken = getDocumentCacheWriteToken(owner);
 
     try {
+      const content = getLatestContentRef.current();
+      if (content === null) {
+        throw new Error(
+          "This page can’t be cloned until its latest change can be saved.",
+        );
+      }
       const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
       const supabase = await getSupabaseBrowserClient();
       const completedDocument = await performDocumentClone({
-        content: getLatestContentRef.current(),
+        content,
+        contentFormat,
         owner,
         supabase,
         title: getLatestTitleRef.current(),
@@ -328,7 +351,7 @@ export function useDocumentClone({
       isCloningRef.current = false;
       setIsCloning(false);
     }
-  }, [documentListSession, owner, router]);
+  }, [contentFormat, documentListSession, owner, router]);
 
   return { isCloning, handleClone };
 }

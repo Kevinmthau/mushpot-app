@@ -1,5 +1,6 @@
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MARKDOWN_CONTENT_FORMAT } from "@/lib/page-document";
 
 const { from } = vi.hoisted(() => ({ from: vi.fn() }));
 vi.mock("@/lib/supabase/client", () => ({
@@ -18,6 +19,7 @@ describe("list refresh, offline editing, and reconnect", () => {
     const { DocumentDraftController } = await import("@/components/editor/document-draft-controller");
     const snapshot = {
       id: "document-a", owner: "owner-a", title: "Notes", content: "Body",
+      content_format: MARKDOWN_CONTENT_FORMAT,
       updated_at: "2026-09-20T10:00:00.000Z", share_enabled: false, share_token: null,
       _dirty: false, _localUpdatedAt: Date.now(),
     };
@@ -52,6 +54,7 @@ describe("list refresh, offline editing, and reconnect", () => {
     const { persistDocumentSnapshot } = await import("@/lib/document-sync");
     const snapshot = {
       id: "document-a", owner: "owner-a", title: "Original title", content: "Original body",
+      content_format: MARKDOWN_CONTENT_FORMAT,
       updated_at: "2026-09-20T10:00:00.000Z", share_enabled: false, share_token: null,
     };
     const remote = { ...snapshot, title: "Remote title", content: "New remote body", updated_at: "2026-09-20T11:00:00.000Z" };
@@ -103,6 +106,7 @@ it("never updates from an untrusted legacy revision and only confirms identical 
   const { persistDocumentSnapshot } = await import("@/lib/document-sync");
   const draft = {
     id: "legacy", owner: "owner-a", title: "Draft", content: "Offline content",
+    content_format: MARKDOWN_CONTENT_FORMAT,
     updated_at: "2026-09-20T11:00:00.000Z", share_enabled: false, share_token: null,
     _dirty: true, _baseVersionUntrusted: true,
   };

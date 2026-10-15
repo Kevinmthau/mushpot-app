@@ -5,7 +5,10 @@ import { act, createElement, StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useDocumentDraft } from "@/components/editor/use-document-draft";
+import {
+  installUnsavableDraftNavigationGuard,
+  useDocumentDraft,
+} from "@/components/editor/use-document-draft";
 import {
   PrivateSessionProvider,
   usePrivateSession,
@@ -16,6 +19,11 @@ import type {
   SavedDocumentResult,
 } from "@/lib/document-sync";
 import type { EditorDocument } from "@/lib/documents";
+import {
+  EMPTY_PAGE_DOCUMENT_CONTENT,
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 
 const mocks = vi.hoisted(() => ({
   cache: vi.fn(),
@@ -38,6 +46,7 @@ const initialDocument: EditorDocument = {
   owner: "owner",
   title: "Title",
   content: "Body",
+  content_format: MARKDOWN_CONTENT_FORMAT,
   updated_at: "2026-09-20T10:00:00Z",
   share_enabled: false,
   share_token: null,
@@ -84,11 +93,70 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
+describe("unsavable draft navigation guard", () => {
+  it("blocks same-origin links and restores browser Back until released", () => {
+    window.history.replaceState({ route: "editor" }, "", "/doc/doc");
+    const forward = vi.spyOn(window.history, "forward").mockImplementation(() => {});
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    const release = installUnsavableDraftNavigationGuard();
+
+    window.dispatchEvent(new PopStateEvent("popstate", { state: { route: "editor" } }));
+    expect(forward).toHaveBeenCalledOnce();
+
+    const anchor = document.createElement("a");
+    anchor.href = "/";
+    document.body.append(anchor);
+    const click = new MouseEvent("click", {
+      bubbles: true,
+      button: 0,
+      cancelable: true,
+    });
+    anchor.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+
+    release();
+    expect(back).toHaveBeenCalledOnce();
+    anchor.remove();
+  });
+});
+
 describe("mounted draft lifecycle", () => {
+  it("keeps deferred reading-time content paired with its hydrated format", async () => {
+    let currentDraft!: ReturnType<typeof useDocumentDraft>;
+    function UpdatingHarness({ document }: { document: EditorDocument }) {
+      const draft = useDocumentDraft(document, true);
+      useEffect(() => {
+        currentDraft = draft;
+      });
+      return createElement("p", null, draft.readingTime);
+    }
+
+    const root = createRoot(document.createElement("div"));
+    const render = (document: EditorDocument) => root.render(
+      createElement(
+        PrivateSessionProvider,
+        { initialUserId: "owner" },
+        createElement(UpdatingHarness, { document }),
+      ),
+    );
+    await act(async () => render(initialDocument));
+    await act(async () => render({
+      ...initialDocument,
+      content: EMPTY_PAGE_DOCUMENT_CONTENT,
+      content_format: PAGE_JSON_CONTENT_FORMAT,
+      updated_at: "2026-09-20T11:00:00Z",
+    }));
+
+    expect(currentDraft.contentFormat).toBe(PAGE_JSON_CONTENT_FORMAT);
+    expect(currentDraft.readingTime).toBe(0);
+    await act(async () => root.unmount());
+  });
+
   it("autosaves after StrictMode replay and caches a final edit on immediate unmount", async () => {
     const container = document.createElement("div");
     const root = createRoot(container);

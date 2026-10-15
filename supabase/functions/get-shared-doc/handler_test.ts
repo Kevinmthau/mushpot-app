@@ -3,6 +3,7 @@ import { assertEquals } from "@std/assert";
 import {
   handleSharedDocumentRequest,
   type SharedDocumentOperations,
+  type SharedDocumentRow,
 } from "./handler.ts";
 
 const DOCUMENT_ID = "22222222-2222-4222-8222-222222222222";
@@ -20,7 +21,7 @@ type SignedUrlCall = {
   path: string;
 };
 
-function createHarness() {
+function createHarness(rowOverrides: Partial<SharedDocumentRow> = {}) {
   const signedUrlCalls: SignedUrlCall[] = [];
   const operations: SharedDocumentOperations = {
     createSignedUrls: () => Promise.resolve({ data: [], error: null }),
@@ -39,6 +40,7 @@ function createHarness() {
             owner: OWNER_ID,
             title: "Shared document",
             updated_at: "2026-07-29T12:00:00.000Z",
+            ...rowOverrides,
           }
           : null,
         error: null,
@@ -73,6 +75,141 @@ function createMediaRequest(mediaUrl: string) {
     method: "POST",
   });
 }
+
+function createDocumentRequest(extra: Record<string, unknown> = {}) {
+  return new Request("https://functions.example/get-shared-doc", {
+    body: JSON.stringify({
+      contentFormats: ["markdown_v1", "page_json_v1"],
+      docId: DOCUMENT_ID,
+      token: SHARE_TOKEN,
+      ...extra,
+    }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+}
+
+Deno.test("legacy shared rows default to Markdown and return the format", async () => {
+  const { dependencies } = createHarness();
+  const response = await handleSharedDocumentRequest(
+    createDocumentRequest({ contentFormats: undefined }),
+    dependencies,
+  );
+
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), {
+    title: "Shared document",
+    content: `![Referenced image](/s/${DOCUMENT_ID}/${SHARE_TOKEN}/m/` +
+      `document-images/${OWNER_ID}/${DOCUMENT_ID}/referenced.png)`,
+    content_format: "markdown_v1",
+    updated_at: "2026-07-29T12:00:00.000Z",
+  });
+});
+
+Deno.test("page shares require an explicit structured-content capability", async () => {
+  const content = JSON.stringify({
+    schema: "mushpot.page",
+    version: 1,
+    theme: "paper",
+    width: "prose",
+    content: { type: "doc", content: [{ type: "paragraph" }] },
+  });
+  const { dependencies } = createHarness({
+    content,
+    content_format: "page_json_v1",
+  });
+
+  const response = await handleSharedDocumentRequest(
+    createDocumentRequest({ contentFormats: undefined }),
+    dependencies,
+  );
+
+  assertEquals(response.status, 503);
+  assertEquals(await response.json(), {
+    error: "Shared document temporarily unavailable.",
+  });
+});
+
+Deno.test("page shares rewrite and authorize only typed media attributes", async () => {
+  const mentionedOnly =
+    `/m/document-images/${OWNER_ID}/${DOCUMENT_ID}/mentioned.png`;
+  const poster = `/m/document-images/${OWNER_ID}/${DOCUMENT_ID}/poster.png`;
+  const video = `/m/document-videos/${OWNER_ID}/${DOCUMENT_ID}/demo.mp4`;
+  const content = JSON.stringify({
+    schema: "mushpot.page",
+    version: 1,
+    theme: "paper",
+    width: "prose",
+    content: {
+      type: "doc",
+      content: [
+        { type: "image", attrs: { src: REFERENCED_MEDIA_URL } },
+        { type: "video", attrs: { src: video, poster } },
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: mentionedOnly }],
+        },
+      ],
+    },
+  });
+  const { dependencies, signedUrlCalls } = createHarness({
+    content,
+    content_format: "page_json_v1",
+  });
+
+  const documentResponse = await handleSharedDocumentRequest(
+    createDocumentRequest(),
+    dependencies,
+  );
+  assertEquals(documentResponse.status, 200);
+  const documentBody = await documentResponse.json();
+  assertEquals(documentBody.content_format, "page_json_v1");
+  const rewritten = JSON.parse(documentBody.content);
+  assertEquals(
+    rewritten.content.content[0].attrs.src,
+    `/s/${DOCUMENT_ID}/${SHARE_TOKEN}${REFERENCED_MEDIA_URL}`,
+  );
+  assertEquals(
+    rewritten.content.content[1].attrs.src,
+    `/s/${DOCUMENT_ID}/${SHARE_TOKEN}${video}`,
+  );
+  assertEquals(
+    rewritten.content.content[1].attrs.poster,
+    `/s/${DOCUMENT_ID}/${SHARE_TOKEN}${poster}`,
+  );
+  assertEquals(rewritten.content.content[2].content[0].text, mentionedOnly);
+
+  const typedResponse = await handleSharedDocumentRequest(
+    createMediaRequest(REFERENCED_MEDIA_URL),
+    dependencies,
+  );
+  assertEquals(typedResponse.status, 200);
+  const proseResponse = await handleSharedDocumentRequest(
+    createMediaRequest(mentionedOnly),
+    dependencies,
+  );
+  assertEquals(proseResponse.status, 404);
+  assertEquals(signedUrlCalls.length, 1);
+});
+
+Deno.test("unknown formats and malformed page documents are unavailable", async () => {
+  for (
+    const overrides of [
+      { content_format: "future_json_v2" },
+      { content_format: "page_json_v1", content: "{" },
+    ]
+  ) {
+    const { dependencies } = createHarness(overrides);
+    const response = await handleSharedDocumentRequest(
+      createDocumentRequest(),
+      dependencies,
+    );
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), {
+      error: "Shared document temporarily unavailable.",
+    });
+  }
+});
 
 Deno.test(
   "valid shares cannot sign an unreferenced same-document object",

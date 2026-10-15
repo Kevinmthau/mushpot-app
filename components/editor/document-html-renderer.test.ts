@@ -5,9 +5,16 @@ import * as ReactDOMClient from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { renderDocumentHtmlBody } from "@/components/editor/document-html-renderer";
+import {
+  renderDocumentHtmlBody,
+  renderDocumentHtmlBodyByFormat,
+} from "@/components/editor/document-html-renderer";
 import { SharedDocumentPageClient } from "@/components/editor/shared-document-page-client";
 import { markdownLinkFixtures, markdownMediaFixtures } from "@/lib/markdown/rendering-fixtures";
+import {
+  PAGE_JSON_CONTENT_FORMAT,
+  serializePageDocument,
+} from "@/lib/page-document";
 
 vi.mock("react-dom/client", { spy: true });
 
@@ -169,5 +176,109 @@ describe("HTML export Markdown", () => {
     });
     expect(() => renderDocumentHtmlBody({ title: "Document", content: 42 as unknown as string })).toThrow();
     expect(unmount).toHaveBeenCalledOnce();
+  });
+});
+
+describe("HTML export structured pages", () => {
+  it("renders the versioned page schema and keeps media inert for embedding", () => {
+    const content = serializePageDocument({
+      schema: "mushpot.page",
+      version: 1,
+      theme: "editorial",
+      width: "wide",
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "heading",
+            attrs: { level: 1 },
+            content: [{ type: "text", text: "A real web page" }],
+          },
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "Rich ", marks: [{ type: "bold" }] },
+              {
+                type: "text",
+                text: "content",
+                marks: [{ type: "link", attrs: { href: "https://example.com" } }],
+              },
+            ],
+          },
+          {
+            type: "image",
+            attrs: { src: "https://example.com/photo.webp", alt: "Photo" },
+          },
+          {
+            type: "video",
+            attrs: {
+              src: "https://example.com/clip.mp4",
+              poster: "https://example.com/poster.webp",
+              alt: "Clip",
+            },
+          },
+        ],
+      },
+    });
+    const result = renderDocumentHtmlBodyByFormat({
+      title: "Page title",
+      content,
+      contentFormat: PAGE_JSON_CONTENT_FORMAT,
+    });
+    cleanups.push(result.dispose);
+
+    const main = result.container.querySelector("main")!;
+    expect(main.dataset.pageTheme).toBe("editorial");
+    expect(main.dataset.pageWidth).toBe("wide");
+    expect(main.querySelector("article.page-body h1")?.textContent).toBe(
+      "A real web page",
+    );
+    expect(main.querySelector("strong")?.textContent).toBe("Rich ");
+    expect(main.querySelector("a")?.getAttribute("href")).toBe(
+      "https://example.com",
+    );
+    const image = main.querySelector("img")!;
+    expect(image.dataset.exportSrc).toBe("https://example.com/photo.webp");
+    expect(image.hasAttribute("src")).toBe(false);
+    const video = main.querySelector("video")!;
+    expect(video.dataset.exportSrc).toBe("https://example.com/clip.mp4");
+    expect(video.dataset.exportPoster).toBe("https://example.com/poster.webp");
+    expect(video.hasAttribute("src")).toBe(false);
+    expect(video.hasAttribute("poster")).toBe(false);
+  });
+
+  it("uses the same controlled page markup for public shares", () => {
+    const content = serializePageDocument({
+      schema: "mushpot.page",
+      version: 1,
+      theme: "paper",
+      width: "prose",
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Shared page prose" }],
+          },
+        ],
+      },
+    });
+    const container = document.createElement("div");
+    container.innerHTML = renderToStaticMarkup(
+      createElement(SharedDocumentPageClient, {
+        content,
+        contentFormat: PAGE_JSON_CONTENT_FORMAT,
+        documentId: "document",
+        shareToken: "token",
+        title: "Document",
+        updatedAt: "2026-09-17T12:00:00.000Z",
+      }),
+    );
+
+    expect(container.querySelector("article.page-body")?.textContent).toBe(
+      "Shared page prose",
+    );
+    expect(container.querySelector("main")?.dataset.pageTheme).toBe("paper");
+    expect(container.textContent).not.toContain("mushpot.page");
   });
 });

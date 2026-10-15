@@ -64,6 +64,8 @@ type EditorDocumentLoadOptions = {
 
 const EDITOR_LOAD_ERROR =
   "Unable to load document. Please check your connection.";
+const UNSUPPORTED_DOCUMENT_FORMAT_ERROR =
+  "This document uses a newer content format. Reload or update Mushpot to open it safely.";
 
 /**
  * Starts the remote document query immediately, then validates the owner cache
@@ -134,6 +136,21 @@ export async function loadEditorDocument({
     return;
   }
 
+  let remoteDocument: EditorDocument;
+  try {
+    // Supabase's generated row type cannot protect a running client from a
+    // future discriminator. Validate before any cache/local-edit shortcut can
+    // expose an older representation as the current server document.
+    remoteDocument = toEditorDocument(remoteResult.document);
+  } catch {
+    onResolved({
+      document: null,
+      error: UNSUPPORTED_DOCUMENT_FORMAT_ERROR,
+      notFound: false,
+    });
+    return;
+  }
+
   // An offline-dirty snapshot was already authoritative when this load began.
   // Do not let a remote response read or write through cache reconciliation.
   if (cacheSnapshot.document?._dirty === true) {
@@ -146,11 +163,11 @@ export async function loadEditorDocument({
   }
 
   // Current-session edits live in useDocumentDraft until its debounced cache
-  // write runs. Publish the raw row for field merging without allowing this
-  // older response to write into the cache first.
+  // write runs. Publish the validated row for field merging without allowing
+  // this older response to write into the cache first.
   if (hasLocalEdits()) {
     onResolved({
-      document: remoteResult.document,
+      document: remoteDocument,
       error: null,
       notFound: false,
     });
@@ -159,7 +176,7 @@ export async function loadEditorDocument({
 
   try {
     const reconciledDocument = await reconcileRemote(
-      remoteResult.document,
+      remoteDocument,
       cacheSnapshot.token,
       () => isCurrent() && !hasLocalEdits(),
     );
@@ -169,10 +186,11 @@ export async function loadEditorDocument({
     }
 
     // An edit can begin while IndexedDB reconciliation is awaiting completion.
-    // In that case, still publish the raw row so useDocumentDraft can preserve
-    // local fields and merge untouched remote fields against their baselines.
+    // In that case, still publish the validated row so useDocumentDraft can
+    // preserve local fields and merge untouched remote fields against their
+    // baselines.
     const resolvedDocument = hasLocalEdits()
-      ? remoteResult.document
+      ? remoteDocument
       : reconciledDocument;
 
     onResolved({

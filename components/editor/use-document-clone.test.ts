@@ -5,6 +5,12 @@ import {
   CLONE_LEASE_DURATION_MS,
   performDocumentClone,
 } from "@/components/editor/use-document-clone";
+import {
+  type DocumentContentFormat,
+  EMPTY_PAGE_DOCUMENT_CONTENT,
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 import type { SupabaseBrowserClient } from "@/lib/supabase/client";
 
 vi.mock("next/navigation", () => ({
@@ -26,6 +32,7 @@ type DocumentRow = {
   clone_lease_token: string | null;
   clone_status: "pending" | "recovering" | null;
   content: string;
+  content_format: DocumentContentFormat;
   id: string;
   owner: string;
   share_enabled: boolean;
@@ -80,6 +87,9 @@ function createSupabaseMock({
           clone_status:
             (values.clone_status as DocumentRow["clone_status"]) ?? null,
           content: (values.content as string) ?? "",
+          content_format:
+            (values.content_format as DocumentContentFormat) ??
+              MARKDOWN_CONTENT_FORMAT,
           id: CLONE_DOCUMENT_ID,
           owner: values.owner as string,
           share_enabled: false,
@@ -198,6 +208,7 @@ describe("performDocumentClone", () => {
 
     const completed = await performDocumentClone({
       content: "No media",
+      contentFormat: MARKDOWN_CONTENT_FORMAT,
       leaseToken: LEASE_TOKEN,
       owner: OWNER_ID,
       supabase,
@@ -209,6 +220,7 @@ describe("performDocumentClone", () => {
       clone_lease_token: null,
       clone_status: null,
       content: "No media",
+      content_format: MARKDOWN_CONTENT_FORMAT,
       title: "Notes (copy)",
     });
     expect(updates[0]).toEqual({
@@ -222,6 +234,7 @@ describe("performDocumentClone", () => {
       ).toISOString(),
       clone_lease_token: LEASE_TOKEN,
       clone_status: "pending",
+      content_format: MARKDOWN_CONTENT_FORMAT,
     });
     expect(Object.fromEntries(updateFilters.at(-1) ?? [])).toMatchObject({
       clone_lease_token: LEASE_TOKEN,
@@ -230,6 +243,45 @@ describe("performDocumentClone", () => {
       owner: OWNER_ID,
     });
     expect(rows).toHaveLength(1);
+  });
+
+  it("preserves the page format while creating and completing a clone", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project-ref.supabase.co");
+    const { inserts, supabase } = createSupabaseMock();
+    const content = JSON.stringify({
+      schema: "mushpot.page",
+      version: 1,
+      theme: "paper",
+      width: "prose",
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Structured copy" }],
+          },
+        ],
+      },
+    });
+
+    const completed = await performDocumentClone({
+      content,
+      contentFormat: PAGE_JSON_CONTENT_FORMAT,
+      leaseToken: LEASE_TOKEN,
+      owner: OWNER_ID,
+      supabase,
+      title: "Page",
+    });
+
+    expect(inserts[0]).toMatchObject({
+      content: EMPTY_PAGE_DOCUMENT_CONTENT,
+      content_format: PAGE_JSON_CONTENT_FORMAT,
+    });
+    expect(completed).toMatchObject({
+      content,
+      content_format: PAGE_JSON_CONTENT_FORMAT,
+      title: "Page (copy)",
+    });
   });
 
   it("refreshes the lease every minute while a media copy is in flight", async () => {
@@ -249,6 +301,7 @@ describe("performDocumentClone", () => {
       content:
         `![photo](/m/document-images/${OWNER_ID}/` +
         `${SOURCE_DOCUMENT_ID}/photo.png)`,
+      contentFormat: MARKDOWN_CONTENT_FORMAT,
       leaseToken: LEASE_TOKEN,
       owner: OWNER_ID,
       supabase,
@@ -288,6 +341,7 @@ describe("performDocumentClone", () => {
       content:
         `![photo](/m/document-images/${OWNER_ID}/` +
         `${SOURCE_DOCUMENT_ID}/photo.png)`,
+      contentFormat: MARKDOWN_CONTENT_FORMAT,
       leaseToken: LEASE_TOKEN,
       owner: OWNER_ID,
       supabase: mock.supabase,
@@ -314,6 +368,7 @@ describe("performDocumentClone", () => {
     await expect(
       performDocumentClone({
         content: "No media",
+        contentFormat: MARKDOWN_CONTENT_FORMAT,
         leaseToken: LEASE_TOKEN,
         owner: OWNER_ID,
         supabase,
@@ -348,6 +403,7 @@ describe("performDocumentClone", () => {
       content:
         `![photo](/m/document-images/${OWNER_ID}/` +
         `${SOURCE_DOCUMENT_ID}/photo.png)`,
+      contentFormat: MARKDOWN_CONTENT_FORMAT,
       leaseToken: LEASE_TOKEN,
       owner: OWNER_ID,
       supabase: mock.supabase,
@@ -373,6 +429,7 @@ describe("performDocumentClone", () => {
         content:
           `![photo](/m/document-images/${OWNER_ID}/` +
           `${SOURCE_DOCUMENT_ID}/photo.png)`,
+        contentFormat: MARKDOWN_CONTENT_FORMAT,
         leaseToken: LEASE_TOKEN,
         owner: OWNER_ID,
         supabase,

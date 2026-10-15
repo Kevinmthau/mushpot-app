@@ -24,6 +24,10 @@ import {
   openKeyboardForNewDocument,
   releaseTemporaryKeyboardHolder,
 } from "@/lib/new-document-focus";
+import {
+  EMPTY_PAGE_DOCUMENT_CONTENT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 
 type DocumentListClientProps = {
   documents: DocumentListItem[];
@@ -99,7 +103,12 @@ export function DocumentListClient({
       const supabase = await getSupabaseBrowserClient();
       const { data, error } = await supabase
         .from("documents")
-        .insert({ owner: userId, title: "Untitled", content: "" })
+        .insert({
+          owner: userId,
+          title: "Untitled",
+          content: EMPTY_PAGE_DOCUMENT_CONTENT,
+          content_format: PAGE_JSON_CONTENT_FORMAT,
+        })
         .select(EDITOR_DOCUMENT_SELECT)
         .single();
 

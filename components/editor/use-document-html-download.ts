@@ -2,10 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
+
 type UseDocumentHtmlDownloadParams = {
   owner: string;
+  contentFormat?: DocumentContentFormat;
   getLatestTitle: () => string;
-  getLatestContent: () => string;
+  getLatestContent: () => string | null;
 };
 
 function downloadHtmlFile(html: string, filename: string) {
@@ -28,6 +34,7 @@ function downloadHtmlFile(html: string, filename: string) {
 
 export function useDocumentHtmlDownload({
   owner,
+  contentFormat = MARKDOWN_CONTENT_FORMAT,
   getLatestTitle,
   getLatestContent,
 }: UseDocumentHtmlDownloadParams) {
@@ -58,9 +65,16 @@ export function useDocumentHtmlDownload({
 
     try {
       // Capture the local draft before the exporter chunk or media is loaded.
+      const content = getLatestContentRef.current();
+      if (content === null) {
+        throw new Error(
+          "This page can’t be downloaded until its latest change can be saved.",
+        );
+      }
       const snapshot = {
         title: getLatestTitleRef.current(),
-        content: getLatestContentRef.current(),
+        content,
+        contentFormat,
         owner,
       };
       const { exportDocumentHtml } = await import(
@@ -91,7 +105,7 @@ export function useDocumentHtmlDownload({
         }
       }
     }
-  }, [owner]);
+  }, [contentFormat, owner]);
 
   return { isDownloading, handleDownload };
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { planDocumentMediaClone } from "@/lib/document-media-clone";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+  parsePageDocument,
+} from "@/lib/page-document";
 
 const OWNER_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_OWNER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -12,6 +17,7 @@ const SUPABASE_URL = "https://project-ref.supabase.co";
 function plan(content: string) {
   return planDocumentMediaClone({
     content,
+    contentFormat: MARKDOWN_CONTENT_FORMAT,
     destinationDocumentId: DESTINATION_DOCUMENT_ID,
     ownerId: OWNER_ID,
     supabaseUrl: SUPABASE_URL,
@@ -107,5 +113,86 @@ describe("planDocumentMediaClone", () => {
     ].join("\n");
 
     expect(plan(content)).toEqual({ content, copies: [] });
+  });
+
+  it("rewrites only typed media attributes in a structured page", () => {
+    const image =
+      `/m/document-images/${OWNER_ID}/${SOURCE_DOCUMENT_ID}/photo.png`;
+    const video =
+      `/m/document-videos/${OWNER_ID}/${SOURCE_DOCUMENT_ID}/demo.mp4`;
+    const poster =
+      `/m/document-images/${OWNER_ID}/${SOURCE_DOCUMENT_ID}/poster.png`;
+    const mentionedOnly =
+      `/m/document-images/${OWNER_ID}/${SOURCE_DOCUMENT_ID}/mentioned.png`;
+    const content = JSON.stringify({
+      schema: "mushpot.page",
+      version: 1,
+      theme: "paper",
+      width: "prose",
+      content: {
+        type: "doc",
+        content: [
+          { type: "image", attrs: { src: image, alt: "Photo" } },
+          { type: "video", attrs: { src: video, poster, alt: "Demo" } },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: mentionedOnly }],
+          },
+        ],
+      },
+    });
+
+    const result = planDocumentMediaClone({
+      content,
+      contentFormat: PAGE_JSON_CONTENT_FORMAT,
+      destinationDocumentId: DESTINATION_DOCUMENT_ID,
+      ownerId: OWNER_ID,
+      supabaseUrl: SUPABASE_URL,
+    });
+
+    expect(result.copies.map(({ bucket, sourcePath }) => ({
+      bucket,
+      sourcePath,
+    }))).toEqual([
+      {
+        bucket: "document-images",
+        sourcePath: `${OWNER_ID}/${SOURCE_DOCUMENT_ID}/photo.png`,
+      },
+      {
+        bucket: "document-videos",
+        sourcePath: `${OWNER_ID}/${SOURCE_DOCUMENT_ID}/demo.mp4`,
+      },
+      {
+        bucket: "document-images",
+        sourcePath: `${OWNER_ID}/${SOURCE_DOCUMENT_ID}/poster.png`,
+      },
+    ]);
+    const page = parsePageDocument(result.content);
+    const blocks = page.content.content ?? [];
+    expect(blocks[0].attrs?.src).toBe(
+      `/m/document-images/${OWNER_ID}/${DESTINATION_DOCUMENT_ID}/` +
+        `${SOURCE_DOCUMENT_ID}/photo.png`,
+    );
+    expect(blocks[1].attrs?.src).toBe(
+      `/m/document-videos/${OWNER_ID}/${DESTINATION_DOCUMENT_ID}/` +
+        `${SOURCE_DOCUMENT_ID}/demo.mp4`,
+    );
+    expect(blocks[1].attrs?.poster).toBe(
+      `/m/document-images/${OWNER_ID}/${DESTINATION_DOCUMENT_ID}/` +
+        `${SOURCE_DOCUMENT_ID}/poster.png`,
+    );
+    expect(blocks[2].content?.[0].text).toBe(mentionedOnly);
+  });
+
+  it("fails closed for malformed structured page content", () => {
+    expect(() =>
+      planDocumentMediaClone({
+        content: "{",
+        contentFormat: PAGE_JSON_CONTENT_FORMAT,
+        destinationDocumentId: DESTINATION_DOCUMENT_ID,
+        ownerId: OWNER_ID,
+        supabaseUrl: SUPABASE_URL,
+      })
+    ).toThrow(/Invalid page document/u);
   });
 });

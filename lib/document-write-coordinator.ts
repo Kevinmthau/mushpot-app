@@ -64,7 +64,8 @@ function sameContent(
 ) {
   return (
     (a.title.trim() || "Untitled") === (b.title.trim() || "Untitled") &&
-    a.content === b.content
+    a.content === b.content &&
+    a.content_format === b.content_format
   );
 }
 

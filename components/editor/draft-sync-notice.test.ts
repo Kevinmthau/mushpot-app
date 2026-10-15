@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { Blob } from "node:buffer";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,33 +13,22 @@ afterEach(() => {
 });
 
 describe("conflict recovery actions", () => {
-  it("offers a copy and downloads the current text, including edits after the notice rendered", async () => {
+  it("offers a copy and the shared HTML download path", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("Blob", Blob);
-    vi.useFakeTimers();
-    let download: Blob | undefined;
-    const createObjectURL = vi.fn((blob: Blob) => {
-      download = blob;
-      return "blob:local-draft";
-    });
-    const revokeObjectURL = vi.fn();
-    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
-    const anchorClick = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(() => {});
     const onSaveCopy = vi.fn();
-    let text = "Initial local text";
+    const onDownload = vi.fn();
     const container = document.createElement("div");
     const root = createRoot(container);
     await act(async () =>
       root.render(
         createElement(DraftSyncNotice, {
+          draftSerializationError: null,
           status: "conflict",
           isCloning: false,
           isDeleting: false,
+          isDownloading: false,
           onSaveCopy,
-          getLatestTitle: () => "Notes/weekend",
-          getLatestContent: () => text,
+          onDownload,
         }),
       ),
     );
@@ -50,16 +38,37 @@ describe("conflict recovery actions", () => {
     const [copyButton, downloadButton] = container.querySelectorAll("button");
     await act(async () => copyButton.click());
     expect(onSaveCopy).toHaveBeenCalledOnce();
-    text = "More typing after the conflict";
     await act(async () => downloadButton.click());
-    expect(await download?.text()).toBe(
-      "# Notes/weekend\n\nMore typing after the conflict",
+    expect(onDownload).toHaveBeenCalledOnce();
+    expect(downloadButton.textContent).toBe("Download my draft as HTML");
+    await act(async () => root.unmount());
+  });
+
+  it("explains an unsavable draft without offering stale recovery actions", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    await act(async () =>
+      root.render(
+        createElement(DraftSyncNotice, {
+          draftSerializationError:
+            "Undo or shorten the last change. Saving will resume automatically.",
+          status: "conflict",
+          isCloning: false,
+          isDeleting: false,
+          isDownloading: false,
+          onSaveCopy: vi.fn(),
+          onDownload: vi.fn(),
+        }),
+      ),
     );
-    expect((anchorClick.mock.instances[0] as HTMLAnchorElement).download).toBe(
-      "Notes_weekend.md",
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "This page can’t be saved yet",
     );
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:local-draft");
+    expect(container.textContent).toContain("Saving will resume automatically");
+    expect(container.querySelectorAll("button")).toHaveLength(0);
     await act(async () => root.unmount());
   });
 });

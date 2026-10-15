@@ -6,6 +6,7 @@ import {
 } from "@/components/editor/use-editor-document";
 import type { EditorDocument } from "@/components/editor/editor-types";
 import type { DocumentCacheWriteToken } from "@/lib/doc-cache";
+import { MARKDOWN_CONTENT_FORMAT } from "@/lib/page-document";
 
 const OWNER = "owner-a";
 const TOKEN: DocumentCacheWriteToken = { generation: 7, owner: OWNER };
@@ -18,6 +19,7 @@ function buildDocument(
     owner: OWNER,
     title: "Draft",
     content: "Server content",
+    content_format: MARKDOWN_CONTENT_FORMAT,
     updated_at: "2026-08-17T12:00:00.000Z",
     share_enabled: false,
     share_token: null,
@@ -264,6 +266,70 @@ describe("editor document loading", () => {
     expect(onResolved).toHaveBeenCalledWith({
       document: remoteDocument,
       error: null,
+      notFound: false,
+    });
+  });
+
+  it("fails closed when a live edit races a remote row with an unknown format", async () => {
+    const cleanCache = buildDocument({ content: "Cached body" });
+    const unknownRemote = {
+      ...buildDocument({ content: "Future body" }),
+      content_format: "future_json_v2",
+    } as unknown as EditorDocument;
+    let hasLocalEdits = false;
+    const onResolved = vi.fn();
+    const reconcileRemote = vi.fn(async (document: EditorDocument) => document);
+
+    await loadEditorDocument({
+      hasLocalEdits: () => hasLocalEdits,
+      isCurrent: () => true,
+      loadCache: async () => ({ document: cleanCache, token: TOKEN }),
+      loadRemote: async () => ({ document: unknownRemote, error: null }),
+      onCache: () => {
+        hasLocalEdits = true;
+      },
+      onResolved,
+      reconcileRemote,
+    });
+
+    expect(reconcileRemote).not.toHaveBeenCalled();
+    expect(onResolved).toHaveBeenCalledWith({
+      document: null,
+      error:
+        "This document uses a newer content format. Reload or update Mushpot to open it safely.",
+      notFound: false,
+    });
+    expect(onResolved).not.toHaveBeenCalledWith(
+      expect.objectContaining({ document: unknownRemote }),
+    );
+  });
+
+  it("does not let an unknown remote format resolve through a dirty cached draft", async () => {
+    const dirtyCache = buildDocument({
+      _dirty: true,
+      content: "Unsynced cached body",
+    });
+    const unknownRemote = {
+      ...buildDocument({ content: "Future body" }),
+      content_format: "future_json_v2",
+    } as unknown as EditorDocument;
+    const onResolved = vi.fn();
+    const reconcileRemote = vi.fn(async (document: EditorDocument) => document);
+
+    await loadEditorDocument({
+      isCurrent: () => true,
+      loadCache: async () => ({ document: dirtyCache, token: TOKEN }),
+      loadRemote: async () => ({ document: unknownRemote, error: null }),
+      onCache: vi.fn(),
+      onResolved,
+      reconcileRemote,
+    });
+
+    expect(reconcileRemote).not.toHaveBeenCalled();
+    expect(onResolved).toHaveBeenCalledWith({
+      document: null,
+      error:
+        "This document uses a newer content format. Reload or update Mushpot to open it safely.",
       notFound: false,
     });
   });

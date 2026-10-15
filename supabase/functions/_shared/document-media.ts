@@ -6,6 +6,13 @@ import {
   MEDIA_URL_CANDIDATE_PATTERN,
   parseDocumentMediaUrl,
 } from "./document-media-core.ts";
+import {
+  type DocumentContentFormat,
+  getEdgePageDocumentMedia,
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+  rewriteEdgePageDocumentMedia,
+} from "./page-document.ts";
 
 export { DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS } from "./document-media-core.ts";
 
@@ -15,6 +22,7 @@ export type SharedDocumentMediaReference = {
 };
 
 type ParseSharedDocumentMediaReferenceOptions = {
+  contentFormat?: DocumentContentFormat;
   documentId: string;
   ownerId: string;
   supabaseUrl: string;
@@ -86,13 +94,29 @@ function getSharedDocumentMediaReferenceKey(
   return `${reference.bucket}\0${reference.path}`;
 }
 
+function getDocumentMediaUrls(
+  content: string,
+  contentFormat: DocumentContentFormat = MARKDOWN_CONTENT_FORMAT,
+) {
+  if (contentFormat === PAGE_JSON_CONTENT_FORMAT) {
+    return getEdgePageDocumentMedia(content).map(({ url }) => url);
+  }
+  if (contentFormat !== MARKDOWN_CONTENT_FORMAT) {
+    throw new Error("Unsupported document content format.");
+  }
+  return Array.from(
+    content.matchAll(MEDIA_URL_CANDIDATE_PATTERN),
+    (match) => match[0],
+  );
+}
+
 export function getSharedDocumentMediaReferences(
   content: string,
   options: ParseSharedDocumentMediaReferenceOptions,
 ) {
   const references = new Map<string, SharedDocumentMediaReference>();
-  for (const match of content.matchAll(MEDIA_URL_CANDIDATE_PATTERN)) {
-    const reference = parseSharedDocumentMediaReference(match[0], options);
+  for (const value of getDocumentMediaUrls(content, options.contentFormat)) {
+    const reference = parseSharedDocumentMediaReference(value, options);
     if (reference) {
       references.set(getSharedDocumentMediaReferenceKey(reference), reference);
     }
@@ -113,25 +137,41 @@ export function sharedDocumentContentReferencesMedia(
   options: ParseSharedDocumentMediaReferenceOptions,
 ) {
   const expectedKey = getSharedDocumentMediaReferenceKey(expectedReference);
-
-  for (const match of content.matchAll(MEDIA_URL_CANDIDATE_PATTERN)) {
-    const reference = parseSharedDocumentMediaReference(match[0], options);
-
-    if (
-      reference &&
-      getSharedDocumentMediaReferenceKey(reference) === expectedKey
-    ) {
-      return true;
-    }
-  }
-
-  return false;
+  return getSharedDocumentMediaReferences(content, options).has(expectedKey);
 }
 
 export async function rewriteSharedDocumentMediaUrls(
   content: string,
   options: RewriteSharedDocumentMediaOptions,
 ) {
+  if (options.contentFormat === PAGE_JSON_CONTENT_FORMAT) {
+    const references = getSharedDocumentMediaReferences(content, options);
+    const resolvedUrls = new Map<string, string>();
+    await Promise.all(
+      Array.from(references, async ([key, reference]) => {
+        try {
+          const resolvedUrl = await options.resolve(reference);
+          if (resolvedUrl) resolvedUrls.set(key, resolvedUrl);
+        } catch {
+          // Keep just the unavailable embed on its stable URL.
+        }
+      }),
+    );
+
+    return rewriteEdgePageDocumentMedia(content, ({ url }) => {
+      const reference = parseSharedDocumentMediaReference(url, options);
+      if (!reference) return url;
+      return resolvedUrls.get(getSharedDocumentMediaReferenceKey(reference)) ??
+        url;
+    });
+  }
+  if (
+    options.contentFormat !== undefined &&
+    options.contentFormat !== MARKDOWN_CONTENT_FORMAT
+  ) {
+    throw new Error("Unsupported document content format.");
+  }
+
   const candidates: Array<{
     end: number;
     key: string;

@@ -7,6 +7,10 @@ import {
   fetchSharedMediaUrls,
   normalizeSharedDocumentTitle,
 } from "@/lib/shared-document";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -61,6 +65,33 @@ describe("buildSharedDocumentPreview", () => {
     expect(buildSharedDocumentPreview("one two three four five", 10)).toBe(
       "one two…",
     );
+  });
+
+  it("builds structured-page previews from semantic text, not serialized JSON", () => {
+    const content = JSON.stringify({
+      schema: "mushpot.page",
+      version: 1,
+      theme: "paper",
+      width: "prose",
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "heading",
+            attrs: { level: 1 },
+            content: [{ type: "text", text: "A page" }],
+          },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "**Literal marks** stay." }],
+          },
+        ],
+      },
+    });
+
+    expect(
+      buildSharedDocumentPreview(content, PAGE_JSON_CONTENT_FORMAT),
+    ).toBe("A page **Literal marks** stay.");
   });
 });
 
@@ -207,10 +238,25 @@ describe("shared request failure outcomes", () => {
   it("validates document responses and treats malformed JSON and network failure as unavailable", async () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
-    const document = { title: "Title", content: "Body", updated_at: "2026-09-21T00:00:00Z" };
+    const document = {
+      title: "Title",
+      content: "Body",
+      updated_at: "2026-09-21T00:00:00Z",
+    };
     const fetcher = vi.fn().mockResolvedValueOnce(Response.json(document));
     vi.stubGlobal("fetch", fetcher);
-    expect(await fetchSharedDocument("doc", "token")).toEqual({ status: "success", data: document });
+    expect(await fetchSharedDocument("doc", "token")).toEqual({
+      status: "success",
+      data: {
+        ...document,
+        content_format: MARKDOWN_CONTENT_FORMAT,
+      },
+    });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      contentFormats: [MARKDOWN_CONTENT_FORMAT, PAGE_JSON_CONTENT_FORMAT],
+      docId: "doc",
+      token: "token",
+    });
     for (const invalid of [null, {}, { ...document, content: 1 }, { ...document, updated_at: "invalid" }]) {
       fetcher.mockResolvedValueOnce(Response.json(invalid));
       expect(await fetchSharedDocument("doc", "token")).toEqual({ status: "unavailable" });
@@ -219,6 +265,70 @@ describe("shared request failure outcomes", () => {
     expect(await fetchSharedDocument("doc", "token")).toEqual({ status: "unavailable" });
     fetcher.mockRejectedValueOnce(new Error("Network unavailable"));
     expect(await fetchSharedDocument("doc", "token")).toEqual({ status: "unavailable" });
+  });
+
+  it("accepts known explicit formats and rejects unknown explicit formats", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    const document = {
+      title: "Title",
+      content: "Body",
+      updated_at: "2026-09-21T00:00:00Z",
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({
+        ...document,
+        content_format: PAGE_JSON_CONTENT_FORMAT,
+      }))
+      .mockResolvedValueOnce(Response.json({
+        ...document,
+        content_format: "future_json_v2",
+      }));
+    vi.stubGlobal("fetch", fetcher);
+
+    expect(await fetchSharedDocument("doc", "token")).toEqual({
+      status: "success",
+      data: {
+        ...document,
+        content_format: PAGE_JSON_CONTENT_FORMAT,
+      },
+    });
+    expect(await fetchSharedDocument("doc", "token")).toEqual({
+      status: "unavailable",
+    });
+  });
+
+  it("fails closed when an old Edge response omits the format for a structured page", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    const structuredContent = JSON.stringify({
+      schema: "mushpot.page",
+      version: 1,
+      theme: "paper",
+      width: "prose",
+      content: {
+        type: "doc",
+        content: [{
+          type: "paragraph",
+          content: [{
+            type: "text",
+            text: "/m/document-images/owner/other-document/mentioned.png",
+          }],
+        }],
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({
+        title: "Page from an old Edge deployment",
+        content: structuredContent,
+        updated_at: "2026-09-21T00:00:00Z",
+      })),
+    );
+
+    await expect(fetchSharedDocument("structured-doc", "token")).resolves
+      .toEqual({ status: "unavailable" });
   });
 
   it("never treats missing, duplicate, or malformed batch entries as access denials", async () => {

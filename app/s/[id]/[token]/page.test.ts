@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import SharedDocumentPage, { generateMetadata } from "./page";
 import { fetchSharedDocument } from "@/lib/shared-document";
 import { notFound } from "next/navigation";
+import { MARKDOWN_CONTENT_FORMAT } from "@/lib/page-document";
 
 vi.mock("next/navigation", () => ({ notFound: vi.fn(() => { throw new Error("NOT_FOUND"); }) }));
 vi.mock("@/components/editor/shared-document-page-client", () => ({ SharedDocumentPageClient: () => null }));
@@ -29,9 +30,18 @@ describe("shared page failure policy", () => {
   });
 
   it("passes a validated document to the renderer", async () => {
-    const document = { title: "Title", content: "Body", updated_at: "2026-09-21T00:00:00Z" };
+    const document = {
+      title: "Title",
+      content: "Body",
+      content_format: MARKDOWN_CONTENT_FORMAT,
+      updated_at: "2026-09-21T00:00:00Z",
+    };
     vi.mocked(fetchSharedDocument).mockResolvedValue({ status: "success", data: document });
-    expect((await SharedDocumentPage(params())).props).toMatchObject({ title: "Title", content: "Body" });
+    expect((await SharedDocumentPage(params())).props).toMatchObject({
+      title: "Title",
+      content: "Body",
+      contentFormat: MARKDOWN_CONTENT_FORMAT,
+    });
     expect(notFound).not.toHaveBeenCalled();
   });
 });

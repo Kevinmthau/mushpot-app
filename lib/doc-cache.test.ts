@@ -8,6 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CachedDocument, CachedDocumentRecord } from "@/lib/doc-cache";
 import type { CachedDocumentListRecord } from "@/lib/document-cache-record";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 
 const OWNER = "owner-a";
 
@@ -19,6 +23,7 @@ function buildDocument(
     owner: OWNER,
     title: "Draft",
     content: "Private content",
+    content_format: MARKDOWN_CONTENT_FORMAT,
     updated_at: "2026-07-17T12:00:00.000Z",
     share_enabled: false,
     share_token: null,
@@ -127,6 +132,130 @@ describe("owner-scoped document cache", () => {
         owner: OWNER,
       }),
     );
+  });
+
+  it("upgrades and normalizes legacy v6 dirty records behind the page-client fence", async () => {
+    const legacy = buildDocument({
+      id: "legacy-format",
+      _dirty: true,
+      _localUpdatedAt: 42,
+    });
+    const legacyRecord = {
+      ...legacy,
+      kind: "complete",
+      _dirtyKey: 1,
+    } as Omit<typeof legacy, "content_format"> & {
+      content_format?: CachedDocument["content_format"];
+      kind: "complete";
+      _dirtyKey: 1;
+    };
+    delete legacyRecord.content_format;
+    await seedPreviousCache([legacyRecord as CachedDocumentRecord], 6);
+
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+
+    const database = await waitForRequest(indexedDB.open("mushpot"));
+    expect(database.version).toBe(7);
+    database.close();
+
+    expect(
+      await cache.getCachedDocumentForOwner(legacy.id, OWNER),
+    ).toMatchObject({
+      content_format: MARKDOWN_CONTENT_FORMAT,
+      _dirty: true,
+      _localUpdatedAt: 42,
+    });
+    expect(await cache.getDirtyDocuments(OWNER)).toEqual([
+      expect.objectContaining({
+        id: legacy.id,
+        content_format: MARKDOWN_CONTENT_FORMAT,
+        _dirty: true,
+      }),
+    ]);
+  });
+
+  it("quarantines an unknown dirty format without rewriting or returning it for sync", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const known = buildDocument({
+      id: "known-format",
+      _dirty: true,
+      _localUpdatedAt: 41,
+    });
+    await cache.putCachedDocument(known);
+
+    const unknown = {
+      ...buildDocument({
+        id: "unknown-format",
+        _dirty: true,
+        _localUpdatedAt: 42,
+      }),
+      content_format: "future_json_v2",
+      kind: "complete",
+      _dirtyKey: 1,
+    };
+    const database = await waitForRequest(indexedDB.open("mushpot"));
+    const transaction = database.transaction(
+      ["documents", "document-list"],
+      "readwrite",
+    );
+    transaction.objectStore("documents").put(unknown);
+    transaction.objectStore("document-list").put({
+      id: unknown.id,
+      kind: "complete",
+      owner: unknown.owner,
+      title: unknown.title,
+      updated_at: unknown.updated_at,
+      _dirty: true,
+      _dirtyKey: 1,
+      _listUpdatedAt: unknown.updated_at,
+    });
+    await waitForTransaction(transaction);
+    database.close();
+
+    expect(
+      await cache.getCachedDocumentForOwner(unknown.id, OWNER),
+    ).toBeNull();
+    expect(await cache.getDirtyDocuments(OWNER)).toEqual([
+      expect.objectContaining({
+        id: known.id,
+        content_format: MARKDOWN_CONTENT_FORMAT,
+      }),
+    ]);
+    expect(
+      (await readCacheStore<Record<string, unknown>>("documents")).find(
+        (document) => document.id === unknown.id,
+      ),
+    ).toMatchObject({
+      content_format: "future_json_v2",
+      _dirty: true,
+      _dirtyKey: 1,
+    });
+  });
+
+  it("preserves a dirty document when equal bytes use a different format", async () => {
+    const cache = await loadDocumentCache();
+    await cache.activateDocumentCacheForOwner(OWNER);
+    const dirty = buildDocument({
+      _dirty: true,
+      _localUpdatedAt: 10,
+      content_format: MARKDOWN_CONTENT_FORMAT,
+    });
+    await cache.putCachedDocument(dirty);
+
+    const reconciled = await cache.reconcileCachedDocumentWithServer(
+      buildDocument({
+        content_format: PAGE_JSON_CONTENT_FORMAT,
+        updated_at: "2026-07-17T13:00:00.000Z",
+      }),
+    );
+
+    expect(reconciled).toMatchObject({
+      content_format: MARKDOWN_CONTENT_FORMAT,
+      _dirty: true,
+      _localUpdatedAt: 10,
+    });
   });
 
   it("rejects warmed responses after deletion or owner revocation", async () => {
@@ -1211,7 +1340,7 @@ describe("owner-scoped document cache", () => {
     expect(await cache.getCachedDocumentListForOwner(OWNER)).toHaveLength(2);
   });
 
-  it.each([3, 5])("keeps activation best-effort while a v%s tab blocks the upgrade", async (version) => {
+  it.each([3, 5, 6])("keeps activation best-effort while a v%s tab blocks the upgrade", async (version) => {
     await seedPreviousCache([
       buildDocument({ kind: "complete", _dirty: true, _dirtyKey: 1 }),
     ], version);
@@ -1241,7 +1370,7 @@ describe("owner-scoped document cache", () => {
     }
 
     // This request runs after the pending upgrade and confirms it has finished.
-    const upgradedDatabase = await waitForRequest(indexedDB.open("mushpot", 6));
+    const upgradedDatabase = await waitForRequest(indexedDB.open("mushpot", 7));
     upgradedDatabase.close();
     await cache.activateDocumentCacheForOwner(OWNER);
     expect(cache.getDocumentCacheWriteToken(OWNER)).not.toBeNull();

@@ -13,6 +13,13 @@ import {
   appendFirstFrameFragment,
   parseVideoPosterFromTitle,
 } from "@/lib/markdown/video-poster";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+  parsePageDocument,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
+import { renderPageDocumentHtml } from "@/components/editor/page-editor-extensions";
 
 // Keep the reading styles self-contained: downloaded files do not load the
 // application's Tailwind bundle or Next.js font assets.
@@ -80,6 +87,79 @@ main { width: 100%; max-width: 800px; margin: 0 auto; padding: 2rem 1rem 5rem; }
 }
 .markdown-body hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
 .document-html-media { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 0.75rem; background: #f5f3ec; }
+.page-body {
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 1.125rem;
+  line-height: 1.72;
+  overflow-wrap: anywhere;
+}
+.page-body > :first-child { margin-top: 0; }
+.page-body > :last-child { margin-bottom: 0; }
+.page-body p, .page-body ul, .page-body ol, .page-body blockquote,
+.page-body pre, .page-body table { margin: 1em 0; }
+.page-body h1, .page-body h2, .page-body h3 {
+  font-family: var(--font-ui);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  margin: 1.6em 0 0.55em;
+}
+.page-body h1 { font-size: 2.35rem; }
+.page-body h2 { font-size: 1.75rem; }
+.page-body h3 { font-size: 1.3rem; }
+.page-body ul, .page-body ol { padding-left: 1.55rem; }
+.page-body blockquote {
+  border-left: 3px solid #b5c2bf;
+  color: #4d6168;
+  margin-left: 0;
+  padding-left: 1rem;
+}
+.page-body a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 0.2em;
+}
+.page-body code {
+  background: #ece9de;
+  border-radius: 0.4rem;
+  font-family: var(--font-writing);
+  font-size: 0.9em;
+  padding: 0.12rem 0.35rem;
+}
+.page-body pre { background: #ece9de; border-radius: 0.75rem; overflow-x: auto; padding: 1rem; }
+.page-body pre code { background: transparent; padding: 0; }
+.page-body hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
+.page-body img, .page-body video {
+  display: block;
+  height: auto;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: #f5f3ec;
+  margin: 1.25rem 0;
+}
+.page-body .tableWrapper { width: 100%; overflow-x: auto; }
+.page-body table { width: 100%; border-collapse: collapse; }
+.page-body th, .page-body td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.7rem 0.8rem;
+  text-align: left;
+  vertical-align: top;
+}
+.page-body th { font-weight: 700; }
+main[data-page-width="wide"] { max-width: 1100px; }
+main[data-page-theme="editorial"] .document-html-title,
+main[data-page-theme="editorial"] .page-body {
+  font-family: Georgia, "Times New Roman", serif;
+}
+main[data-page-theme="editorial"] .document-html-title {
+  font-size: clamp(2rem, 5vw, 4rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.03;
+  margin-bottom: 2rem;
+}
 .markdown-table-preview {
   display: block;
   width: 100%;
@@ -197,6 +277,70 @@ const markdownComponents: Components = {
 };
 
 export function renderDocumentHtmlBody({ title, content }: { title: string; content: string }) {
+  return renderDocumentHtmlBodyByFormat({
+    title,
+    content,
+    contentFormat: MARKDOWN_CONTENT_FORMAT,
+  });
+}
+
+function renderPageHtmlBody({ title, content }: { title: string; content: string }) {
+  const page = parsePageDocument(content);
+  const container = document.createElement("div");
+  const main = document.createElement("main");
+  const heading = document.createElement("h1");
+  const article = document.createElement("article");
+  const template = document.createElement("template");
+
+  main.dataset.pageTheme = page.theme;
+  main.dataset.pageWidth = page.width;
+  heading.className = "document-html-title";
+  heading.textContent = getDocumentDisplayTitle(title);
+  article.className = "page-body";
+  template.innerHTML = renderPageDocumentHtml(page);
+
+  // Keep the static render inert until the exporter resolves managed media.
+  for (const image of template.content.querySelectorAll<HTMLImageElement>("img[src]")) {
+    image.dataset.exportSrc = image.getAttribute("src") ?? "";
+    image.removeAttribute("src");
+  }
+  for (const video of template.content.querySelectorAll<HTMLVideoElement>("video[src]")) {
+    video.dataset.exportSrc = video.getAttribute("src") ?? "";
+    video.removeAttribute("src");
+    const poster = video.getAttribute("poster");
+    if (poster) video.dataset.exportPoster = poster;
+    video.removeAttribute("poster");
+    video.preload = "none";
+  }
+
+  article.append(template.content.cloneNode(true));
+  main.append(heading, article);
+  container.append(main);
+
+  let disposed = false;
+  return {
+    container,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      container.replaceChildren();
+    },
+  };
+}
+
+export function renderDocumentHtmlBodyByFormat({
+  title,
+  content,
+  contentFormat,
+}: {
+  title: string;
+  content: string;
+  contentFormat: DocumentContentFormat;
+}) {
+  if (contentFormat === PAGE_JSON_CONTENT_FORMAT) {
+    return renderPageHtmlBody({ title, content });
+  }
+
   const container = document.createElement("div");
   let renderFailure: { error: unknown } | undefined;
   const root = createRoot(container, {

@@ -4,13 +4,28 @@ import { useCallback, useMemo, useState } from "react";
 import { customAlphabet } from "nanoid";
 
 import { getConfiguredAppOrigin } from "@/lib/app-url";
+import {
+  type DocumentContentFormat,
+  getDocumentPlainText,
+  parseDocumentContentFormat,
+} from "@/lib/page-document";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type UseDocumentShareParams = {
+  contentFormat: DocumentContentFormat;
   documentId: string;
-  getDocumentText: () => string;
+  getDocumentText: () => string | null;
   getDocumentTitle: () => string;
-  onShareUpdated: (enabled: boolean, token: string | null, updatedAt: string, body?: { title: string; content: string }) => void;
+  onShareUpdated: (
+    enabled: boolean,
+    token: string | null,
+    updatedAt: string,
+    body?: {
+      title: string;
+      content: string;
+      content_format: DocumentContentFormat;
+    },
+  ) => void;
   shareEnabled: boolean;
   shareToken: string | null;
 };
@@ -37,6 +52,7 @@ function resolveShareOrigin() {
 }
 
 export function useDocumentShare({
+  contentFormat,
   documentId,
   getDocumentText,
   getDocumentTitle,
@@ -71,7 +87,7 @@ export function useDocumentShare({
           share_token: token,
         })
         .eq("id", documentId)
-        .select("title, content, updated_at")
+        .select("title, content, content_format, updated_at")
         .single();
 
       if (updateError) {
@@ -82,14 +98,23 @@ export function useDocumentShare({
         throw new Error("Unable to update sharing settings.");
       }
 
-      onShareUpdated(enabled, token, data.updated_at, data);
+      onShareUpdated(enabled, token, data.updated_at, {
+        title: data.title,
+        content: data.content,
+        content_format: parseDocumentContentFormat(data.content_format),
+      });
     },
     [documentId, onShareUpdated],
   );
 
   const buildDocumentClipboardText = useCallback(() => {
     const title = getDocumentTitle().trim();
-    const content = getDocumentText();
+    const serializedDocument = getDocumentText();
+    if (serializedDocument === null) return null;
+    const content = getDocumentPlainText(
+      serializedDocument,
+      parseDocumentContentFormat(contentFormat),
+    );
     const trimmedContent = content.trim();
 
     if (title && trimmedContent) {
@@ -101,7 +126,7 @@ export function useDocumentShare({
     }
 
     return title;
-  }, [getDocumentText, getDocumentTitle]);
+  }, [contentFormat, getDocumentText, getDocumentTitle]);
 
   const handleEnable = useCallback(async () => {
     setBusyAction("enable");
@@ -165,17 +190,19 @@ export function useDocumentShare({
   }, [shareUrl]);
 
   const handleCopyText = useCallback(async () => {
-    const documentText = buildDocumentClipboardText();
-
-    if (!documentText) {
-      setError("Document is empty.");
-      return;
-    }
-
     setBusyAction("copyText");
     setError(null);
 
     try {
+      const documentText = buildDocumentClipboardText();
+      if (documentText === null) {
+        setError("This page can’t be copied until its latest change can be saved.");
+        return;
+      }
+      if (!documentText) {
+        setError("Document is empty.");
+        return;
+      }
       await navigator.clipboard.writeText(documentText);
       setCopiedAction("text");
     } catch {

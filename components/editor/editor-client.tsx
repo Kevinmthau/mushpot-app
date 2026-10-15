@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { type Text } from "@codemirror/state";
 import type {
   ChangeEvent,
   KeyboardEvent,
@@ -17,13 +16,20 @@ import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { useDocumentHtmlDownload } from "@/components/editor/use-document-html-download";
 import { EditorWorkspace } from "@/components/editor/editor-workspace";
+import { PageEditor } from "@/components/editor/page-editor";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
+import type { DocumentTextSource } from "@/components/editor/read-document-text";
 import type { EditorClientProps } from "@/components/editor/editor-types";
 import { useDocumentDraft } from "@/components/editor/use-document-draft";
 import {
   consumeNewDocumentTitleFocus,
   releaseTemporaryKeyboardHolder,
 } from "@/lib/new-document-focus";
+import {
+  PAGE_JSON_CONTENT_FORMAT,
+  parsePageDocument,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
 
 const ShareModal = dynamic(
   () => import("@/components/editor/share-modal").then((module) => module.ShareModal),
@@ -40,7 +46,11 @@ type ShareUpdateHandler = (
   enabled: boolean,
   token: string | null,
   updatedAt: string,
-  body?: { title: string; content: string },
+  body?: {
+    title: string;
+    content: string;
+    content_format?: DocumentContentFormat;
+  },
 ) => void;
 
 export function applyShareUpdateWithLocalEditSignal(
@@ -49,23 +59,48 @@ export function applyShareUpdateWithLocalEditSignal(
   enabled: boolean,
   token: string | null,
   updatedAt: string,
-  body?: { title: string; content: string },
+  body?: {
+    title: string;
+    content: string;
+    content_format?: DocumentContentFormat;
+  },
 ) {
   onLocalEdit?.();
   updateShareState(enabled, token, updatedAt, body);
 }
 
 export async function navigateToDocumentsAfterDraftFlush(
-  flushLatestDraft: () => Promise<void>,
+  flushLatestDraft: () => Promise<boolean>,
   navigate: () => void,
 ) {
-  await flushLatestDraft();
+  const flushed = await flushLatestDraft();
+  if (!flushed) return false;
   navigate();
+  return true;
 }
 
 export function EditorClient(props: EditorClientProps) {
   if (!props?.initialDocument) {
     return <MissingDocumentFallback />;
+  }
+
+  if (props.initialDocument.content_format === PAGE_JSON_CONTENT_FORMAT) {
+    try {
+      parsePageDocument(props.initialDocument.content);
+    } catch {
+      return (
+        <main className="mx-auto min-h-dvh w-full max-w-[800px] px-4 py-12 sm:px-5">
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--paper)] px-5 py-6">
+            <h1 className="font-[var(--font-writing)] text-2xl text-[var(--ink)]">
+              This page needs attention
+            </h1>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Its structured content is invalid or uses a newer page format. The original data has not been changed.
+            </p>
+          </div>
+        </main>
+      );
+    }
   }
 
   return <EditorClientInner {...props} />;
@@ -86,6 +121,8 @@ function EditorClientInner({
   const pendingEditorFocusRef = useRef(false);
   const isNavigatingHomeRef = useRef(false);
   const {
+    contentFormat,
+    draftSerializationError,
     saveStatus,
     formattedUpdated,
     flushLatestDraft,
@@ -106,11 +143,13 @@ function EditorClientInner({
   } = useDocumentDraft(initialDocument, hasResolvedRemoteState);
   const { isCloning, handleClone } = useDocumentClone({
     owner: initialDocument.owner,
+    contentFormat,
     getLatestTitle: getLatestTitle,
     getLatestContent: getLatestContent,
   });
   const { isDownloading, handleDownload } = useDocumentHtmlDownload({
     owner: initialDocument.owner,
+    contentFormat,
     getLatestTitle,
     getLatestContent,
   });
@@ -167,7 +206,8 @@ function EditorClientInner({
   );
 
   const handleEditorDocumentChange = useCallback(
-    (doc: Text) => {
+    (doc: DocumentTextSource) => {
+      setIsShareModalOpen(false);
       onLocalEdit?.();
       handleEditorChange(doc);
     },
@@ -229,24 +269,27 @@ function EditorClientInner({
   );
 
   const handleOpenShareModal = useCallback(() => {
+    if (draftSerializationError || getLatestContent() === null) return;
     setIsShareModalOpen(true);
-  }, []);
+  }, [draftSerializationError, getLatestContent]);
 
   const handleCloseShareModal = useCallback(() => {
     setIsShareModalOpen(false);
   }, []);
 
   const handleCloneClick = useCallback(() => {
+    if (draftSerializationError) return;
     void handleClone();
-  }, [handleClone]);
+  }, [draftSerializationError, handleClone]);
 
   const handleDeleteClick = useCallback(() => {
     void handleDeleteDocument();
   }, [handleDeleteDocument]);
 
   const handleDownloadClick = useCallback(() => {
+    if (draftSerializationError) return;
     void handleDownload();
-  }, [handleDownload]);
+  }, [draftSerializationError, handleDownload]);
 
   const navigateToDocuments = useCallback(async () => {
     if (isDeleting || isNavigatingHomeRef.current) {
@@ -255,9 +298,10 @@ function EditorClientInner({
 
     isNavigatingHomeRef.current = true;
     titleInputRef.current?.blur();
-    await navigateToDocumentsAfterDraftFlush(flushLatestDraft, () => {
+    const navigated = await navigateToDocumentsAfterDraftFlush(flushLatestDraft, () => {
       router.push("/");
     });
+    if (!navigated) isNavigatingHomeRef.current = false;
   }, [flushLatestDraft, isDeleting, router]);
 
   const handleDocumentsClick = useCallback(
@@ -276,7 +320,9 @@ function EditorClientInner({
     <>
       <div ref={dropTargetRef} className="min-h-dvh pb-14 sm:pb-20">
         <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
-          {needsDraftRecovery && saveStatus !== "conflict" ? (
+          {needsDraftRecovery &&
+          saveStatus !== "conflict" &&
+          !draftSerializationError ? (
             <DraftRecoveryNotice
               isCloning={isCloning}
               isDeleting={isDeleting}
@@ -300,9 +346,13 @@ function EditorClientInner({
             <button
               type="button"
               onClick={handleDocumentsClick}
-              disabled={isDeleting}
+              disabled={isDeleting || draftSerializationError !== null}
               aria-label="Back to documents"
-              title="Back to documents"
+              title={
+                draftSerializationError
+                  ? "Fix the page before leaving"
+                  : "Back to documents"
+              }
               className="-mx-1 -my-1 px-1 py-1 text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {readingTime} min
@@ -322,7 +372,7 @@ function EditorClientInner({
             <button
               type="button"
               onClick={handleOpenShareModal}
-              disabled={isDeleting}
+              disabled={isDeleting || draftSerializationError !== null}
               className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               Share
@@ -331,7 +381,9 @@ function EditorClientInner({
             <button
               type="button"
               onClick={handleCloneClick}
-              disabled={isCloning || isDeleting}
+              disabled={
+                isCloning || isDeleting || draftSerializationError !== null
+              }
               className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isCloning ? "Cloning..." : "Clone"}
@@ -340,7 +392,12 @@ function EditorClientInner({
             <button
               type="button"
               onClick={handleDownloadClick}
-              disabled={isDownloading || isDeleting || uploadingMediaCount > 0}
+              disabled={
+                isDownloading ||
+                isDeleting ||
+                uploadingMediaCount > 0 ||
+                draftSerializationError !== null
+              }
               className="text-xs uppercase tracking-[0.08em] text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isDownloading ? "Downloading…" : "Download HTML"}
@@ -357,33 +414,48 @@ function EditorClientInner({
           </div>
 
           <DraftSyncNotice
+            draftSerializationError={draftSerializationError}
             status={saveStatus}
             isCloning={isCloning}
             isDeleting={isDeleting}
+            isDownloading={isDownloading}
             onSaveCopy={handleCloneClick}
-            getLatestTitle={getLatestTitle}
-            getLatestContent={getLatestContent}
+            onDownload={handleDownloadClick}
           />
 
           <div className="pb-24">
-            <EditorWorkspace
-              key={initialDocument.id}
-              documentId={initialDocument.id}
-              dropTargetRef={dropTargetRef}
-              initialValue={initialDocument.content}
-              onChange={handleEditorDocumentChange}
-              onReady={handleEditorWorkspaceReady}
-              onUploadingMediaCountChange={setUploadingMediaCount}
-              owner={initialDocument.owner}
-              placeholder="|..."
-            />
+            {contentFormat === PAGE_JSON_CONTENT_FORMAT ? (
+              <PageEditor
+                key={initialDocument.id}
+                documentId={initialDocument.id}
+                dropTargetRef={dropTargetRef}
+                initialValue={initialDocument.content}
+                onChange={handleEditorDocumentChange}
+                onReady={handleEditorWorkspaceReady}
+                onUploadingMediaCountChange={setUploadingMediaCount}
+                owner={initialDocument.owner}
+              />
+            ) : (
+              <EditorWorkspace
+                key={initialDocument.id}
+                documentId={initialDocument.id}
+                dropTargetRef={dropTargetRef}
+                initialValue={initialDocument.content}
+                onChange={handleEditorDocumentChange}
+                onReady={handleEditorWorkspaceReady}
+                onUploadingMediaCountChange={setUploadingMediaCount}
+                owner={initialDocument.owner}
+                placeholder="|..."
+              />
+            )}
           </div>
         </main>
       </div>
 
-      {isShareModalOpen ? (
+      {isShareModalOpen && !draftSerializationError ? (
         <ShareModal
           documentId={initialDocument.id}
+          contentFormat={contentFormat}
           getDocumentText={getLatestContent}
           getDocumentTitle={getLatestTitle}
           isOpen={isShareModalOpen}

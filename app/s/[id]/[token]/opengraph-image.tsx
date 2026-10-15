@@ -39,7 +39,13 @@ export default async function OpenGraphImage({ params }: SharedDocImageProps) {
   }
   const document = result.status === "success" ? result.data : null;
   const title = normalizeSharedDocumentTitle(document?.title ?? "Shared document");
-  const excerpt = buildSharedDocumentPreview(document?.content ?? "", 220);
+  const excerpt = document
+    ? buildSharedDocumentPreview(
+        document.content,
+        document.content_format,
+        220,
+      )
+    : buildSharedDocumentPreview("", 220);
   const [regularFont, boldFont] = await Promise.all([
     writingFontRegular,
     writingFontBold,

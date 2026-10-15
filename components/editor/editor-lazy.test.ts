@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { EditorClient, preloadEditorClient } from "@/components/editor/editor-lazy";
 import type { EditorDocument } from "@/components/editor/editor-types";
+import { MARKDOWN_CONTENT_FORMAT } from "@/lib/page-document";
 
 const { loadClient, releaseClient, clientReady } = vi.hoisted(() => {
   let releaseClient!: () => void;
@@ -26,6 +27,7 @@ const DOCUMENT: EditorDocument = {
   owner: "owner-a",
   title: "Draft",
   content: "Body",
+  content_format: MARKDOWN_CONTENT_FORMAT,
   updated_at: "2026-08-17T12:00:00.000Z",
   share_enabled: false,
   share_token: null,

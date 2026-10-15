@@ -1,7 +1,8 @@
-import type { Text } from "@codemirror/state";
-
 import type { EditorDocument } from "@/components/editor/editor-types";
-import { readDocumentText } from "@/components/editor/read-document-text";
+import {
+  readDocumentText,
+  type DocumentTextSource,
+} from "@/components/editor/read-document-text";
 import {
   createDraftPageLifecycleHandlers,
   createInitialDraftPersistenceGate,
@@ -19,10 +20,16 @@ import {
   type PersistDocumentResult,
 } from "@/lib/document-sync";
 import type { DocumentWriteEvent } from "@/lib/document-write-coordinator";
+import {
+  parseDocumentContentFormat,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
 
 export type DraftSaveStatus = "saved" | "saving" | "retryable" | "conflict";
 export type DraftViewState = {
+  contentFormat: DocumentContentFormat;
   contentForStats: string;
+  draftSerializationError: string | null;
   isDeleting: boolean;
   needsDraftRecovery: boolean;
   saveStatus: DraftSaveStatus;
@@ -31,6 +38,9 @@ export type DraftViewState = {
   title: string;
   updatedAt: string;
 };
+
+export const UNSAVABLE_DRAFT_MESSAGE =
+  "Undo or shorten the last change, and keep this tab open. Saving will resume automatically once this page can be stored.";
 
 export type DraftPersistenceOptions = {
   canPersist?: () => boolean;
@@ -41,12 +51,19 @@ export type DraftPersistenceOptions = {
   subscribe?: (listener: (event: DocumentWriteEvent) => void) => () => void;
 };
 
-/** Owns the draft independently of React. Text is serialized only when consumed. */
+/** Owns the draft independently of React. Source is serialized only when consumed. */
 export class DocumentDraftController {
-  private source: Text | string;
-  private serializedSource: Text | string;
+  private source: DocumentTextSource;
+  private serializedSource: DocumentTextSource;
   private serialized: string;
-  private saved: { content: string; title: string; updatedAt: string };
+  private invalidSource: DocumentTextSource | null = null;
+  private contentFormat: DocumentContentFormat;
+  private saved: {
+    content: string;
+    contentFormat: DocumentContentFormat;
+    title: string;
+    updatedAt: string;
+  };
   private cachedDirty: boolean;
   private localRevisionPending = false;
   private baseVersionUntrusted: boolean;
@@ -67,8 +84,12 @@ export class DocumentDraftController {
     private options: DraftPersistenceOptions,
   ) {
     this.source = this.serializedSource = this.serialized = document.content;
+    this.contentFormat = parseDocumentContentFormat(
+      document.content_format,
+    );
     this.saved = {
       content: document.content,
+      contentFormat: this.contentFormat,
       title: normalizeDocumentTitle(document.title),
       updatedAt: document.updated_at,
     };
@@ -77,7 +98,9 @@ export class DocumentDraftController {
     this.revision = document._localUpdatedAt ?? Date.now();
     this.gate = createInitialDraftPersistenceGate(resolved || this.cachedDirty);
     this.view = {
+      contentFormat: this.contentFormat,
       contentForStats: document.content,
+      draftSerializationError: null,
       isDeleting: false,
       needsDraftRecovery: this.baseVersionUntrusted,
       saveStatus: this.cachedDirty ? "retryable" : "saved",
@@ -98,17 +121,34 @@ export class DocumentDraftController {
 
   getView = () => this.view;
   getLatestTitle = () => this.view.title;
-  getLatestContent = () => {
-    if (this.source !== this.serializedSource) {
-      this.serialized = readDocumentText(this.source);
-      this.serializedSource = this.source;
-    }
-    return this.serialized;
-  };
+  getLatestContent = () => this.readLatestContent();
 
   private publish(update: Partial<DraftViewState>) {
     this.view = { ...this.view, ...update };
     if (this.active) for (const listener of this.listeners) listener(this.view);
+  }
+
+  private readLatestContent() {
+    if (this.source === this.invalidSource) return null;
+
+    if (this.source !== this.serializedSource) {
+      try {
+        this.serialized = readDocumentText(this.source);
+        this.serializedSource = this.source;
+      } catch {
+        this.invalidSource = this.source;
+        if (this.view.draftSerializationError === null) {
+          this.publish({ draftSerializationError: UNSAVABLE_DRAFT_MESSAGE });
+        }
+        return null;
+      }
+    }
+
+    this.invalidSource = null;
+    if (this.view.draftSerializationError !== null) {
+      this.publish({ draftSerializationError: null });
+    }
+    return this.serialized;
   }
 
   private schedule(key: string, delay: number, work: () => void) {
@@ -131,36 +171,49 @@ export class DocumentDraftController {
     this.timers.clear();
   };
 
-  private isDirty() {
+  private hasUnsavedChanges(content: string) {
     return hasUnsavedDocumentChanges({
       cachedDraftIsDirty: this.cachedDirty || this.localRevisionPending,
-      latestContent: this.getLatestContent(),
+      latestContent: content,
+      latestContentFormat: this.contentFormat,
       latestTitle: normalizeDocumentTitle(this.view.title),
       savedContent: this.saved.content,
+      savedContentFormat: this.saved.contentFormat,
       savedTitle: this.saved.title,
     });
   }
 
-  private snapshot(): CachedDocument {
+  private isDirty() {
+    const content = this.readLatestContent();
+    return content === null || this.hasUnsavedChanges(content);
+  }
+
+  private snapshot(): CachedDocument | null {
+    const content = this.readLatestContent();
+    if (content === null) return null;
+
     return {
       id: this.document.id,
       owner: this.document.owner,
       title: normalizeDocumentTitle(this.view.title),
-      content: this.getLatestContent(),
+      content,
+      content_format: this.contentFormat,
       // Display timestamps can include share changes; only a verified body
       // snapshot can advance the optimistic-concurrency baseline.
       updated_at: this.saved.updatedAt,
       share_enabled: this.view.shareEnabled,
       share_token: this.view.shareToken,
       _localUpdatedAt: this.revision,
-      _dirty: this.isDirty(),
+      _dirty: this.hasUnsavedChanges(content),
       _baseVersionUntrusted: this.baseVersionUntrusted,
     };
   }
 
   private cache = () => {
     if (this.view.isDeleting) return Promise.resolve(false);
-    return this.options.cache(this.snapshot()).catch(() => false);
+    const snapshot = this.snapshot();
+    if (snapshot === null) return Promise.resolve(false);
+    return this.options.cache(snapshot).catch(() => false);
   };
 
   private acceptWrite = ({ snapshot, result }: DocumentWriteEvent) => {
@@ -184,8 +237,13 @@ export class DocumentDraftController {
       return;
     if (isIncomingHydrationStale(this.saved.updatedAt, result.updatedAt))
       return;
+    const confirmedContentFormat = parseDocumentContentFormat(
+      result.confirmedSnapshot.content_format,
+    );
+    this.contentFormat = confirmedContentFormat;
     this.saved = {
       content: snapshot.content,
+      contentFormat: confirmedContentFormat,
       title: result.persistedTitle,
       updatedAt: result.updatedAt,
     };
@@ -198,6 +256,7 @@ export class DocumentDraftController {
     this.baseVersionUntrusted = false;
     const hasPendingChanges = this.isDirty();
     this.publish({
+      contentFormat: this.contentFormat,
       ...(!this.mutations.share
         ? {
             shareEnabled: result.confirmedSnapshot.share_enabled,
@@ -223,12 +282,12 @@ export class DocumentDraftController {
     if (
       this.options.canPersist?.() === false ||
       this.view.isDeleting ||
-      this.view.saveStatus === "conflict" ||
-      !this.isDirty()
+      this.view.saveStatus === "conflict"
     )
       return;
-    if (!requestInitialDraftPersistence(this.gate)) return;
     const snapshot = this.snapshot();
+    if (snapshot === null || !snapshot._dirty) return;
+    if (!requestInitialDraftPersistence(this.gate)) return;
     const generation = this.generation;
     const persistenceGeneration = this.persistenceGeneration;
     this.publish({ saveStatus: "saving" });
@@ -270,13 +329,17 @@ export class DocumentDraftController {
       });
   }
 
-  handleEditorChange = (source: Text) => {
+  handleEditorChange = (source: DocumentTextSource) => {
     this.source = source;
+    // Sources are immutable snapshots in both editors. Resetting the marker
+    // here also lets a source implementation recover after its next edit.
+    this.invalidSource = null;
     this.mutations.content = true;
     this.changed();
-    this.schedule("stats", 250, () =>
-      this.publish({ contentForStats: this.getLatestContent() }),
-    );
+    this.schedule("stats", 250, () => {
+      const content = this.readLatestContent();
+      if (content !== null) this.publish({ contentForStats: content });
+    });
   };
 
   handleTitleChange = (title: string) => {
@@ -289,24 +352,43 @@ export class DocumentDraftController {
     if (!this.view.title.trim()) this.handleTitleChange("Untitled");
   };
 
+  private resolveInitialPersistence(resolved: boolean) {
+    if (!resolved) return;
+    const deferred = openInitialDraftPersistenceGate(this.gate);
+    if (deferred || this.cachedDirty || this.edited)
+      this.schedule("save", 0, () => {
+        void this.save();
+      });
+  }
+
   hydrate(document: EditorDocument, resolved: boolean) {
     if (
       this.view.saveStatus !== "conflict" &&
       !isIncomingHydrationStale(this.saved.updatedAt, document.updated_at)
     ) {
-      const content = this.getLatestContent();
+      const content = this.readLatestContent();
+      if (content === null) {
+        this.resolveInitialPersistence(resolved);
+        return;
+      }
+      const incomingContentFormat = parseDocumentContentFormat(
+        document.content_format,
+      );
       const legacyOverlap =
         this.baseVersionUntrusted &&
         this.cachedDirty &&
         (document.content !== content ||
+          incomingContentFormat !== this.contentFormat ||
           normalizeDocumentTitle(document.title) !==
             normalizeDocumentTitle(this.view.title));
       const overlaps =
         legacyOverlap ||
         (document.updated_at !== this.saved.updatedAt &&
           ((this.mutations.content &&
-            document.content !== this.saved.content &&
-            document.content !== content) ||
+            ((document.content !== this.saved.content &&
+              document.content !== content) ||
+              (incomingContentFormat !== this.saved.contentFormat &&
+                incomingContentFormat !== this.contentFormat))) ||
             (this.mutations.title &&
               document.title !== this.saved.title &&
               document.title !== this.view.title)));
@@ -318,8 +400,10 @@ export class DocumentDraftController {
         const next = reconcileDraftHydration(
           {
             content,
+            contentFormat: this.contentFormat,
             isDeleting: this.view.isDeleting,
             savedContent: this.saved.content,
+            savedContentFormat: this.saved.contentFormat,
             savedTitle: this.saved.title,
             savedUpdatedAt: this.saved.updatedAt,
             shareEnabled: this.view.shareEnabled,
@@ -330,17 +414,22 @@ export class DocumentDraftController {
           document,
           this.mutations,
         );
-        if (!this.mutations.content) this.source = next.content;
+        if (!this.mutations.content) {
+          this.source = next.content;
+          this.contentFormat = next.contentFormat;
+        }
         this.saved = {
           content: next.savedContent,
+          contentFormat: next.savedContentFormat,
           title: next.savedTitle,
           updatedAt: next.savedUpdatedAt,
         };
         this.cachedDirty = document._dirty === true;
         this.baseVersionUntrusted = document._baseVersionUntrusted === true;
         this.publish({
+          contentFormat: this.contentFormat,
           needsDraftRecovery: this.baseVersionUntrusted,
-          contentForStats: this.getLatestContent(),
+          contentForStats: this.readLatestContent() ?? content,
           title: next.title,
           updatedAt: next.updatedAt,
           shareEnabled: next.shareEnabled,
@@ -352,20 +441,18 @@ export class DocumentDraftController {
           });
       }
     }
-    if (resolved) {
-      const deferred = openInitialDraftPersistenceGate(this.gate);
-      if (deferred || this.cachedDirty || this.edited)
-        this.schedule("save", 0, () => {
-          void this.save();
-        });
-    }
+    this.resolveInitialPersistence(resolved);
   }
 
   updateShareState = (
     enabled: boolean,
     token: string | null,
     updatedAt: string,
-    body?: { content: string; title: string },
+    body?: {
+      content: string;
+      content_format?: DocumentContentFormat;
+      title: string;
+    },
   ) => {
     this.edited = true;
     this.revision = Math.max(Date.now(), this.revision + 1);
@@ -380,6 +467,9 @@ export class DocumentDraftController {
     if (
       body &&
       body.content === this.saved.content &&
+      (body.content_format === undefined ||
+        parseDocumentContentFormat(body.content_format) ===
+          this.saved.contentFormat) &&
       body.title === this.saved.title &&
       !this.cachedDirty &&
       !this.baseVersionUntrusted &&
@@ -395,9 +485,11 @@ export class DocumentDraftController {
 
   flushLatestDraft = async () => {
     this.clearScheduledWork();
+    if (this.readLatestContent() === null) return false;
     const cacheWrite = this.cache();
     void this.save();
     await cacheWrite;
+    return true;
   };
 
   markDeleting = () => {
@@ -439,6 +531,11 @@ export class DocumentDraftController {
     });
     return {
       ...lifecycle,
+      handleBeforeUnload: (event: BeforeUnloadEvent) => {
+        if (this.readLatestContent() !== null) return;
+        event.preventDefault();
+        event.returnValue = "";
+      },
       stop: () => {
         lifecycle.handleUnmount();
         this.active = false;

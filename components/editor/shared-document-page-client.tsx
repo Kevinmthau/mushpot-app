@@ -22,9 +22,18 @@ import {
   appendFirstFrameFragment,
   parseVideoPosterFromTitle,
 } from "@/lib/markdown/video-poster";
+import {
+  getDocumentPlainText,
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+  parsePageDocument,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
+import { renderPageDocumentHtml } from "@/components/editor/page-editor-extensions";
 
 type SharedDocumentPageClientProps = {
   content: string;
+  contentFormat?: DocumentContentFormat;
   documentId: string;
   shareToken: string;
   title: string;
@@ -131,17 +140,29 @@ const markdownComponents: Components = {
 
 export function SharedDocumentPageClient({
   content,
+  contentFormat = MARKDOWN_CONTENT_FORMAT,
   documentId,
   shareToken,
   title,
   updatedAt,
 }: SharedDocumentPageClientProps) {
-  const readingTime = getReadingTimeFromText(content);
+  const readingTime = getReadingTimeFromText(
+    getDocumentPlainText(content, contentFormat),
+  );
   const formattedUpdated = formatRelativeTimestamp(updatedAt);
+  const page = contentFormat === PAGE_JSON_CONTENT_FORMAT
+    ? parsePageDocument(content)
+    : null;
 
   return (
     <div className="min-h-dvh pb-14 sm:pb-20">
-      <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
+      <main
+        className={`mx-auto w-full px-4 pt-8 sm:px-5 sm:pt-12 md:px-0 ${
+          page?.width === "wide" ? "max-w-[1120px]" : "max-w-[800px]"
+        }`}
+        data-page-theme={page?.theme}
+        data-page-width={page?.width}
+      >
         <h1 className="editor-title-input m-0 mb-4 whitespace-pre-wrap break-words text-[var(--ink)]">
           {getDocumentDisplayTitle(title)}
         </h1>
@@ -161,20 +182,28 @@ export function SharedDocumentPageClient({
           <span>{formattedUpdated}</span>
         </div>
 
-        <article
-          className="markdown-body pb-24"
-          data-document-id={documentId}
-        >
-          <SharedMediaProvider documentId={documentId} token={shareToken}>
-            <ReactMarkdown
-              components={markdownComponents}
-              rehypePlugins={[rehypeLinkPreviews]}
-              remarkPlugins={[remarkGfm, remarkImageWidth]}
-            >
-              {content}
-            </ReactMarkdown>
-          </SharedMediaProvider>
-        </article>
+        {page ? (
+          <article
+            className="page-body pb-24"
+            data-document-id={documentId}
+            dangerouslySetInnerHTML={{ __html: renderPageDocumentHtml(page) }}
+          />
+        ) : (
+          <article
+            className="markdown-body pb-24"
+            data-document-id={documentId}
+          >
+            <SharedMediaProvider documentId={documentId} token={shareToken}>
+              <ReactMarkdown
+                components={markdownComponents}
+                rehypePlugins={[rehypeLinkPreviews]}
+                remarkPlugins={[remarkGfm, remarkImageWidth]}
+              >
+                {content}
+              </ReactMarkdown>
+            </SharedMediaProvider>
+          </article>
+        )}
       </main>
     </div>
   );

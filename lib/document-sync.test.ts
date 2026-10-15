@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   normalizeDocumentTitle,
 } from "@/lib/document-sync";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 
 let flushDirtyDocuments: typeof import("@/lib/document-sync").flushDirtyDocuments;
 let persistDocumentSnapshot: typeof import("@/lib/document-sync").persistDocumentSnapshot;
@@ -16,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   updateIdEq: vi.fn(),
   updateOwnerEq: vi.fn(),
   updateVersionEq: vi.fn(),
+  updateFormatEq: vi.fn(),
   updateSelect: vi.fn(),
   updateMaybeSingle: vi.fn(),
   readSelect: vi.fn(),
@@ -68,7 +73,8 @@ describe("flushDirtyDocuments", () => {
     mocks.update.mockReturnValue({ eq: mocks.updateIdEq });
     mocks.updateIdEq.mockReturnValue({ eq: mocks.updateOwnerEq });
     mocks.updateOwnerEq.mockReturnValue({ eq: mocks.updateVersionEq });
-    mocks.updateVersionEq.mockReturnValue({ select: mocks.updateSelect });
+    mocks.updateVersionEq.mockReturnValue({ eq: mocks.updateFormatEq });
+    mocks.updateFormatEq.mockReturnValue({ select: mocks.updateSelect });
     mocks.updateSelect.mockReturnValue({
       maybeSingle: mocks.updateMaybeSingle,
     });
@@ -79,6 +85,7 @@ describe("flushDirtyDocuments", () => {
     });
     mocks.updateMaybeSingle.mockResolvedValue({
       data: {
+        content_format: MARKDOWN_CONTENT_FORMAT,
         share_enabled: false,
         share_token: null,
         updated_at: "2026-07-17T12:00:00.000Z",
@@ -94,6 +101,7 @@ describe("flushDirtyDocuments", () => {
         owner: "active-owner",
         title: "Active",
         content: "Keep",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-07-17T11:00:00.000Z",
         share_enabled: false,
         share_token: null,
@@ -104,6 +112,7 @@ describe("flushDirtyDocuments", () => {
         owner: "other-owner",
         title: "Other",
         content: "Do not retry",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-07-17T11:00:00.000Z",
         share_enabled: true,
         share_token: "secret-token",
@@ -118,14 +127,23 @@ describe("flushDirtyDocuments", () => {
       owner: "active-owner",
     });
     expect(mocks.update).toHaveBeenCalledOnce();
+    expect(mocks.update).toHaveBeenCalledWith({
+      title: "Active",
+      content: "Keep",
+      content_format: MARKDOWN_CONTENT_FORMAT,
+    });
     expect(mocks.updateIdEq).toHaveBeenCalledWith("id", "active-document");
     expect(mocks.updateOwnerEq).toHaveBeenCalledWith("owner", "active-owner");
     expect(mocks.updateVersionEq).toHaveBeenCalledWith(
       "updated_at",
       "2026-07-17T11:00:00.000Z",
     );
+    expect(mocks.updateFormatEq).toHaveBeenCalledWith(
+      "content_format",
+      MARKDOWN_CONTENT_FORMAT,
+    );
     expect(mocks.updateSelect).toHaveBeenCalledWith(
-      "share_enabled, share_token, updated_at",
+      "content_format, share_enabled, share_token, updated_at",
     );
     expect(mocks.readSelect).not.toHaveBeenCalled();
     expect(mocks.putCachedDocument).toHaveBeenCalledWith(
@@ -191,6 +209,7 @@ describe("flushDirtyDocuments", () => {
         owner: "active-owner",
         title: "Saved",
         content: "Saved content",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-07-17T11:00:00.000Z",
         share_enabled: false,
         share_token: null,
@@ -201,6 +220,7 @@ describe("flushDirtyDocuments", () => {
         owner: "active-owner",
         title: "Failed",
         content: "Unsaved content",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-07-17T11:00:00.000Z",
         share_enabled: false,
         share_token: null,
@@ -232,6 +252,7 @@ describe("flushDirtyDocuments", () => {
         owner: "active-owner",
         title: "Active",
         content: "Snapshot being flushed",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         updated_at: "2026-07-17T11:00:00.000Z",
         share_enabled: false,
         share_token: null,
@@ -265,6 +286,7 @@ describe("flushDirtyDocuments", () => {
       owner: "active-owner",
       title: "Active",
       content: "Keep",
+      content_format: MARKDOWN_CONTENT_FORMAT,
       share_enabled: false,
       share_token: null,
       updated_at: "2026-07-17T11:00:00.000Z",
@@ -297,6 +319,7 @@ describe("flushDirtyDocuments", () => {
     mocks.readMaybeSingle.mockResolvedValueOnce({
       data: {
         content: "Keep",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         share_enabled: true,
         share_token: "server-share-token",
         title: "Active",
@@ -310,6 +333,7 @@ describe("flushDirtyDocuments", () => {
       owner: "active-owner",
       title: "Active",
       content: "Keep",
+      content_format: MARKDOWN_CONTENT_FORMAT,
       share_enabled: false,
       share_token: null,
       updated_at: "2026-07-17T11:00:00.000Z",
@@ -321,7 +345,7 @@ describe("flushDirtyDocuments", () => {
     );
     expect(mocks.readIdEq).toHaveBeenCalledWith("id", "active-document");
     expect(mocks.readSelect).toHaveBeenCalledWith(
-      "title, content, share_enabled, share_token, updated_at",
+      "title, content, content_format, share_enabled, share_token, updated_at",
     );
     expect(result).toEqual({
       status: "saved",
@@ -340,10 +364,48 @@ describe("flushDirtyDocuments", () => {
     );
   });
 
+  it("does not recover equal serialized content under a different format", async () => {
+    mocks.updateMaybeSingle.mockResolvedValueOnce({
+      data: null,
+      error: new Error("Connection closed after commit"),
+    });
+    mocks.readMaybeSingle.mockResolvedValueOnce({
+      data: {
+        content: "Keep",
+        content_format: PAGE_JSON_CONTENT_FORMAT,
+        share_enabled: false,
+        share_token: null,
+        title: "Active",
+        updated_at: "2026-07-17T12:00:00.000Z",
+      },
+      error: null,
+    });
+
+    const result = await persistDocumentSnapshot({
+      id: "active-document",
+      owner: "active-owner",
+      title: "Active",
+      content: "Keep",
+      content_format: MARKDOWN_CONTENT_FORMAT,
+      share_enabled: false,
+      share_token: null,
+      updated_at: "2026-07-17T11:00:00.000Z",
+    });
+
+    expect(result).toEqual({
+      status: "conflict",
+      cacheUpdated: false,
+      persistedTitle: "Active",
+      updatedAt: "2026-07-17T12:00:00.000Z",
+    });
+    expect(mocks.putCachedDocument).not.toHaveBeenCalled();
+  });
+
   it("retries clean-cache confirmation for identical saves without another network update", async () => {
     mocks.putCachedDocument.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     const snapshot = {
       id: "active-document", owner: "active-owner", title: "Active", content: "Keep",
+      content_format: MARKDOWN_CONTENT_FORMAT,
       share_enabled: false, share_token: null, updated_at: "2026-07-17T11:00:00.000Z", _localUpdatedAt: 100,
     };
     expect((await persistDocumentSnapshot(snapshot)).cacheUpdated).toBe(false);
@@ -361,6 +423,7 @@ describe("flushDirtyDocuments", () => {
     mocks.readMaybeSingle.mockResolvedValueOnce({
       data: {
         content: "Newer content from another client",
+        content_format: MARKDOWN_CONTENT_FORMAT,
         share_enabled: false,
         share_token: null,
         title: "Remote title",
@@ -374,6 +437,7 @@ describe("flushDirtyDocuments", () => {
       owner: "active-owner",
       title: "Active",
       content: "Keep",
+      content_format: MARKDOWN_CONTENT_FORMAT,
       share_enabled: false,
       share_token: null,
       updated_at: "2026-07-17T11:00:00.000Z",

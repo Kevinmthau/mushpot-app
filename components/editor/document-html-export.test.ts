@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { exportDocumentHtml } from "@/components/editor/document-html-export";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { SupabaseBrowserClient } from "@/lib/supabase/client";
+import {
+  PAGE_JSON_CONTENT_FORMAT,
+  serializePageDocument,
+} from "@/lib/page-document";
 
 vi.mock("@/lib/supabase/client", () => ({
   getSupabaseBrowserClient: vi.fn(),
@@ -47,6 +51,56 @@ afterEach(() => {
 });
 
 describe("document HTML export", () => {
+  it("exports structured content as a styled, scriptless standalone web page", async () => {
+    const content = serializePageDocument({
+      schema: "mushpot.page",
+      version: 1,
+      theme: "editorial",
+      width: "wide",
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "heading",
+            attrs: { level: 1 },
+            content: [{ type: "text", text: "Published heading" }],
+          },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Designed in Mushpot" }],
+          },
+          {
+            type: "image",
+            attrs: { src: "https://example.com/photo.webp", alt: "Photo" },
+          },
+        ],
+      },
+    });
+    const { html, filename } = await exportDocumentHtml({
+      title: "Designed page",
+      content,
+      contentFormat: PAGE_JSON_CONTENT_FORMAT,
+      owner: OWNER,
+    });
+    const page = parseHtml(html);
+
+    expect(filename).toBe("Designed page.html");
+    expect(page.querySelector("main")?.dataset.pageTheme).toBe("editorial");
+    expect(page.querySelector("main")?.dataset.pageWidth).toBe("wide");
+    expect(page.querySelector("article.page-body h1")?.textContent).toBe(
+      "Published heading",
+    );
+    expect(page.querySelector("img")?.getAttribute("src")).toBe(
+      "https://example.com/photo.webp",
+    );
+    expect(page.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content"))
+      .toContain("default-src 'none'");
+    expect(page.querySelector('meta[name="referrer"]')?.getAttribute("content"))
+      .toBe("no-referrer");
+    expect(page.querySelector("script, [onclick], [onerror]")).toBeNull();
+    expect(getSupabaseBrowserClient).not.toHaveBeenCalled();
+  });
+
   it("creates a standalone document with escaped title, inline styling, and no backend access for text", async () => {
     const title = '</title><script>alert("secret")</script>';
     const { html, filename } = await exportDocumentHtml({

@@ -7,9 +7,11 @@ import {
 } from "@/components/editor/editor-document-request";
 import type { DocumentCacheWriteToken } from "@/lib/doc-cache";
 import { createDocumentWriteSession } from "@/lib/document-write-coordinator";
+import { MARKDOWN_CONTENT_FORMAT } from "@/lib/page-document";
 
 const DOCUMENT = {
   id: "doc", owner: "owner", title: "Title", content: "Body",
+  content_format: MARKDOWN_CONTENT_FORMAT,
   updated_at: "2026-10-01T12:00:00Z", share_enabled: false, share_token: null,
 };
 const SUCCESS: EditorRemoteResult = { document: DOCUMENT, error: null };

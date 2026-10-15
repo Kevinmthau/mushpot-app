@@ -16,6 +16,89 @@ import {
 } from "@/lib/document-sync";
 import type { DocumentWriteSession } from "@/lib/document-write-coordinator";
 import { formatRelativeTimestamp } from "@/lib/format-relative-time";
+import { getDocumentPlainText } from "@/lib/page-document";
+
+const UNSAVABLE_DRAFT_HISTORY_KEY = "__mushpotUnsavableDraftGuard";
+
+function hasDraftNavigationGuard(
+  value: unknown,
+  guardId: string,
+) {
+  return typeof value === "object" && value !== null &&
+    (value as Record<string, unknown>)[UNSAVABLE_DRAFT_HISTORY_KEY] === guardId;
+}
+
+/**
+ * Keep a same-URL history entry above the editor while its draft cannot be
+ * serialized. The Navigation API blocks before a supported browser commits a
+ * soft navigation; the history entry is the fallback for browser Back.
+ */
+export function installUnsavableDraftNavigationGuard() {
+  const guardId = `${Date.now()}-${Math.random()}`;
+  const currentState = window.history.state;
+  const guardState = typeof currentState === "object" && currentState !== null
+    ? { ...currentState, [UNSAVABLE_DRAFT_HISTORY_KEY]: guardId }
+    : { [UNSAVABLE_DRAFT_HISTORY_KEY]: guardId };
+  window.history.pushState(guardState, "", window.location.href);
+
+  const navigation = (window as Window & { navigation?: EventTarget })
+    .navigation;
+  const handleNavigate = (event: Event) => {
+    if (event.cancelable) event.preventDefault();
+  };
+  const handlePopState = (event: PopStateEvent) => {
+    if (hasDraftNavigationGuard(event.state, guardId)) return;
+    window.history.forward();
+  };
+  const handleDocumentClick = (event: MouseEvent) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      !(event.target instanceof Element)
+    ) {
+      return;
+    }
+
+    const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
+    if (!anchor || anchor.hasAttribute("download") || anchor.target === "_blank") {
+      return;
+    }
+
+    const destination = new URL(anchor.href, window.location.href);
+    if (
+      destination.origin !== window.location.origin ||
+      (destination.pathname === window.location.pathname &&
+        destination.search === window.location.search)
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  if (navigation) {
+    navigation.addEventListener("navigate", handleNavigate);
+  } else {
+    window.addEventListener("popstate", handlePopState);
+  }
+  document.addEventListener("click", handleDocumentClick, true);
+
+  return () => {
+    navigation?.removeEventListener("navigate", handleNavigate);
+    window.removeEventListener("popstate", handlePopState);
+    document.removeEventListener("click", handleDocumentClick, true);
+    if (hasDraftNavigationGuard(window.history.state, guardId)) {
+      // Return to the original same-URL entry so the guard does not leave an
+      // extra Back stop after the draft becomes serializable again.
+      window.history.back();
+    }
+  };
+}
 
 function createDraftPersistence(
   owner: string,
@@ -69,7 +152,14 @@ export function useDocumentDraft(
       ),
   );
   const [view, setView] = useState(controller.getView);
-  const deferredContent = useDeferredValue(view.contentForStats);
+  const statsSource = useMemo(
+    () => ({
+      content: view.contentForStats,
+      contentFormat: view.contentFormat,
+    }),
+    [view.contentForStats, view.contentFormat],
+  );
+  const deferredStatsSource = useDeferredValue(statsSource);
 
   useEffect(() => {
     controller.setPersistence(persistence);
@@ -78,9 +168,11 @@ export function useDocumentDraft(
     });
     const handleVisibility = () =>
       lifecycle.handleVisibilityChange(document.visibilityState);
+    window.addEventListener("beforeunload", lifecycle.handleBeforeUnload);
     window.addEventListener("pagehide", lifecycle.handlePageHide);
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
+      window.removeEventListener("beforeunload", lifecycle.handleBeforeUnload);
       window.removeEventListener("pagehide", lifecycle.handlePageHide);
       document.removeEventListener("visibilitychange", handleVisibility);
       lifecycle.stop();
@@ -91,9 +183,19 @@ export function useDocumentDraft(
     controller.hydrate(initialDocument, hasResolvedRemoteState);
   }, [controller, hasResolvedRemoteState, initialDocument]);
 
+  useEffect(() => {
+    if (view.draftSerializationError === null || view.isDeleting) return;
+    return installUnsavableDraftNavigationGuard();
+  }, [view.draftSerializationError, view.isDeleting]);
+
   const readingTime = useMemo(
-    () => getReadingTimeFromText(deferredContent),
-    [deferredContent],
+    () => getReadingTimeFromText(
+      getDocumentPlainText(
+        deferredStatsSource.content,
+        deferredStatsSource.contentFormat,
+      ),
+    ),
+    [deferredStatsSource],
   );
   const formattedUpdated = useMemo(
     () => formatRelativeTimestamp(view.updatedAt),

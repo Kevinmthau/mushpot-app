@@ -2,13 +2,14 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CachedDocument } from "@/lib/doc-cache";
+import { MARKDOWN_CONTENT_FORMAT } from "@/lib/page-document";
 
 const OWNER = "owner-a";
 const row = (id: string, title = id, updated_at = "2026-10-02T12:00:00Z") =>
   ({ id, title, updated_at });
 const document = (id: string, overrides: Partial<CachedDocument> = {}): CachedDocument => ({
   ...row(id), owner: OWNER, content: "Private body", share_enabled: false,
-  share_token: null, ...overrides,
+  share_token: null, content_format: MARKDOWN_CONTENT_FORMAT, ...overrides,
 });
 
 async function setup() {

@@ -21,7 +21,7 @@ Deno.serve((request) =>
         getSharedDocument: async (docId, token) => {
           const { data, error } = await adminClient
             .from("documents")
-            .select("owner, title, content, updated_at")
+            .select("owner, title, content, content_format, updated_at")
             .eq("id", docId)
             .eq("share_enabled", true)
             .eq("share_token", token)

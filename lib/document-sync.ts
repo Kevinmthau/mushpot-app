@@ -10,6 +10,10 @@ import {
   type CachedDocument,
   type DocumentCacheWriteToken,
 } from "@/lib/doc-cache";
+import {
+  parseDocumentContentFormat,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
 
 export type PersistableDocumentSnapshot = Pick<
   CachedDocument,
@@ -17,6 +21,7 @@ export type PersistableDocumentSnapshot = Pick<
   | "owner"
   | "title"
   | "content"
+  | "content_format"
   | "share_enabled"
   | "share_token"
   | "updated_at"
@@ -56,11 +61,13 @@ export type FlushDirtyDocumentsResult =
     };
 
 const SAVE_RETRY_DELAYS_MS = [1000, 2000, 4000];
-const DOCUMENT_SAVE_SELECT = "share_enabled, share_token, updated_at";
+const DOCUMENT_SAVE_SELECT =
+  "content_format, share_enabled, share_token, updated_at";
 const DOCUMENT_RECOVERY_SELECT =
-  "title, content, share_enabled, share_token, updated_at";
+  "title, content, content_format, share_enabled, share_token, updated_at";
 
 type PersistedDocumentMetadata = {
+  content_format: DocumentContentFormat;
   share_enabled: boolean;
   share_token: string | null;
   updated_at: string;
@@ -79,8 +86,13 @@ function hasPersistedEditorState(
   document: PersistedDocumentState,
   persistedTitle: string,
   content: string,
+  contentFormat: DocumentContentFormat,
 ) {
-  return document.title === persistedTitle && document.content === content;
+  return (
+    document.title === persistedTitle &&
+    document.content === content &&
+    parseDocumentContentFormat(document.content_format) === contentFormat
+  );
 }
 
 async function confirmDocumentSnapshot(
@@ -94,6 +106,7 @@ async function confirmDocumentSnapshot(
     ...snapshot,
     _baseVersionUntrusted: false,
     title: persistedTitle,
+    content_format: parseDocumentContentFormat(document.content_format),
     updated_at: document.updated_at,
     share_enabled: document.share_enabled,
     share_token: document.share_token,
@@ -146,10 +159,12 @@ async function writeDocumentSnapshot(
           .update({
             title: persistedTitle,
             content: snapshot.content,
+            content_format: snapshot.content_format,
           })
           .eq("id", snapshot.id)
           .eq("owner", snapshot.owner)
           .eq("updated_at", snapshot.updated_at)
+          .eq("content_format", snapshot.content_format)
           .select(DOCUMENT_SAVE_SELECT)
           .maybeSingle();
         updatedDocument = data;
@@ -199,7 +214,12 @@ async function writeDocumentSnapshot(
     if (
       !recoveryError &&
       currentDocument?.updated_at &&
-      hasPersistedEditorState(currentDocument, persistedTitle, snapshot.content)
+      hasPersistedEditorState(
+        currentDocument,
+        persistedTitle,
+        snapshot.content,
+        snapshot.content_format,
+      )
     ) {
       return confirmDocumentSnapshot(
         snapshot,

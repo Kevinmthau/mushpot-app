@@ -1,3 +1,8 @@
+import {
+  normalizeDocumentContentFormat,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
+
 export type CachedDocumentBase = {
   id: string;
   owner: string;
@@ -13,6 +18,7 @@ export type CachedDocumentBase = {
 export type CachedDocument = CachedDocumentBase & {
   kind?: "complete";
   content: string;
+  content_format: DocumentContentFormat;
   share_enabled: boolean;
   share_token: string | null;
   /** Timestamp of last local write – used to detect dirty docs. */
@@ -82,6 +88,7 @@ export function toStoredCompleteDocument(
 ): CachedCompleteDocument {
   const storedDocument: CachedCompleteDocument = {
     ...document,
+    content_format: normalizeDocumentContentFormat(document.content_format),
     kind: "complete",
   };
 
@@ -126,6 +133,7 @@ function documentsHaveDifferentEditorState(
   return (
     leftTitle !== rightTitle ||
     left.content !== right.content ||
+    left.content_format !== right.content_format ||
     left.share_enabled !== right.share_enabled ||
     left.share_token !== right.share_token
   );

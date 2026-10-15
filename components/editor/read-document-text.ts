@@ -2,6 +2,8 @@
 
 import { type Text } from "@codemirror/state";
 
-export function readDocumentText(doc: Text | string) {
+export type DocumentTextSource = string | Text | { toString(): string };
+
+export function readDocumentText(doc: DocumentTextSource) {
   return typeof doc === "string" ? doc : doc.toString();
 }

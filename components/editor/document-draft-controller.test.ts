@@ -9,12 +9,17 @@ import type {
   SavedDocumentResult,
 } from "@/lib/document-sync";
 import type { DocumentWriteEvent } from "@/lib/document-write-coordinator";
+import {
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+} from "@/lib/page-document";
 
 const document: EditorDocument = {
   id: "doc",
   owner: "owner",
   title: "Title",
   content: "Body",
+  content_format: MARKDOWN_CONTENT_FORMAT,
   updated_at: "2026-09-20T10:00:00Z",
   share_enabled: false,
   share_token: null,
@@ -189,6 +194,104 @@ describe("draft controller", () => {
         updated_at: document.updated_at,
       }),
     );
+  });
+
+  it("keeps an arbitrary serializable page source lazy", async () => {
+    const { controller, persist } = setup();
+    const source = { toString: vi.fn(() => "Serialized page JSON") };
+
+    controller.handleEditorChange(source);
+    expect(source.toString).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(source.toString).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Serialized page JSON" }),
+    );
+  });
+
+  it("contains an unsavable lazy page and resumes from the next valid edit", async () => {
+    const { controller, persist, cache, lifecycle } = setup();
+    const invalidSource = {
+      toString: vi.fn(() => {
+        throw new Error("page exceeds its persisted limits");
+      }),
+    };
+
+    controller.handleEditorChange(invalidSource);
+    expect(invalidSource.toString).not.toHaveBeenCalled();
+    expect(() => lifecycle.handlePageHide()).not.toThrow();
+    expect(invalidSource.toString).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(invalidSource.toString).toHaveBeenCalledOnce();
+    expect(controller.getLatestContent()).toBeNull();
+    expect(controller.getView().draftSerializationError).toContain(
+      "Saving will resume automatically",
+    );
+    const beforeUnload = {
+      preventDefault: vi.fn(),
+      returnValue: undefined,
+    } as unknown as BeforeUnloadEvent;
+    lifecycle.handleBeforeUnload(beforeUnload);
+    expect(beforeUnload.preventDefault).toHaveBeenCalledOnce();
+    await expect(controller.flushLatestDraft()).resolves.toBe(false);
+    expect(cache).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+
+    const recoveredSource = {
+      toString: vi.fn(() => "Valid page JSON"),
+    };
+    controller.handleEditorChange(recoveredSource);
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(recoveredSource.toString).toHaveBeenCalledOnce();
+    expect(controller.getView().draftSerializationError).toBeNull();
+    expect(cache).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Valid page JSON" }),
+    );
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Valid page JSON" }),
+    );
+  });
+
+  it("treats a remote content-format change as overlapping local content", () => {
+    const { controller, persist, cache } = setup(document, false);
+    controller.handleEditorChange("Body");
+
+    controller.hydrate(
+      {
+        ...document,
+        content_format: PAGE_JSON_CONTENT_FORMAT,
+        updated_at: "2026-09-20T10:30:00Z",
+      },
+      true,
+    );
+
+    expect(controller.getView().saveStatus).toBe("conflict");
+    expect(persist).not.toHaveBeenCalled();
+    expect(cache).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content_format: MARKDOWN_CONTENT_FORMAT,
+        _dirty: true,
+      }),
+    );
+  });
+
+  it("publishes an untouched remote content format during hydration", () => {
+    const { controller } = setup(document, false);
+
+    controller.hydrate(
+      {
+        ...document,
+        content: "{\"schema\":\"mushpot.page\"}",
+        content_format: PAGE_JSON_CONTENT_FORMAT,
+        updated_at: "2026-09-20T10:30:00Z",
+      },
+      true,
+    );
+
+    expect(controller.getView().contentFormat).toBe(PAGE_JSON_CONTENT_FORMAT);
   });
 
   it("merges an untouched remote body before saving a local title edit", async () => {

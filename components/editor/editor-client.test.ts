@@ -31,10 +31,10 @@ describe("editor share reconciliation handoff", () => {
 
 describe("editor document-list navigation", () => {
   it("waits for the local draft flush before navigating", async () => {
-    let finishFlush!: () => void;
+    let finishFlush!: (flushed: boolean) => void;
     const flushLatestDraft = vi.fn(
       () =>
-        new Promise<void>((resolve) => {
+        new Promise<boolean>((resolve) => {
           finishFlush = resolve;
         }),
     );
@@ -48,9 +48,20 @@ describe("editor document-list navigation", () => {
     expect(flushLatestDraft).toHaveBeenCalledOnce();
     expect(navigate).not.toHaveBeenCalled();
 
-    finishFlush();
+    finishFlush(true);
     await navigation;
 
     expect(navigate).toHaveBeenCalledOnce();
+  });
+
+  it("stays in the editor when the latest draft cannot be serialized", async () => {
+    const flushLatestDraft = vi.fn(async () => false);
+    const navigate = vi.fn();
+
+    await expect(
+      navigateToDocumentsAfterDraftFlush(flushLatestDraft, navigate),
+    ).resolves.toBe(false);
+
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

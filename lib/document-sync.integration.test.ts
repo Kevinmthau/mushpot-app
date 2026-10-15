@@ -2,6 +2,7 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CachedDocument } from "@/lib/doc-cache";
+import { MARKDOWN_CONTENT_FORMAT } from "@/lib/page-document";
 
 const mock = vi.hoisted(() => ({ from: vi.fn() }));
 vi.mock("@/lib/supabase/client", () => ({
@@ -13,6 +14,7 @@ const draft: CachedDocument = {
   owner: "owner",
   title: "Title",
   content: "Offline text",
+  content_format: MARKDOWN_CONTENT_FORMAT,
   updated_at: "2026-09-20T10:00:00Z",
   share_enabled: false,
   share_token: null,

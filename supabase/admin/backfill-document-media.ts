@@ -2,12 +2,25 @@ import { createClient, type SupabaseClient } from "supabase";
 
 import {
   analyzeDocumentMedia,
+  type BackfillAnalysis,
   type MediaCopy,
   type MediaReference,
 } from "./document-media-backfill.ts";
+import {
+  buildDocumentMediaUrl,
+  parseDocumentMediaCandidate,
+} from "../functions/_shared/document-media-core.ts";
+import {
+  type DocumentContentFormat,
+  getEdgePageDocumentMedia,
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+  rewriteEdgePageDocumentMedia,
+} from "../functions/_shared/page-document.ts";
 
 type DocumentRow = {
   content: string;
+  content_format?: unknown;
   id: string;
   owner: string;
   updated_at: string;
@@ -39,6 +52,184 @@ type PassSummary = {
 };
 
 const DEFAULT_PAGE_SIZE = 100;
+
+type AnalyzeDocumentContentOptions = {
+  content: string;
+  contentFormat?: unknown;
+  documentId: string;
+  ownerId: string;
+  supabaseUrl: string;
+};
+
+function readBackfillContentFormat(
+  value: unknown,
+): DocumentContentFormat | null {
+  // Rows created before the content_format migration can omit the column, and
+  // partially rolled-out rows can still return null. Both are legacy Markdown.
+  if (value === undefined || value === null) return MARKDOWN_CONTENT_FORMAT;
+  if (value === MARKDOWN_CONTENT_FORMAT || value === PAGE_JSON_CONTENT_FORMAT) {
+    return value;
+  }
+  return null;
+}
+
+function analyzePageMediaUrl({
+  documentId,
+  ownerId,
+  supabaseUrl,
+  url,
+}: Omit<AnalyzeDocumentContentOptions, "content" | "contentFormat"> & {
+  url: string;
+}): BackfillAnalysis {
+  const candidate = parseDocumentMediaCandidate(url, supabaseUrl);
+  if (candidate.status === "unrelated") {
+    return {
+      blockers: [],
+      copies: [],
+      references: [],
+      rewrittenContent: url,
+    };
+  }
+  if (candidate.status === "invalid") {
+    const label = candidate.reason === "local-url"
+      ? "local media URL"
+      : candidate.reason === "path"
+      ? "document media path"
+      : "document media URL";
+    return {
+      blockers: [`Malformed ${label}: ${url}`],
+      copies: [],
+      references: [],
+      rewrittenContent: url,
+    };
+  }
+
+  const normalizedDocumentId = documentId.toLowerCase();
+  const normalizedOwnerId = ownerId.toLowerCase();
+  const media = candidate.media;
+  if (media.ownerId.toLowerCase() !== normalizedOwnerId) {
+    return {
+      blockers: [`Cross-owner media reference is not allowed: ${url}`],
+      copies: [],
+      references: [],
+      rewrittenContent: url,
+    };
+  }
+
+  const reference: MediaReference = {
+    bucket: media.bucket,
+    originalUrl: url,
+    path: media.storagePath,
+  };
+  if (media.documentId.toLowerCase() === normalizedDocumentId) {
+    return {
+      blockers: [],
+      copies: [],
+      references: [reference],
+      rewrittenContent: buildDocumentMediaUrl(media.bucket, media.storagePath),
+    };
+  }
+
+  const sourceDocumentId = media.documentId.toLowerCase();
+  const fileSegments = media.storagePath.split("/").slice(2);
+  const destinationPath = [
+    normalizedOwnerId,
+    normalizedDocumentId,
+    sourceDocumentId,
+    ...fileSegments,
+  ].join("/");
+  return {
+    blockers: [],
+    copies: [{
+      bucket: media.bucket,
+      destinationPath,
+      sourcePath: media.storagePath,
+    }],
+    references: [reference],
+    rewrittenContent: buildDocumentMediaUrl(media.bucket, destinationPath),
+  };
+}
+
+export async function analyzeDocumentContentMedia({
+  content,
+  contentFormat: contentFormatValue,
+  documentId,
+  ownerId,
+  supabaseUrl,
+}: AnalyzeDocumentContentOptions): Promise<BackfillAnalysis> {
+  const contentFormat = readBackfillContentFormat(contentFormatValue);
+  if (contentFormat === null) {
+    return {
+      blockers: [
+        `Unsupported document content format: ${String(contentFormatValue)}`,
+      ],
+      copies: [],
+      references: [],
+      rewrittenContent: content,
+    };
+  }
+  if (contentFormat === MARKDOWN_CONTENT_FORMAT) {
+    return analyzeDocumentMedia({
+      content,
+      documentId,
+      ownerId,
+      supabaseUrl,
+    });
+  }
+
+  try {
+    const media = getEdgePageDocumentMedia(content);
+    const blockers: string[] = [];
+    const copiesBySource = new Map<string, MediaCopy>();
+    const referencesByObject = new Map<string, MediaReference>();
+    const replacements = new Map<string, string>();
+
+    for (const { url } of media) {
+      const analysis = analyzePageMediaUrl({
+        documentId,
+        ownerId,
+        supabaseUrl,
+        url,
+      });
+      blockers.push(...analysis.blockers);
+      for (const copy of analysis.copies) {
+        copiesBySource.set(`${copy.bucket}\0${copy.sourcePath}`, copy);
+      }
+      for (const reference of analysis.references) {
+        referencesByObject.set(
+          `${reference.bucket}\0${reference.path}`,
+          reference,
+        );
+      }
+      replacements.set(url, analysis.rewrittenContent);
+    }
+
+    const hasRewrite = Array.from(replacements).some(
+      ([url, replacement]) => url !== replacement,
+    );
+    const rewrittenContent = hasRewrite
+      ? await rewriteEdgePageDocumentMedia(
+        content,
+        ({ url }) => replacements.get(url) ?? url,
+      )
+      : content;
+
+    return {
+      blockers,
+      copies: Array.from(copiesBySource.values()),
+      references: Array.from(referencesByObject.values()),
+      rewrittenContent,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return {
+      blockers: [`Invalid page document: ${message}`],
+      copies: [],
+      references: [],
+      rewrittenContent: content,
+    };
+  }
+}
 
 function usage() {
   return [
@@ -181,8 +372,9 @@ async function buildDocumentPlan(
   document: DocumentRow,
   supabaseOrigin: string,
 ): Promise<DocumentPlan> {
-  const analysis = analyzeDocumentMedia({
+  const analysis = await analyzeDocumentContentMedia({
     content: document.content,
+    contentFormat: document.content_format,
     documentId: document.id,
     ownerId: document.owner,
     supabaseUrl: supabaseOrigin,
@@ -332,7 +524,7 @@ async function runPass(
   for (;;) {
     let query = client
       .from("documents")
-      .select("id, owner, content, updated_at")
+      .select("id, owner, content, content_format, updated_at")
       .order("id", { ascending: true })
       .limit(pageSize);
     if (lastId) {

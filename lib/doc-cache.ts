@@ -23,6 +23,7 @@ import {
   type CachedDocumentListRecord,
   type CachedDocumentRecord,
 } from "@/lib/document-cache-record";
+import { parseDocumentContentFormat } from "@/lib/page-document";
 
 export type {
   CachedCompleteDocument,
@@ -35,7 +36,10 @@ export type {
 import { announceDocumentCacheChange } from "@/lib/document-cache-events";
 
 const DB_NAME = "mushpot";
-const DB_VERSION = 6;
+// v7 is also a compatibility fence: opening the page-capable app closes older
+// v6 connections. Those clients then cannot read structured rows written into
+// the shared cache after their server access has been gated by capability.
+const DB_VERSION = 7;
 const DOCS_STORE = "documents";
 const LIST_STORE = "document-list";
 const META_STORE = "meta";
@@ -114,10 +118,17 @@ function withListMetadata(
   document: CachedDocumentRecord | undefined,
   listRecord: CachedDocumentListRecord | undefined,
 ): CachedDocumentRecord | undefined {
-  return isCompleteDocument(document) &&
-      listRecord?.owner === document.owner && listRecord.kind === "complete"
-    ? mergeDocumentListMetadata(document, listRecord._listMetadata)
+  const normalizedDocument = isCompleteDocument(document)
+    ? toStoredCompleteDocument(document)
     : document;
+  return isCompleteDocument(normalizedDocument) &&
+      listRecord?.owner === normalizedDocument.owner &&
+      listRecord.kind === "complete"
+    ? mergeDocumentListMetadata(
+        normalizedDocument,
+        listRecord._listMetadata,
+      )
+    : normalizedDocument;
 }
 
 function ensureDocumentIndexes(store: IDBObjectStore) {
@@ -139,9 +150,15 @@ function ensureDocumentIndexes(store: IDBObjectStore) {
 }
 
 function ensureListIndexes(store: IDBObjectStore) {
-  store.createIndex("owner", "owner");
-  store.createIndex("owner_updated_at", ["owner", "_listUpdatedAt"]);
-  store.createIndex("owner_dirty", ["owner", "_dirtyKey"]);
+  if (!store.indexNames.contains("owner")) {
+    store.createIndex("owner", "owner");
+  }
+  if (!store.indexNames.contains("owner_updated_at")) {
+    store.createIndex("owner_updated_at", ["owner", "_listUpdatedAt"]);
+  }
+  if (!store.indexNames.contains("owner_dirty")) {
+    store.createIndex("owner_dirty", ["owner", "_dirtyKey"]);
+  }
 }
 
 function getOwnerUpdatedAtRange(owner: string) {
@@ -242,10 +259,10 @@ function isTokenAuthorized(
 }
 
 /**
- * Backfill the v6 list store without rewriting safe v5 bodies. Before v5, list
- * refreshes could advance a body's revision without fetching it: clean legacy
- * snapshots must be fetched again, while dirty text needs confirmation before
- * saving. Both that migration and the list projection share the upgrade tx.
+ * Backfill the v6 list store and normalize complete records in the same upgrade
+ * transaction. Before v5, list refreshes could advance a body's revision
+ * without fetching it: clean legacy snapshots must be fetched again, while
+ * dirty text needs confirmation before saving.
  */
 function migrateExistingDocuments(
   store: IDBObjectStore,
@@ -257,12 +274,17 @@ function migrateExistingDocuments(
     const cursor = request.result;
     if (!cursor) return;
     const existing = cursor.value as CachedDocumentRecord | CachedDocument;
-    const migrated = migrateLegacyBodies
-      ? existing.kind !== "metadata" && existing._dirty === true
-        ? toStoredCompleteDocument({ ...existing, _baseVersionUntrusted: true })
-        : toMetadataDocument(existing)
-      : existing as CachedDocumentRecord;
-    if (migrateLegacyBodies) cursor.update(migrated);
+    const migrated = existing.kind === "metadata"
+      ? toMetadataDocument(existing)
+      : migrateLegacyBodies && existing._dirty !== true
+        ? toMetadataDocument(existing)
+        : toStoredCompleteDocument({
+            ...existing,
+            ...(migrateLegacyBodies ? { _baseVersionUntrusted: true } : {}),
+          });
+    // Normalize complete bodies while retaining the pre-v5 safety treatment
+    // for legacy revisions.
+    cursor.update(migrated);
     const listRequest = listStore.put(toDocumentListRecord(migrated));
     listRequest.onsuccess = () => cursor.continue();
     // A failed migration aborts the upgrade, rather than leaving unsafe records.
@@ -279,13 +301,16 @@ function openDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const db = request.result;
-      const listStore = db.createObjectStore(LIST_STORE, { keyPath: "id" });
+      const transaction = request.transaction!;
+      const listStore = db.objectStoreNames.contains(LIST_STORE)
+        ? transaction.objectStore(LIST_STORE)
+        : db.createObjectStore(LIST_STORE, { keyPath: "id" });
       ensureListIndexes(listStore);
       if (!db.objectStoreNames.contains(DOCS_STORE)) {
         const store = db.createObjectStore(DOCS_STORE, { keyPath: "id" });
         ensureDocumentIndexes(store);
       } else {
-        const store = request.transaction!.objectStore(DOCS_STORE);
+        const store = transaction.objectStore(DOCS_STORE);
         ensureDocumentIndexes(store);
         migrateExistingDocuments(store, listStore, event.oldVersion < 5);
       }
@@ -521,6 +546,7 @@ export async function reconcileCachedDocumentWithServer(
 ): Promise<CachedCompleteDocument> {
   const nextDocument = toStoredCompleteDocument({
     ...serverDocument,
+    content_format: parseDocumentContentFormat(serverDocument.content_format),
     _dirty: false,
   });
 
@@ -825,7 +851,14 @@ export async function getDirtyDocuments(
     const document = await requestToPromise<CachedDocumentRecord | undefined>(
       tx.objectStore(DOCS_STORE).get(listRecord.id),
     );
-    return withListMetadata(document, listRecord);
+    try {
+      return withListMetadata(document, listRecord);
+    } catch {
+      // Preserve but quarantine records written with a newer or corrupt format.
+      // Returning one here would let an older client sync content it cannot
+      // safely interpret back to the server.
+      return undefined;
+    }
   }));
   await transactionDone;
 

@@ -1,9 +1,10 @@
 import type { CachedDocument } from "@/lib/doc-cache";
+import { parseDocumentContentFormat } from "@/lib/page-document";
 import type { DocumentRow } from "@/lib/supabase/types";
 
 export const DOCUMENT_LIST_SELECT = "id, title, updated_at" as const;
 export const EDITOR_DOCUMENT_SELECT =
-  "id, owner, title, content, updated_at, share_enabled, share_token" as const;
+  "id, owner, title, content, content_format, updated_at, share_enabled, share_token" as const;
 
 export type DocumentListItem = Pick<DocumentRow, "id" | "title" | "updated_at">;
 
@@ -13,6 +14,7 @@ export type EditorDocument = Pick<
   | "owner"
   | "title"
   | "content"
+  | "content_format"
   | "updated_at"
   | "share_enabled"
   | "share_token"
@@ -36,6 +38,7 @@ export function toEditorDocument(document: EditorDocument): EditorDocument {
     owner: document.owner,
     title: document.title,
     content: document.content,
+    content_format: parseDocumentContentFormat(document.content_format),
     updated_at: document.updated_at,
     share_enabled: document.share_enabled,
     share_token: document.share_token,
@@ -63,6 +66,7 @@ export function areEditorDocumentsEqual(
     left.owner === right.owner &&
     left.title === right.title &&
     left.content === right.content &&
+    left.content_format === right.content_format &&
     left.updated_at === right.updated_at &&
     left.share_enabled === right.share_enabled &&
     left.share_token === right.share_token &&

@@ -1,5 +1,9 @@
 import { createBrowserClient } from "@supabase/ssr";
 
+import {
+  DOCUMENT_CONTENT_FORMATS_CAPABILITY,
+  DOCUMENT_CONTENT_FORMATS_HEADER,
+} from "@/lib/page-document";
 import type { Database } from "@/lib/supabase/types";
 
 export type SupabaseBrowserClient = ReturnType<typeof createBrowserClient<Database>>;
@@ -21,6 +25,12 @@ export function createSupabaseBrowserClient() {
     browserClient = createBrowserClient<Database>(supabaseUrl, supabaseAnonKey, {
       auth: {
         detectSessionInUrl: true,
+      },
+      global: {
+        headers: {
+          [DOCUMENT_CONTENT_FORMATS_HEADER]:
+            DOCUMENT_CONTENT_FORMATS_CAPABILITY,
+        },
       },
     });
   }

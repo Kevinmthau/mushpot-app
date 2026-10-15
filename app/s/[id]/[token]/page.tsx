@@ -40,7 +40,10 @@ export async function generateMetadata({
   }
 
   const title = normalizeSharedDocumentTitle(document.title);
-  const description = buildSharedDocumentPreview(document.content);
+  const description = buildSharedDocumentPreview(
+    document.content,
+    document.content_format,
+  );
   const sharePath = `/s/${id}/${token}`;
   const ogImagePath = `${sharePath}/opengraph-image`;
 
@@ -89,6 +92,7 @@ export default async function SharedDocumentPage({ params }: SharedDocPageProps)
   return (
     <SharedDocumentPageClient
       content={document.content}
+      contentFormat={document.content_format}
       documentId={id}
       shareToken={token}
       title={document.title}

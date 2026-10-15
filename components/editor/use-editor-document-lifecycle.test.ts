@@ -8,6 +8,7 @@ import { useEditorDocument } from "@/components/editor/use-editor-document";
 import { createDocumentWriteSession, type DocumentWriteSession } from "@/lib/document-write-coordinator";
 import type { EditorDocument } from "@/lib/documents";
 import type { EditorRemoteResult } from "@/components/editor/editor-document-request";
+import { MARKDOWN_CONTENT_FORMAT } from "@/lib/page-document";
 
 const { cache, remote } = vi.hoisted(() => ({ cache: vi.fn(), remote: vi.fn() }));
 vi.mock("@/lib/doc-cache", () => ({
@@ -22,6 +23,7 @@ vi.mock("@/components/editor/editor-document-request", () => ({
 
 const DOCUMENT: EditorDocument = {
   id: "doc-a", owner: "owner", title: "Title", content: "Body",
+  content_format: MARKDOWN_CONTENT_FORMAT,
   updated_at: "2026-10-01T12:00:00Z", share_enabled: false, share_token: null,
 };
 function deferred<T>() {
