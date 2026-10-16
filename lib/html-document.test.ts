@@ -8,7 +8,6 @@ import {
   getHtmlImportTitle,
   getHtmlPreviewCsp,
   HTML_CONTENT_MAX_BYTES,
-  HTML_INTERACTIVE_PREVIEW_SANDBOX,
   HTML_PREVIEW_SANDBOX,
   validateHtmlDocumentSource,
 } from "@/lib/html-document";
@@ -118,12 +117,9 @@ describe("HTML preview hardening", () => {
     expect(source).toContain("<base href=");
   });
 
-  it("allows only scripts when owner interactions are enabled", () => {
-    expect(getHtmlPreviewCsp(true)).toContain("script-src 'unsafe-inline'");
-    expect(getHtmlPreviewCsp(true)).toContain("connect-src 'none'");
+  it("keeps scripts disabled in every preview", () => {
+    expect(getHtmlPreviewCsp()).toContain("script-src 'none'");
+    expect(getHtmlPreviewCsp()).toContain("connect-src 'none'");
     expect(HTML_PREVIEW_SANDBOX).toBe("");
-    expect(HTML_INTERACTIVE_PREVIEW_SANDBOX).toBe("allow-scripts");
-    expect(HTML_INTERACTIVE_PREVIEW_SANDBOX).not.toContain("allow-same-origin");
-    expect(HTML_INTERACTIVE_PREVIEW_SANDBOX).not.toContain("allow-modals");
   });
 });

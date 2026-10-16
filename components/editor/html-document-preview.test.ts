@@ -20,15 +20,15 @@ describe("HtmlDocumentPreview", () => {
     expect(rendered).not.toContain("Enable interactions");
   });
 
-  it("offers the interaction toggle only in the owner editor", () => {
+  it("never offers script execution controls", () => {
     const rendered = renderToStaticMarkup(
       createElement(HtmlDocumentPreview, {
-        allowInteractionsControl: true,
         source: SOURCE,
         title: "Owner",
       }),
     );
-    expect(rendered).toContain("Enable interactions");
-    expect(rendered).toContain("Scripts are off");
+    expect(rendered).not.toContain("Enable interactions");
+    expect(rendered).not.toContain("allow-scripts");
+    expect(rendered).toContain("script-src &#x27;none&#x27;");
   });
 });

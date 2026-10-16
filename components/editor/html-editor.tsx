@@ -258,7 +258,6 @@ export function HtmlEditor({
         </div>
         {previewVisible ? (
           <HtmlDocumentPreview
-            allowInteractionsControl
             className="min-w-0"
             source={previewSource}
             title={title}

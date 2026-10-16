@@ -9,7 +9,6 @@ export const HTML_CONTENT_MAX_BYTES = 2 * 1024 * 1024;
 export const HTML_FULL_HIGHLIGHT_MAX_BYTES = 512 * 1024;
 
 export const HTML_PREVIEW_SANDBOX = "";
-export const HTML_INTERACTIVE_PREVIEW_SANDBOX = "allow-scripts";
 
 const HTML_PREVIEW_CSP_BASE = [
   "default-src 'none'",
@@ -283,22 +282,19 @@ function removePreviewNavigationNodes(document: DefaultTreeAdapterTypes.Document
   }
 }
 
-export function getHtmlPreviewCsp(interactionsEnabled: boolean) {
+export function getHtmlPreviewCsp() {
   return [
     ...HTML_PREVIEW_CSP_BASE,
-    interactionsEnabled ? "script-src 'unsafe-inline'" : "script-src 'none'",
+    "script-src 'none'",
   ].join("; ");
 }
 
 /** Build a disposable preview copy. The returned string is never persisted. */
-export function buildHtmlPreviewDocument(
-  source: string,
-  interactionsEnabled = false,
-) {
+export function buildHtmlPreviewDocument(source: string) {
   validateHtmlDocumentSource(source);
   const document = parse(source);
   removePreviewNavigationNodes(document);
-  const csp = getHtmlPreviewCsp(interactionsEnabled);
+  const csp = getHtmlPreviewCsp();
   const head = findHtmlElement(document, "head");
   if (!head) {
     throw new HtmlDocumentValidationError("HTML preview has no document head.");
