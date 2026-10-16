@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
+import { htmlLanguage } from "@codemirror/lang-html";
 import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -15,6 +17,7 @@ import {
 import {
   getUtf8ByteLength,
   HTML_CONTENT_MAX_BYTES,
+  HTML_FULL_HIGHLIGHT_MAX_BYTES,
 } from "@/lib/html-document";
 
 function transaction(source: string, insert: string, from = source.length, to = from) {
@@ -41,6 +44,81 @@ describe("HTML editor limits", () => {
 
     expect(result.newDoc.toString()).toBe("x");
     expect(rejected).toHaveBeenCalledOnce();
+  });
+
+  it("reports the live byte length when edits cross the highlighting cutoff", () => {
+    const onByteLengthChange = vi.fn();
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: "a".repeat(HTML_FULL_HIGHLIGHT_MAX_BYTES),
+        extensions: [
+          createHtmlEditLimitExtension(vi.fn(), onByteLengthChange),
+        ],
+      }),
+    });
+
+    try {
+      view.dispatch({
+        changes: { from: view.state.doc.length, insert: "b" },
+      });
+      expect(onByteLengthChange).toHaveBeenLastCalledWith(
+        HTML_FULL_HIGHLIGHT_MAX_BYTES + 1,
+      );
+
+      view.dispatch({
+        changes: { from: view.state.doc.length - 1, to: view.state.doc.length },
+      });
+      expect(onByteLengthChange).toHaveBeenLastCalledWith(
+        HTML_FULL_HIGHLIGHT_MAX_BYTES,
+      );
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it("reconfigures syntax highlighting as live source crosses the cutoff", async () => {
+    const reactTestEnvironment = globalThis as typeof globalThis & {
+      IS_REACT_ACT_ENVIRONMENT?: boolean;
+    };
+    reactTestEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    try {
+      await act(async () => root.render(createElement(HtmlEditor, {
+        documentId: "doc",
+        initialValue: "a".repeat(HTML_FULL_HIGHLIGHT_MAX_BYTES),
+        onChange: vi.fn(),
+        title: "Title",
+      })));
+      const editorElement = host.querySelector<HTMLElement>(".cm-editor");
+      expect(editorElement).not.toBeNull();
+      const view = EditorView.findFromDOM(editorElement!);
+      expect(view).not.toBeNull();
+      expect(htmlLanguage.isActiveAt(view!.state, 0)).toBe(true);
+
+      await act(async () => view!.dispatch({
+        changes: { from: view!.state.doc.length, insert: "b" },
+      }));
+      expect(htmlLanguage.isActiveAt(view!.state, 0)).toBe(false);
+      expect(host.textContent).toContain(
+        "Large file: using lightweight source highlighting.",
+      );
+
+      await act(async () => view!.dispatch({
+        changes: {
+          from: view!.state.doc.length - 1,
+          to: view!.state.doc.length,
+        },
+      }));
+      expect(htmlLanguage.isActiveAt(view!.state, 0)).toBe(true);
+      expect(host.textContent).not.toContain(
+        "Large file: using lightweight source highlighting.",
+      );
+    } finally {
+      await act(async () => root.unmount());
+      reactTestEnvironment.IS_REACT_ACT_ENVIRONMENT = false;
+    }
   });
 
   it("validates changed ranges without serializing the whole next document", () => {

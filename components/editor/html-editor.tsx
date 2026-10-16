@@ -97,7 +97,10 @@ const htmlDocumentUtf8ByteLength = StateField.define<number>({
       : value,
 });
 
-export function createHtmlEditLimitExtension(onRejected: () => void): Extension {
+export function createHtmlEditLimitExtension(
+  onRejected: () => void,
+  onByteLengthChange?: (byteLength: number) => void,
+): Extension {
   return [
     htmlDocumentUtf8ByteLength,
     EditorState.transactionFilter.of((transaction) => {
@@ -111,6 +114,10 @@ export function createHtmlEditLimitExtension(onRejected: () => void): Extension 
       }
       onRejected();
       return [];
+    }),
+    EditorView.updateListener.of((update) => {
+      if (!update.docChanged) return;
+      onByteLengthChange?.(update.state.field(htmlDocumentUtf8ByteLength));
     }),
   ];
 }
@@ -137,22 +144,35 @@ export function HtmlEditor({
   const previousInitialValueRef = useRef(initialValue);
   const hasLocalEditsRef = useRef(false);
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fullHighlighting = getUtf8ByteLength(initialValue) <=
-    HTML_FULL_HIGHLIGHT_MAX_BYTES;
+  const [fullHighlighting, setFullHighlighting] = useState(
+    () => getUtf8ByteLength(initialValue) <= HTML_FULL_HIGHLIGHT_MAX_BYTES,
+  );
 
   const rejectEdit = useCallback(() => {
     setLimitMessage("HTML must stay non-empty valid UTF-8, contain no NUL characters, and be 2 MiB or smaller.");
     setTimeout(() => setLimitMessage(null), 4_000);
   }, []);
 
+  const updateHighlightingForByteLength = useCallback((byteLength: number) => {
+    setFullHighlighting(
+      byteLength <= HTML_FULL_HIGHLIGHT_MAX_BYTES,
+    );
+  }, []);
+
   const extensions = useMemo<Extension[]>(
     () => [
-      ...(fullHighlighting ? [html()] : []),
-      createHtmlEditLimitExtension(rejectEdit),
+      createHtmlEditLimitExtension(
+        rejectEdit,
+        updateHighlightingForByteLength,
+      ),
       EditorView.lineWrapping,
       editorTheme,
     ],
-    [fullHighlighting, rejectEdit],
+    [rejectEdit, updateHighlightingForByteLength],
+  );
+  const highlightingExtension = useMemo<Extension>(
+    () => fullHighlighting ? html() : [],
+    [fullHighlighting],
   );
 
   const handleChange = useCallback((doc: Text) => {
@@ -229,6 +249,7 @@ export function HtmlEditor({
         <div className={sourceVisible ? "min-w-0" : "hidden"}>
           <CodeMirrorEditor
             documentId={documentId}
+            dynamicExtension={highlightingExtension}
             initialValue={initialValue}
             onChange={handleChange}
             onReady={onReady}
