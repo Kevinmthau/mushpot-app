@@ -1,6 +1,6 @@
 begin;
 
-select plan(25);
+select plan(33);
 
 select has_column(
   'public',
@@ -78,6 +78,17 @@ select ok(
   'a non-object page envelope fails media validation'
 );
 
+select ok(
+  private.document_content_has_valid_media_paths(
+    '<img src="/m/document-images/foreign/path.png">',
+    '77777777-7777-4777-8777-777777777777'::uuid,
+    'dddddddd-dddd-4ddd-8ddd-dddddddddddd'::uuid,
+    'https://project-ref.supabase.co',
+    'html_v1'
+  ),
+  'HTML media-rollout validation is an explicit opaque no-op'
+);
+
 insert into auth.users (
   instance_id,
   id,
@@ -139,6 +150,54 @@ select lives_ok(
   'the page JSON format is accepted'
 );
 
+select lives_ok(
+  $$
+    insert into public.documents (
+      id,
+      owner,
+      title,
+      content,
+      content_format
+    )
+    values (
+      'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      '77777777-7777-4777-8777-777777777777',
+      'Exact HTML limit',
+      repeat('a', 2097152),
+      'html_v1'
+    )
+  $$,
+  'HTML accepts exactly 2 MiB of UTF-8 source'
+);
+
+select throws_ok(
+  $$
+    insert into public.documents (owner, content, content_format)
+    values (
+      '77777777-7777-4777-8777-777777777777',
+      repeat('a', 2097153),
+      'html_v1'
+    )
+  $$,
+  '23514',
+  null,
+  'HTML rejects source over 2 MiB'
+);
+
+select throws_ok(
+  $$
+    insert into public.documents (owner, content, content_format)
+    values (
+      '77777777-7777-4777-8777-777777777777',
+      '',
+      'html_v1'
+    )
+  $$,
+  '23514',
+  null,
+  'HTML rejects empty source'
+);
+
 select throws_ok(
   $$
     insert into public.documents (
@@ -182,8 +241,28 @@ select is(
   'legacy Markdown remains visible without a page capability'
 );
 
+select is(
+  (
+    select count(*)
+    from public.documents
+    where id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+  ),
+  0::bigint,
+  'HTML is hidden without its exact capability'
+);
+
 set local "request.headers" =
   '{"x-mushpot-content-formats":"markdown_v1,page_json_v1"}';
+
+select is(
+  (
+    select count(*)
+    from public.documents
+    where id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+  ),
+  0::bigint,
+  'the page capability does not expose HTML'
+);
 
 select throws_ok(
   $sql$
@@ -241,6 +320,32 @@ select is(
   1::bigint,
   'a page-capable private client can select structured rows'
 );
+
+set local "request.headers" =
+  '{"x-mushpot-content-formats":"markdown_v1,html_v1"}';
+
+select is(
+  (
+    select count(*)
+    from public.documents
+    where id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+  ),
+  1::bigint,
+  'the exact HTML capability exposes HTML rows'
+);
+
+select is(
+  (
+    select count(*)
+    from public.documents
+    where id = '88888888-8888-4888-8888-888888888888'
+  ),
+  0::bigint,
+  'the HTML capability does not expose page rows'
+);
+
+set local "request.headers" =
+  '{"x-mushpot-content-formats":"markdown_v1,page_json_v1,html_v1"}';
 
 select lives_ok(
   $sql$

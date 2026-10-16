@@ -32,7 +32,8 @@ describe("security response headers", () => {
     )?.value;
 
     expect(contentSecurityPolicy).toContain("frame-ancestors 'none'");
-    expect(contentSecurityPolicy).toContain("frame-src 'none'");
+    expect(contentSecurityPolicy).toContain("frame-src 'self'");
+    expect(contentSecurityPolicy).not.toContain("frame-src https:");
     expect(contentSecurityPolicy).not.toContain("challenges.cloudflare.com");
     expect(contentSecurityPolicy).toContain("img-src 'self' data: blob: https:");
     expect(contentSecurityPolicy).toContain("media-src 'self' blob: https:");

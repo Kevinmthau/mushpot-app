@@ -3,6 +3,7 @@ import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   EdgePageDocumentValidationError,
   getEdgePageDocumentMedia,
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
   parseEdgePageDocument,
@@ -28,6 +29,10 @@ Deno.test("persisted content formats default only an absent legacy value", () =>
   assertEquals(
     parsePersistedDocumentContentFormat(PAGE_JSON_CONTENT_FORMAT),
     PAGE_JSON_CONTENT_FORMAT,
+  );
+  assertEquals(
+    parsePersistedDocumentContentFormat(HTML_CONTENT_FORMAT),
+    HTML_CONTENT_FORMAT,
   );
   assertEquals(parsePersistedDocumentContentFormat(null), null);
   assertEquals(parsePersistedDocumentContentFormat("future_json_v2"), null);

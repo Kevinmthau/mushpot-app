@@ -6,12 +6,13 @@ import {
   DOCUMENT_MEDIA_SIGNED_URL_TTL_SECONDS,
   type SharedMediaBatchResponse,
 } from "@/lib/document-media";
+import { getHtmlDocumentMetadata } from "@/lib/html-document";
 import {
   type DocumentContentFormat,
   getDocumentPlainText,
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
-  parsePageDocument,
   parseDocumentContentFormat,
 } from "@/lib/page-document";
 
@@ -31,6 +32,12 @@ export type SharedDocumentResult<T> =
   | { status: "unavailable" };
 
 export type SharedMediaBatch = SharedMediaBatchResponse;
+
+const SHARED_DOCUMENT_CONTENT_FORMATS = [
+  MARKDOWN_CONTENT_FORMAT,
+  PAGE_JSON_CONTENT_FORMAT,
+  HTML_CONTENT_FORMAT,
+] as const;
 
 async function requestSharedDocument<T>(
   body: Record<string, string | string[]>,
@@ -128,10 +135,16 @@ export function buildSharedDocumentPreview(
   const maxLength = typeof contentFormatOrMaxLength === "number"
     ? contentFormatOrMaxLength
     : requestedMaxLength;
-  const projectedText = getDocumentPlainText(content, contentFormat);
   const plainText = contentFormat === MARKDOWN_CONTENT_FORMAT
-    ? stripMarkdownForPreview(projectedText)
-    : projectedText.replace(/\s+/g, " ").trim();
+    ? stripMarkdownForPreview(getDocumentPlainText(content, contentFormat))
+    : contentFormat === HTML_CONTENT_FORMAT
+      ? (() => {
+          const metadata = getHtmlDocumentMetadata(content);
+          return (metadata.description || metadata.visibleText)
+            .replace(/\s+/g, " ")
+            .trim();
+        })()
+      : getDocumentPlainText(content, contentFormat).replace(/\s+/g, " ").trim();
 
   if (!plainText) {
     return DEFAULT_SHARED_DOCUMENT_DESCRIPTION;
@@ -143,7 +156,7 @@ export function buildSharedDocumentPreview(
 export const fetchSharedDocument = cache(
   async (id: string, token: string): Promise<SharedDocumentResult<SharedDocument>> =>
     requestSharedDocument({
-      contentFormats: [MARKDOWN_CONTENT_FORMAT, PAGE_JSON_CONTENT_FORMAT],
+      contentFormats: [...SHARED_DOCUMENT_CONTENT_FORMATS],
       docId: id,
       token,
     }, (payload) => {
@@ -159,16 +172,10 @@ export const fetchSharedDocument = cache(
         if ("content_format" in payload) {
           contentFormat = parseDocumentContentFormat(payload.content_format);
         } else {
-          // Older Edge deployments omit the discriminator. Continue accepting
-          // their Markdown responses, but never infer Markdown for a page
-          // envelope: the old Edge media rewriter may already have regex-
-          // rewritten JSON prose or link attributes before returning it.
-          try {
-            parsePageDocument(payload.content);
-            return null;
-          } catch {
-            contentFormat = MARKDOWN_CONTENT_FORMAT;
-          }
+          // Any accepted source can now belong to more than one format, so an
+          // old Edge response without the discriminator is ambiguous. Fail
+          // closed instead of rendering or rewriting it under the wrong rules.
+          return null;
         }
       } catch {
         return null;
@@ -187,7 +194,12 @@ export async function fetchSharedMediaUrl(
   token: string,
   mediaUrl: string,
 ): Promise<SharedDocumentResult<string>> {
-  return requestSharedDocument({ docId: id, mediaUrl, token }, (payload) => {
+  return requestSharedDocument({
+    contentFormats: [...SHARED_DOCUMENT_CONTENT_FORMATS],
+    docId: id,
+    mediaUrl,
+    token,
+  }, (payload) => {
     if (typeof payload !== "object" || payload === null || !("signedUrl" in payload)) return null;
     return parseSignedUrl(payload.signedUrl);
   });
@@ -203,7 +215,12 @@ export async function fetchSharedMediaUrls(
   token: string,
   mediaUrls: string[],
 ): Promise<SharedDocumentResult<SharedMediaBatch>> {
-  return requestSharedDocument({ docId: id, token, mediaUrls }, (payload) => {
+  return requestSharedDocument({
+    contentFormats: [...SHARED_DOCUMENT_CONTENT_FORMATS],
+    docId: id,
+    token,
+    mediaUrls,
+  }, (payload) => {
     // Older deployments return a document rather than a batch. Keep the
     // existing browser fallback by reporting that response as unavailable.
     if (

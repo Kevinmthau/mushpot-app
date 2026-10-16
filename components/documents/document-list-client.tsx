@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 
 import type { DocumentListSession } from "@/lib/document-list-session";
 import { preloadEditorClient } from "@/components/editor/editor-lazy";
@@ -26,8 +33,13 @@ import {
 } from "@/lib/new-document-focus";
 import {
   EMPTY_PAGE_DOCUMENT_CONTENT,
+  HTML_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
 } from "@/lib/page-document";
+import {
+  decodeHtmlDocumentFile,
+  getHtmlImportTitle,
+} from "@/lib/html-document";
 
 type DocumentListClientProps = {
   documents: DocumentListItem[];
@@ -48,6 +60,8 @@ export function DocumentListClient({
     () => new Set(),
   );
   const [isCreating, setIsCreating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const htmlFileInputRef = useRef<HTMLInputElement | null>(null);
   const [, startTransition] = useTransition();
 
   useEffect(() => {
@@ -141,6 +155,56 @@ export function DocumentListClient({
     }
   }, [documentListSession, isCreating, userId, router]);
 
+  const handleImportHtml = useCallback(async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file || isImporting) {
+      input.value = "";
+      return;
+    }
+
+    setIsImporting(true);
+    const cacheWriteToken = getDocumentCacheWriteToken(userId);
+    try {
+      const content = await decodeHtmlDocumentFile(file);
+      const title = getHtmlImportTitle(content, file.name);
+      const { getSupabaseBrowserClient } = await import("@/lib/supabase/client");
+      const supabase = await getSupabaseBrowserClient();
+      const { data, error } = await supabase
+        .from("documents")
+        .insert({
+          owner: userId,
+          title,
+          content,
+          content_format: HTML_CONTENT_FORMAT,
+        })
+        .select(EDITOR_DOCUMENT_SELECT)
+        .single();
+      if (error || !data) {
+        throw new Error(error?.message ?? "Unable to import HTML.");
+      }
+
+      await putCachedDocument(toCachedDocument(data), cacheWriteToken);
+      documentListSession.confirmUpsert(userId, data);
+      setOptimisticDocumentIds((currentIds) => new Set(currentIds).add(data.id));
+      setDisplayDocuments((current) => [
+        { id: data.id, title: data.title, updated_at: data.updated_at },
+        ...current,
+      ]);
+      void preloadEditorClient();
+      startTransition(() => router.push(`/doc/${data.id}`));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Failed to import HTML.");
+    } finally {
+      // Reset even after success so selecting the same file again always
+      // dispatches a change event if the user returns to the list.
+      input.value = "";
+      setIsImporting(false);
+    }
+  }, [documentListSession, isImporting, router, userId]);
+
   return (
     <section className="space-y-2">
       <button
@@ -157,6 +221,31 @@ export function DocumentListClient({
         <div className="px-4 py-3 sm:px-5 sm:py-4">
           <p className="document-title-text line-clamp-1 text-[var(--muted)]">
             {isCreating ? "Creating..." : "New document..."}
+          </p>
+        </div>
+      </button>
+
+      <input
+        ref={htmlFileInputRef}
+        type="file"
+        accept=".html,.htm,text/html,application/xhtml+xml"
+        className="sr-only"
+        onChange={handleImportHtml}
+        aria-label="Choose HTML document to import"
+      />
+      <button
+        type="button"
+        onClick={() => htmlFileInputRef.current?.click()}
+        onFocus={handleWarmEditor}
+        onPointerEnter={handleWarmEditor}
+        disabled={isImporting}
+        aria-label="Import HTML"
+        title="Import HTML"
+        className="group block w-full appearance-none rounded-2xl border-0 bg-transparent p-0 text-left transition hover:bg-[var(--paper)] hover:shadow-[0_8px_22px_rgba(41,60,68,0.08)] disabled:opacity-60"
+      >
+        <div className="px-4 py-3 sm:px-5 sm:py-4">
+          <p className="document-title-text line-clamp-1 text-[var(--muted)]">
+            {isImporting ? "Importing HTML..." : "Import HTML..."}
           </p>
         </div>
       </button>

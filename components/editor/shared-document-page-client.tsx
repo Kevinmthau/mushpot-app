@@ -9,6 +9,7 @@ import remarkGfm from "remark-gfm";
 
 import { isSupportedVideoUrl } from "@/components/editor/image-upload-utils";
 import { LinkPreviewCard } from "@/components/editor/link-preview-card";
+import { HtmlDocumentPreview } from "@/components/editor/html-document-preview";
 import {
   SharedDocumentMedia,
   SharedMediaProvider,
@@ -24,6 +25,7 @@ import {
 } from "@/lib/markdown/video-poster";
 import {
   getDocumentPlainText,
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
   parsePageDocument,
@@ -187,6 +189,12 @@ export function SharedDocumentPageClient({
             className="page-body pb-24"
             data-document-id={documentId}
             dangerouslySetInnerHTML={{ __html: renderPageDocumentHtml(page) }}
+          />
+        ) : contentFormat === HTML_CONTENT_FORMAT ? (
+          <HtmlDocumentPreview
+            className="pb-24"
+            source={content}
+            title={title}
           />
         ) : (
           <article

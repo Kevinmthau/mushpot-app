@@ -10,6 +10,7 @@ import type {
 } from "@/lib/document-sync";
 import type { DocumentWriteEvent } from "@/lib/document-write-coordinator";
 import {
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
 } from "@/lib/page-document";
@@ -193,6 +194,34 @@ describe("draft controller", () => {
         content: "Typing",
         updated_at: document.updated_at,
       }),
+    );
+  });
+
+  it("uses a longer HTML save debounce and defers live stats projection", async () => {
+    const htmlDocument = {
+      ...document,
+      content: "<!doctype html><p>Body</p>",
+      content_format: HTML_CONTENT_FORMAT,
+    };
+    const { controller, persist, cache } = setup(htmlDocument);
+    const source = { toString: vi.fn(() => "<!doctype html><p>Edited</p>") };
+
+    controller.handleEditorChange(source);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(source.toString).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(source.toString).toHaveBeenCalledOnce();
+    expect(cache).toHaveBeenCalledWith(expect.objectContaining({
+      content_format: HTML_CONTENT_FORMAT,
+      content: "<!doctype html><p>Edited</p>",
+    }));
+    expect(persist).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_599);
+    expect(persist).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(persist).toHaveBeenCalledOnce();
+    expect(controller.getView().contentForStats).toBe(
+      "<!doctype html><p>Edited</p>",
     );
   });
 

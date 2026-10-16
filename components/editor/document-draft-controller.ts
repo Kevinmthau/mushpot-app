@@ -21,9 +21,13 @@ import {
 } from "@/lib/document-sync";
 import type { DocumentWriteEvent } from "@/lib/document-write-coordinator";
 import {
+  HTML_CONTENT_FORMAT,
   parseDocumentContentFormat,
   type DocumentContentFormat,
 } from "@/lib/page-document";
+
+export const DEFAULT_DOCUMENT_SAVE_DEBOUNCE_MS = 800;
+export const HTML_DOCUMENT_SAVE_DEBOUNCE_MS = 2_000;
 
 export type DraftSaveStatus = "saved" | "saving" | "retryable" | "conflict";
 export type DraftViewState = {
@@ -165,6 +169,12 @@ export class DocumentDraftController {
     );
   }
 
+  private getSaveDebounceMs() {
+    return this.contentFormat === HTML_CONTENT_FORMAT
+      ? HTML_DOCUMENT_SAVE_DEBOUNCE_MS
+      : DEFAULT_DOCUMENT_SAVE_DEBOUNCE_MS;
+  }
+
   private clearScheduledWork = () => {
     this.generation += 1;
     for (const timer of this.timers.values()) clearTimeout(timer);
@@ -273,7 +283,7 @@ export class DocumentDraftController {
     // An edit may have reverted to the previous baseline while this request
     // was in flight, so its debounce could already have found nothing to save.
     if (hasPendingChanges)
-      this.schedule("save", 800, () => {
+      this.schedule("save", this.getSaveDebounceMs(), () => {
         void this.save();
       });
   };
@@ -324,7 +334,7 @@ export class DocumentDraftController {
       void this.cache();
     });
     if (this.view.saveStatus !== "conflict")
-      this.schedule("save", 800, () => {
+      this.schedule("save", this.getSaveDebounceMs(), () => {
         void this.save();
       });
   }
@@ -336,10 +346,16 @@ export class DocumentDraftController {
     this.invalidSource = null;
     this.mutations.content = true;
     this.changed();
-    this.schedule("stats", 250, () => {
-      const content = this.readLatestContent();
-      if (content !== null) this.publish({ contentForStats: content });
-    });
+    this.schedule(
+      "stats",
+      this.contentFormat === HTML_CONTENT_FORMAT
+        ? HTML_DOCUMENT_SAVE_DEBOUNCE_MS
+        : 250,
+      () => {
+        const content = this.readLatestContent();
+        if (content !== null) this.publish({ contentForStats: content });
+      },
+    );
   };
 
   handleTitleChange = (title: string) => {
@@ -499,7 +515,7 @@ export class DocumentDraftController {
 
   resetDeletingState = () => {
     this.publish({ isDeleting: false });
-    this.schedule("save", 800, () => {
+    this.schedule("save", this.getSaveDebounceMs(), () => {
       void this.save();
     });
   };
@@ -515,7 +531,7 @@ export class DocumentDraftController {
     });
     if (this.isDirty()) {
       void this.cache();
-      this.schedule("save", 800, () => {
+      this.schedule("save", this.getSaveDebounceMs(), () => {
         void this.save();
       });
     }

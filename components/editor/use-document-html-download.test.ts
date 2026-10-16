@@ -6,6 +6,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useDocumentHtmlDownload } from "@/components/editor/use-document-html-download";
+import {
+  HTML_CONTENT_FORMAT,
+  type DocumentContentFormat,
+} from "@/lib/page-document";
 
 const { exportDocumentHtml } = vi.hoisted(() => ({
   exportDocumentHtml: vi.fn(),
@@ -24,14 +28,17 @@ let host: HTMLDivElement;
 let api: ReturnType<typeof useDocumentHtmlDownload>;
 
 function Probe({
+  contentFormat,
   getLatestTitle = () => "Notes",
   getLatestContent = () => "Draft",
 }: {
+  contentFormat?: DocumentContentFormat;
   getLatestTitle?: () => string;
   getLatestContent?: () => string | null;
 }) {
   const download = useDocumentHtmlDownload({
     owner: OWNER_ID,
+    contentFormat,
     getLatestTitle,
     getLatestContent,
   });
@@ -182,6 +189,27 @@ describe("mounted HTML download", () => {
 
     await vi.advanceTimersByTimeAsync(1_000);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:document-html");
+  });
+
+  it("downloads opaque HTML source exactly without loading the renderer", async () => {
+    const source = "\uFEFF<!doctype html>\r\n<script>const media='/m/untouched';</script>";
+    const anchors: HTMLAnchorElement[] = [];
+    vi.mocked(HTMLAnchorElement.prototype.click).mockImplementation(function (this: HTMLAnchorElement) {
+      anchors.push(this);
+    });
+    await act(async () => root.render(createElement(Probe, {
+      contentFormat: HTML_CONTENT_FORMAT,
+      getLatestTitle: () => "Raw/source",
+      getLatestContent: () => source,
+    })));
+    await act(async () => api.handleDownload());
+
+    expect(exportDocumentHtml).not.toHaveBeenCalled();
+    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual(
+      Array.from(new TextEncoder().encode(source)),
+    );
+    expect(anchors[0].download).toBe("Raw_source.html");
   });
 
   it("reports an actionable failure and allows retry", async () => {

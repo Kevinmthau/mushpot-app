@@ -67,6 +67,7 @@ function createHarness(rowOverrides: Partial<SharedDocumentRow> = {}) {
 function createMediaRequest(mediaUrl: string) {
   return new Request("https://functions.example/get-shared-doc", {
     body: JSON.stringify({
+      contentFormats: ["markdown_v1", "page_json_v1", "html_v1"],
       docId: DOCUMENT_ID,
       mediaUrl,
       token: SHARE_TOKEN,
@@ -79,7 +80,7 @@ function createMediaRequest(mediaUrl: string) {
 function createDocumentRequest(extra: Record<string, unknown> = {}) {
   return new Request("https://functions.example/get-shared-doc", {
     body: JSON.stringify({
-      contentFormats: ["markdown_v1", "page_json_v1"],
+      contentFormats: ["markdown_v1", "page_json_v1", "html_v1"],
       docId: DOCUMENT_ID,
       token: SHARE_TOKEN,
       ...extra,
@@ -128,6 +129,79 @@ Deno.test("page shares require an explicit structured-content capability", async
   assertEquals(await response.json(), {
     error: "Shared document temporarily unavailable.",
   });
+});
+
+Deno.test(
+  "page media remains compatible when older clients omit capabilities",
+  async () => {
+    const content = JSON.stringify({
+      schema: "mushpot.page",
+      version: 1,
+      theme: "paper",
+      width: "prose",
+      content: {
+        type: "doc",
+        content: [{ type: "image", attrs: { src: REFERENCED_MEDIA_URL } }],
+      },
+    });
+    const { dependencies, signedUrlCalls } = createHarness({
+      content,
+      content_format: "page_json_v1",
+    });
+
+    const response = await handleSharedDocumentRequest(
+      createDocumentRequest({
+        contentFormats: undefined,
+        mediaUrl: REFERENCED_MEDIA_URL,
+      }),
+      dependencies,
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(signedUrlCalls.length, 1);
+  },
+);
+
+Deno.test("HTML shares require capability and return opaque source unchanged", async () => {
+  const content =
+    `<!doctype html>\r\n<html><body><img src="${REFERENCED_MEDIA_URL}"><script>const path='/m/untouched';</script></body></html>`;
+  const { dependencies } = createHarness({
+    content,
+    content_format: "html_v1",
+  });
+
+  const unavailable = await handleSharedDocumentRequest(
+    createDocumentRequest({ contentFormats: ["markdown_v1", "page_json_v1"] }),
+    dependencies,
+  );
+  assertEquals(unavailable.status, 503);
+
+  const response = await handleSharedDocumentRequest(
+    createDocumentRequest(),
+    dependencies,
+  );
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), {
+    title: "Shared document",
+    content,
+    content_format: "html_v1",
+    updated_at: "2026-07-29T12:00:00.000Z",
+  });
+});
+
+Deno.test("HTML shares expose no media references", async () => {
+  const { dependencies, signedUrlCalls } = createHarness({
+    content: `<!doctype html><img src="${REFERENCED_MEDIA_URL}">`,
+    content_format: "html_v1",
+  });
+  const response = await handleSharedDocumentRequest(
+    createMediaRequest(REFERENCED_MEDIA_URL),
+    dependencies,
+  );
+
+  assertEquals(response.status, 404);
+  assertEquals(await response.json(), { error: "Media not found." });
+  assertEquals(signedUrlCalls, []);
 });
 
 Deno.test("page shares rewrite and authorize only typed media attributes", async () => {

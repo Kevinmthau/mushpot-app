@@ -223,6 +223,25 @@ Deno.test("legacy missing and null formats retain Markdown backfill behavior", a
   }
 });
 
+Deno.test("HTML backfill is a supported opaque no-op", async () => {
+  const content =
+    `<!doctype html><img src="/m/document-images/${OTHER_OWNER}/${SOURCE_DOCUMENT}/must-not-be-scanned.png">`;
+  const analysis = await analyzeDocumentContentMedia({
+    content,
+    contentFormat: "html_v1",
+    documentId: DOCUMENT,
+    ownerId: OWNER,
+    supabaseUrl: SUPABASE_URL,
+  });
+
+  assertEquals(analysis, {
+    blockers: [],
+    copies: [],
+    references: [],
+    rewrittenContent: content,
+  });
+});
+
 Deno.test("explicit unknown content formats block the backfill", async () => {
   const content = "This must not be reinterpreted.";
   const analysis = await analyzeDocumentContentMedia({

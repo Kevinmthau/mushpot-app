@@ -14,6 +14,7 @@ import {
   parseVideoPosterFromTitle,
 } from "@/lib/markdown/video-poster";
 import {
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
   parsePageDocument,
@@ -339,6 +340,12 @@ export function renderDocumentHtmlBodyByFormat({
 }) {
   if (contentFormat === PAGE_JSON_CONTENT_FORMAT) {
     return renderPageHtmlBody({ title, content });
+  }
+  if (contentFormat === HTML_CONTENT_FORMAT) {
+    throw new Error("Opaque HTML source must bypass the document renderer.");
+  }
+  if (contentFormat !== MARKDOWN_CONTENT_FORMAT) {
+    throw new Error("Unsupported document content format.");
   }
 
   const container = document.createElement("div");

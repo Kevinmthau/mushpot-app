@@ -8,6 +8,7 @@ import {
 import {
   type DocumentContentFormat,
   EMPTY_PAGE_DOCUMENT_CONTENT,
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
 } from "@/lib/page-document";
@@ -282,6 +283,33 @@ describe("performDocumentClone", () => {
       content_format: PAGE_JSON_CONTENT_FORMAT,
       title: "Page (copy)",
     });
+  });
+
+  it("copies opaque HTML exactly in one insert with zero media operations", async () => {
+    const { copyMock, inserts, supabase, updates } = createSupabaseMock();
+    const content = "\uFEFF<!doctype html>\r\n<img src=\"/m/keep-exact\"><script>run()</script>";
+
+    const completed = await performDocumentClone({
+      content,
+      contentFormat: HTML_CONTENT_FORMAT,
+      owner: OWNER_ID,
+      supabase,
+      title: "HTML",
+    });
+
+    expect(inserts).toEqual([{
+      owner: OWNER_ID,
+      title: "HTML (copy)",
+      content,
+      content_format: HTML_CONTENT_FORMAT,
+    }]);
+    expect(completed).toMatchObject({
+      content,
+      content_format: HTML_CONTENT_FORMAT,
+      title: "HTML (copy)",
+    });
+    expect(copyMock).not.toHaveBeenCalled();
+    expect(updates).toEqual([]);
   });
 
   it("refreshes the lease every minute while a media copy is in flight", async () => {
