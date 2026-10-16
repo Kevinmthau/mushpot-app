@@ -3,10 +3,12 @@
 // application/Tiptap module into an Edge Function.
 export const MARKDOWN_CONTENT_FORMAT = "markdown_v1" as const;
 export const PAGE_JSON_CONTENT_FORMAT = "page_json_v1" as const;
+export const HTML_CONTENT_FORMAT = "html_v1" as const;
 
 export type DocumentContentFormat =
   | typeof MARKDOWN_CONTENT_FORMAT
-  | typeof PAGE_JSON_CONTENT_FORMAT;
+  | typeof PAGE_JSON_CONTENT_FORMAT
+  | typeof HTML_CONTENT_FORMAT;
 
 export type PageDocumentMediaReference = Readonly<{
   attribute: "src" | "poster";
@@ -660,7 +662,11 @@ export function parsePersistedDocumentContentFormat(
 ): DocumentContentFormat | null {
   // Older rows selected by a newly deployed function can omit the column.
   if (value === undefined) return MARKDOWN_CONTENT_FORMAT;
-  if (value === MARKDOWN_CONTENT_FORMAT || value === PAGE_JSON_CONTENT_FORMAT) {
+  if (
+    value === MARKDOWN_CONTENT_FORMAT ||
+    value === PAGE_JSON_CONTENT_FORMAT ||
+    value === HTML_CONTENT_FORMAT
+  ) {
     return value;
   }
   return null;

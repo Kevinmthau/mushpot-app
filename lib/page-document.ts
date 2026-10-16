@@ -1,7 +1,10 @@
 import type { JSONContent } from "@tiptap/core";
 
+import { getHtmlDocumentMetadata } from "@/lib/html-document";
+
 export const MARKDOWN_CONTENT_FORMAT = "markdown_v1" as const;
 export const PAGE_JSON_CONTENT_FORMAT = "page_json_v1" as const;
+export const HTML_CONTENT_FORMAT = "html_v1" as const;
 
 /**
  * Sent with authenticated PostgREST requests so database policies can keep a
@@ -12,11 +15,12 @@ export const PAGE_JSON_CONTENT_FORMAT = "page_json_v1" as const;
 export const DOCUMENT_CONTENT_FORMATS_HEADER =
   "x-mushpot-content-formats" as const;
 export const DOCUMENT_CONTENT_FORMATS_CAPABILITY =
-  `${MARKDOWN_CONTENT_FORMAT},${PAGE_JSON_CONTENT_FORMAT}` as const;
+  `${MARKDOWN_CONTENT_FORMAT},${PAGE_JSON_CONTENT_FORMAT},${HTML_CONTENT_FORMAT}` as const;
 
 export type DocumentContentFormat =
   | typeof MARKDOWN_CONTENT_FORMAT
-  | typeof PAGE_JSON_CONTENT_FORMAT;
+  | typeof PAGE_JSON_CONTENT_FORMAT
+  | typeof HTML_CONTENT_FORMAT;
 
 export const PAGE_DOCUMENT_SCHEMA = "mushpot.page" as const;
 export const PAGE_DOCUMENT_VERSION = 1 as const;
@@ -260,7 +264,11 @@ export function normalizeDocumentContentFormat(
 export function parseDocumentContentFormat(
   value: unknown,
 ): DocumentContentFormat {
-  if (value === MARKDOWN_CONTENT_FORMAT || value === PAGE_JSON_CONTENT_FORMAT) {
+  if (
+    value === MARKDOWN_CONTENT_FORMAT ||
+    value === PAGE_JSON_CONTENT_FORMAT ||
+    value === HTML_CONTENT_FORMAT
+  ) {
     return value;
   }
   throw new PageDocumentValidationError("Invalid document content format");
@@ -779,9 +787,14 @@ export function getDocumentPlainText(
   contentFormat: DocumentContentFormat,
 ) {
   const format = parseDocumentContentFormat(contentFormat);
-  return format === MARKDOWN_CONTENT_FORMAT
-    ? content
-    : getPageDocumentPlainText(parsePageDocument(content));
+  switch (format) {
+    case MARKDOWN_CONTENT_FORMAT:
+      return content;
+    case PAGE_JSON_CONTENT_FORMAT:
+      return getPageDocumentPlainText(parsePageDocument(content));
+    case HTML_CONTENT_FORMAT:
+      return getHtmlDocumentMetadata(content).visibleText;
+  }
 }
 
 function visitMediaNodes(

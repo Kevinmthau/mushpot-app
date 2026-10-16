@@ -16,6 +16,7 @@ import { usePrivateSession } from "@/components/pwa/private-session-provider";
 import { useDocumentDelete } from "@/components/editor/use-document-delete";
 import { useDocumentHtmlDownload } from "@/components/editor/use-document-html-download";
 import { EditorWorkspace } from "@/components/editor/editor-workspace";
+import { HtmlEditor } from "@/components/editor/html-editor";
 import { PageEditor } from "@/components/editor/page-editor";
 import { MissingDocumentFallback } from "@/components/editor/missing-document-fallback";
 import type { DocumentTextSource } from "@/components/editor/read-document-text";
@@ -26,10 +27,12 @@ import {
   releaseTemporaryKeyboardHolder,
 } from "@/lib/new-document-focus";
 import {
+  HTML_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
   parsePageDocument,
   type DocumentContentFormat,
 } from "@/lib/page-document";
+import { validateHtmlDocumentSource } from "@/lib/html-document";
 
 const ShareModal = dynamic(
   () => import("@/components/editor/share-modal").then((module) => module.ShareModal),
@@ -96,6 +99,25 @@ export function EditorClient(props: EditorClientProps) {
             </h1>
             <p className="mt-2 text-sm text-[var(--muted)]">
               Its structured content is invalid or uses a newer page format. The original data has not been changed.
+            </p>
+          </div>
+        </main>
+      );
+    }
+  }
+
+  if (props.initialDocument.content_format === HTML_CONTENT_FORMAT) {
+    try {
+      validateHtmlDocumentSource(props.initialDocument.content);
+    } catch {
+      return (
+        <main className="mx-auto min-h-dvh w-full max-w-[800px] px-4 py-12 sm:px-5">
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--paper)] px-5 py-6">
+            <h1 className="font-[var(--font-writing)] text-2xl text-[var(--ink)]">
+              This HTML document needs attention
+            </h1>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Its source is empty, invalid, or exceeds the supported size. The original data has not been changed.
             </p>
           </div>
         </main>
@@ -319,7 +341,9 @@ function EditorClientInner({
   return (
     <>
       <div ref={dropTargetRef} className="min-h-dvh pb-14 sm:pb-20">
-        <main className="mx-auto w-full max-w-[800px] px-4 pt-8 sm:px-5 sm:pt-12 md:px-0">
+        <main className={`mx-auto w-full px-4 pt-8 sm:px-5 sm:pt-12 md:px-0 ${
+          contentFormat === HTML_CONTENT_FORMAT ? "max-w-[1400px]" : "max-w-[800px]"
+        }`}>
           {needsDraftRecovery &&
           saveStatus !== "conflict" &&
           !draftSerializationError ? (
@@ -434,6 +458,15 @@ function EditorClientInner({
                 onReady={handleEditorWorkspaceReady}
                 onUploadingMediaCountChange={setUploadingMediaCount}
                 owner={initialDocument.owner}
+              />
+            ) : contentFormat === HTML_CONTENT_FORMAT ? (
+              <HtmlEditor
+                key={initialDocument.id}
+                documentId={initialDocument.id}
+                initialValue={initialDocument.content}
+                onChange={handleEditorDocumentChange}
+                onReady={handleEditorWorkspaceReady}
+                title={title}
               />
             ) : (
               <EditorWorkspace

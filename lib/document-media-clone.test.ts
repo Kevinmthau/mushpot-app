@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { planDocumentMediaClone } from "@/lib/document-media-clone";
 import {
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
   parsePageDocument,
@@ -25,6 +26,17 @@ function plan(content: string) {
 }
 
 describe("planDocumentMediaClone", () => {
+  it("treats HTML as opaque and never scans or rewrites media-like text", () => {
+    const content = `<!doctype html><img src="/m/document-images/${OWNER_ID}/${SOURCE_DOCUMENT_ID}/photo.png"><script>const path = "/m/document-videos/x";</script>`;
+    expect(planDocumentMediaClone({
+      content,
+      contentFormat: HTML_CONTENT_FORMAT,
+      destinationDocumentId: DESTINATION_DOCUMENT_ID,
+      ownerId: OWNER_ID,
+      supabaseUrl: SUPABASE_URL,
+    })).toEqual({ content, copies: [] });
+  });
+
   it("copies and rewrites stable image, video, and poster references", () => {
     const image =
       `/m/document-images/${OWNER_ID}/${SOURCE_DOCUMENT_ID}/my%20photo%20%281%29.png`;

@@ -9,6 +9,7 @@ import {
 import {
   type DocumentContentFormat,
   getEdgePageDocumentMedia,
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
   rewriteEdgePageDocumentMedia,
@@ -98,6 +99,9 @@ function getDocumentMediaUrls(
   content: string,
   contentFormat: DocumentContentFormat = MARKDOWN_CONTENT_FORMAT,
 ) {
+  if (contentFormat === HTML_CONTENT_FORMAT) {
+    return [];
+  }
   if (contentFormat === PAGE_JSON_CONTENT_FORMAT) {
     return getEdgePageDocumentMedia(content).map(({ url }) => url);
   }
@@ -144,6 +148,9 @@ export async function rewriteSharedDocumentMediaUrls(
   content: string,
   options: RewriteSharedDocumentMediaOptions,
 ) {
+  if (options.contentFormat === HTML_CONTENT_FORMAT) {
+    return content;
+  }
   if (options.contentFormat === PAGE_JSON_CONTENT_FORMAT) {
     const references = getSharedDocumentMediaReferences(content, options);
     const resolvedUrls = new Map<string, string>();

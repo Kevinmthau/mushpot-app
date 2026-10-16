@@ -8,6 +8,7 @@ import {
   normalizeSharedDocumentTitle,
 } from "@/lib/shared-document";
 import {
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
 } from "@/lib/page-document";
@@ -93,6 +94,16 @@ describe("buildSharedDocumentPreview", () => {
       buildSharedDocumentPreview(content, PAGE_JSON_CONTENT_FORMAT),
     ).toBe("A page **Literal marks** stay.");
   });
+
+  it("prefers HTML meta descriptions and excludes hidden and license text", () => {
+    const content = `<!doctype html><html><head>
+      <meta name="description" content="The preferred description">
+      <script>hidden()</script></head><body><p>Visible fallback</p>
+      <section class="license">License terms</section></body></html>`;
+    expect(buildSharedDocumentPreview(content, HTML_CONTENT_FORMAT)).toBe(
+      "The preferred description",
+    );
+  });
 });
 
 describe("fetchSharedMediaUrl", () => {
@@ -128,6 +139,11 @@ describe("fetchSharedMediaUrl", () => {
       "https://project-ref.supabase.co/functions/v1/get-shared-doc",
       expect.objectContaining({
         body: JSON.stringify({
+          contentFormats: [
+            MARKDOWN_CONTENT_FORMAT,
+            PAGE_JSON_CONTENT_FORMAT,
+            HTML_CONTENT_FORMAT,
+          ],
           docId: "doc-id",
           mediaUrl: "/m/document-images/path",
           token: "share-token",
@@ -241,6 +257,7 @@ describe("shared request failure outcomes", () => {
     const document = {
       title: "Title",
       content: "Body",
+      content_format: MARKDOWN_CONTENT_FORMAT,
       updated_at: "2026-09-21T00:00:00Z",
     };
     const fetcher = vi.fn().mockResolvedValueOnce(Response.json(document));
@@ -253,7 +270,11 @@ describe("shared request failure outcomes", () => {
       },
     });
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
-      contentFormats: [MARKDOWN_CONTENT_FORMAT, PAGE_JSON_CONTENT_FORMAT],
+      contentFormats: [
+        MARKDOWN_CONTENT_FORMAT,
+        PAGE_JSON_CONTENT_FORMAT,
+        HTML_CONTENT_FORMAT,
+      ],
       docId: "doc",
       token: "token",
     });
@@ -283,6 +304,11 @@ describe("shared request failure outcomes", () => {
       }))
       .mockResolvedValueOnce(Response.json({
         ...document,
+        content: "<!doctype html><p>Body</p>",
+        content_format: HTML_CONTENT_FORMAT,
+      }))
+      .mockResolvedValueOnce(Response.json({
+        ...document,
         content_format: "future_json_v2",
       }));
     vi.stubGlobal("fetch", fetcher);
@@ -292,6 +318,14 @@ describe("shared request failure outcomes", () => {
       data: {
         ...document,
         content_format: PAGE_JSON_CONTENT_FORMAT,
+      },
+    });
+    expect(await fetchSharedDocument("doc", "token")).toEqual({
+      status: "success",
+      data: {
+        ...document,
+        content: "<!doctype html><p>Body</p>",
+        content_format: HTML_CONTENT_FORMAT,
       },
     });
     expect(await fetchSharedDocument("doc", "token")).toEqual({
@@ -328,6 +362,38 @@ describe("shared request failure outcomes", () => {
     );
 
     await expect(fetchSharedDocument("structured-doc", "token")).resolves
+      .toEqual({ status: "unavailable" });
+  });
+
+  it("fails closed when an old Edge response omits the format for an HTML fragment", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({
+        title: "HTML from an old Edge deployment",
+        content: "<h1>Not Markdown</h1>",
+        updated_at: "2026-09-21T00:00:00Z",
+      })),
+    );
+
+    await expect(fetchSharedDocument("html-doc", "token")).resolves
+      .toEqual({ status: "unavailable" });
+  });
+
+  it("fails closed when an old Edge response omits the format for plain text", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({
+        title: "Ambiguous old Edge response",
+        content: "This could be Markdown or opaque HTML.",
+        updated_at: "2026-09-21T00:00:00Z",
+      })),
+    );
+
+    await expect(fetchSharedDocument("ambiguous-doc", "token")).resolves
       .toEqual({ status: "unavailable" });
   });
 

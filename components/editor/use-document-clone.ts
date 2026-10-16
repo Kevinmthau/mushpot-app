@@ -17,6 +17,7 @@ import type { EditorDocument } from "@/lib/documents";
 import {
   type DocumentContentFormat,
   EMPTY_PAGE_DOCUMENT_CONTENT,
+  HTML_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
   parseDocumentContentFormat,
 } from "@/lib/page-document";
@@ -199,6 +200,26 @@ export async function performDocumentClone({
   title,
 }: PerformDocumentCloneParams): Promise<EditorDocument> {
   const format = parseDocumentContentFormat(contentFormat);
+
+  // Opaque HTML has no managed-media semantics. Insert the final source in a
+  // single operation so cloning cannot rewrite it or invoke Storage at all.
+  if (format === HTML_CONTENT_FORMAT) {
+    const { data, error } = await supabase
+      .from("documents")
+      .insert({
+        owner,
+        title: getCloneTitle(title),
+        content,
+        content_format: format,
+      })
+      .select(EDITOR_DOCUMENT_SELECT)
+      .single();
+    if (error || !data) {
+      throw new Error(error?.message ?? "Unable to clone document.");
+    }
+    return data;
+  }
+
   let createdDocumentId: string | null = null;
   let heartbeat: ReturnType<typeof startCloneLeaseHeartbeat> | null = null;
 

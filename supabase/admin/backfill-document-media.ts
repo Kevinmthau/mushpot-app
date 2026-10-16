@@ -13,6 +13,7 @@ import {
 import {
   type DocumentContentFormat,
   getEdgePageDocumentMedia,
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
   rewriteEdgePageDocumentMedia,
@@ -67,7 +68,11 @@ function readBackfillContentFormat(
   // Rows created before the content_format migration can omit the column, and
   // partially rolled-out rows can still return null. Both are legacy Markdown.
   if (value === undefined || value === null) return MARKDOWN_CONTENT_FORMAT;
-  if (value === MARKDOWN_CONTENT_FORMAT || value === PAGE_JSON_CONTENT_FORMAT) {
+  if (
+    value === MARKDOWN_CONTENT_FORMAT ||
+    value === PAGE_JSON_CONTENT_FORMAT ||
+    value === HTML_CONTENT_FORMAT
+  ) {
     return value;
   }
   return null;
@@ -175,6 +180,14 @@ export async function analyzeDocumentContentMedia({
       ownerId,
       supabaseUrl,
     });
+  }
+  if (contentFormat === HTML_CONTENT_FORMAT) {
+    return {
+      blockers: [],
+      copies: [],
+      references: [],
+      rewrittenContent: content,
+    };
   }
 
   try {

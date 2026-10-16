@@ -36,10 +36,10 @@ export type {
 import { announceDocumentCacheChange } from "@/lib/document-cache-events";
 
 const DB_NAME = "mushpot";
-// v7 is also a compatibility fence: opening the page-capable app closes older
-// v6 connections. Those clients then cannot read structured rows written into
+// v8 is also a compatibility fence: opening the HTML-capable app closes older
+// v7 connections. Those clients then cannot read opaque HTML rows written into
 // the shared cache after their server access has been gated by capability.
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 const DOCS_STORE = "documents";
 const LIST_STORE = "document-list";
 const META_STORE = "meta";

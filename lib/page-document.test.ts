@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { renderPageDocumentHtml } from "@/components/editor/page-editor-extensions";
 import {
+  HTML_CONTENT_FORMAT,
   canonicalizePageDocument,
   createEmptyPageDocument,
   EMPTY_PAGE_DOCUMENT_CONTENT,
@@ -54,9 +55,19 @@ describe("page document format", () => {
     expect(parseDocumentContentFormat(PAGE_JSON_CONTENT_FORMAT)).toBe(
       PAGE_JSON_CONTENT_FORMAT,
     );
+    expect(parseDocumentContentFormat(HTML_CONTENT_FORMAT)).toBe(
+      HTML_CONTENT_FORMAT,
+    );
     expect(() => parseDocumentContentFormat("future_json_v2")).toThrow(
       /Invalid document content format/u,
     );
+  });
+
+  it("projects HTML to visible body text without exposing executable or license text", () => {
+    expect(getDocumentPlainText(
+      "<!doctype html><html><head><script>secret()</script></head><body><h1>Hello</h1><section class=license>License</section><p>World</p></body></html>",
+      HTML_CONTENT_FORMAT,
+    )).toBe("Hello\nWorld");
   });
 
   it("provides deterministic, round-trippable empty content", () => {

@@ -11,6 +11,7 @@ import {
 import { parseDocumentMediaCandidate } from "@/lib/document-media";
 import type { SupabaseBrowserClient } from "@/lib/supabase/client";
 import {
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   type DocumentContentFormat,
 } from "@/lib/page-document";
@@ -157,6 +158,9 @@ export async function exportDocumentHtml(
   { signal }: DocumentHtmlExportOptions = {},
 ): Promise<{ html: string; filename: string }> {
   throwIfAborted(signal);
+  if (contentFormat === HTML_CONTENT_FORMAT) {
+    throw new Error("Opaque HTML source must be downloaded without rendering.");
+  }
   const displayTitle = title.trim() || "Untitled";
   const rendered = renderDocumentHtmlBodyByFormat({
     title: displayTitle,

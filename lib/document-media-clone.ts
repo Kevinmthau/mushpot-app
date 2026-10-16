@@ -6,6 +6,7 @@ import {
 } from "@/lib/document-media";
 import {
   type DocumentContentFormat,
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   PAGE_JSON_CONTENT_FORMAT,
   parseDocumentContentFormat,
@@ -65,6 +66,9 @@ export function planDocumentMediaClone({
   };
 
   const format = parseDocumentContentFormat(contentFormat);
+  if (format === HTML_CONTENT_FORMAT) {
+    return { content, copies: [] };
+  }
   if (format === PAGE_JSON_CONTENT_FORMAT) {
     const page = parsePageDocument(content);
     const rewritten = rewritePageDocumentMedia(

@@ -156,7 +156,7 @@ describe("owner-scoped document cache", () => {
     await cache.activateDocumentCacheForOwner(OWNER);
 
     const database = await waitForRequest(indexedDB.open("mushpot"));
-    expect(database.version).toBe(7);
+    expect(database.version).toBe(8);
     database.close();
 
     expect(
@@ -1340,7 +1340,7 @@ describe("owner-scoped document cache", () => {
     expect(await cache.getCachedDocumentListForOwner(OWNER)).toHaveLength(2);
   });
 
-  it.each([3, 5, 6])("keeps activation best-effort while a v%s tab blocks the upgrade", async (version) => {
+  it.each([3, 5, 6, 7])("keeps activation best-effort while a v%s tab blocks the upgrade", async (version) => {
     await seedPreviousCache([
       buildDocument({ kind: "complete", _dirty: true, _dirtyKey: 1 }),
     ], version);
@@ -1370,7 +1370,7 @@ describe("owner-scoped document cache", () => {
     }
 
     // This request runs after the pending upgrade and confirms it has finished.
-    const upgradedDatabase = await waitForRequest(indexedDB.open("mushpot", 7));
+    const upgradedDatabase = await waitForRequest(indexedDB.open("mushpot", 8));
     upgradedDatabase.close();
     await cache.activateDocumentCacheForOwner(OWNER);
     expect(cache.getDocumentCacheWriteToken(OWNER)).not.toBeNull();

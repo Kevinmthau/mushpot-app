@@ -17,7 +17,7 @@ import {
 } from "../_shared/document-media.ts";
 import {
   type DocumentContentFormat,
-  PAGE_JSON_CONTENT_FORMAT,
+  MARKDOWN_CONTENT_FORMAT,
   parsePersistedDocumentContentFormat,
 } from "../_shared/page-document.ts";
 
@@ -203,13 +203,13 @@ export async function handleSharedDocumentRequest(
   }
 
   // The Edge Function and web app deploy independently. An older app ignores
-  // the format discriminator and would render page JSON as Markdown. Require
-  // an explicit capability only for the initial structured-document response;
-  // Markdown and media requests remain backward compatible.
+  // the discriminator and would render a newer format incorrectly. Require an
+  // exact capability on the document response for every known non-Markdown
+  // row. Media responses remain compatible with already-open older clients.
   if (
     mediaUrl === undefined && mediaUrls === undefined &&
-    contentFormat === PAGE_JSON_CONTENT_FORMAT &&
-    !contentFormats?.includes(PAGE_JSON_CONTENT_FORMAT)
+    contentFormat !== MARKDOWN_CONTENT_FORMAT &&
+    !contentFormats?.includes(contentFormat)
   ) {
     return jsonResponse(request, {
       error: "Shared document temporarily unavailable.",

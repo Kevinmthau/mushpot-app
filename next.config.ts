@@ -16,7 +16,8 @@ const contentSecurityPolicy = [
   `connect-src 'self' https: wss:${isDevelopment ? " ws:" : ""}`,
   "worker-src 'self' blob:",
   "manifest-src 'self'",
-  "frame-src 'none'",
+  // HTML previews use srcdoc inside a sandboxed, opaque-origin iframe.
+  "frame-src 'self'",
 ].join("; ");
 
 const securityHeaders = [

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  HTML_CONTENT_FORMAT,
   MARKDOWN_CONTENT_FORMAT,
   type DocumentContentFormat,
 } from "@/lib/page-document";
@@ -14,7 +15,7 @@ type UseDocumentHtmlDownloadParams = {
   getLatestContent: () => string | null;
 };
 
-function downloadHtmlFile(html: string, filename: string) {
+export function downloadHtmlFile(html: string, filename: string) {
   const url = URL.createObjectURL(
     new Blob([html], { type: "text/html;charset=utf-8" }),
   );
@@ -77,6 +78,16 @@ export function useDocumentHtmlDownload({
         contentFormat,
         owner,
       };
+
+      if (contentFormat === HTML_CONTENT_FORMAT) {
+        const displayTitle = snapshot.title.trim() || "Untitled";
+        const filename = displayTitle
+          .replace(/[/\\:*?"<>|\u0000-\u001f\u007f]/g, "_")
+          .replace(/[. ]+$/g, "") || "Untitled";
+        downloadHtmlFile(snapshot.content, `${filename}.html`);
+        return;
+      }
+
       const { exportDocumentHtml } = await import(
         "@/components/editor/document-html-export"
       );
